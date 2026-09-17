@@ -8,7 +8,9 @@ for LLM agents.
 - Conventions (tensor layout, positions, bits): [docs/conventions.md](docs/conventions.md)
 - Decision log: [docs/decisions.md](docs/decisions.md)
 
-**Status:** M0a (golden baseline infrastructure). No quantization, ECC, faults or pruning yet.
+**Status:** M0 (golden baselines). Code for WikiText-2 cache-conditioned perplexity, latency, RAQ-Probe v0 and
+GSM8K is in place and validated on CPU; GPU golden runs are pending (see [docs/m0_exit.md](docs/m0_exit.md)).
+No quantization, ECC, faults or pruning yet.
 
 ## Setup
 

@@ -96,9 +96,13 @@ def gsm8k_gold(answer_field: str) -> str:
 
 
 def extract_gsm8k_prediction(text: str) -> tuple[str | None, str]:
+    """Priority: requested '#### N' marker, then LaTeX \\boxed{N} (Qwen3's habit), then the last number."""
     marked = re.findall(r"####\s*\$?\s*(" + _NUMBER + ")", text)
     if marked:
         return marked[-1].replace(",", ""), "marker"
+    boxed = re.findall(r"\\boxed\{\s*\\?\$?\s*(" + _NUMBER + r")\s*\}", text)
+    if boxed:
+        return boxed[-1].replace(",", ""), "boxed"
     numbers = re.findall(_NUMBER, text)
     if numbers:
         return numbers[-1].replace(",", ""), "last_number"

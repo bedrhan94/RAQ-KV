@@ -68,7 +68,8 @@ def _qa_row(condition: str, g: pd.DataFrame) -> dict[str, Any]:
         if col in g:
             row[out_col] = pd.to_numeric(g[col], errors="coerce").mean()
     if "extraction_method" in g:
-        row["extraction_marker_rate"] = (g["extraction_method"] == "marker").mean()
+        for method in ("marker", "boxed", "last_number", "none"):
+            row[f"extraction_{method}_rate"] = (g["extraction_method"] == method).mean()
     return row
 
 

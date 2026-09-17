@@ -81,6 +81,10 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - **Filler:** WikiText-2 raw train split with tokenization artefacts cleaned; keys/values must not occur in the filler.
 - **Correctness rules:** listing a distractor value makes an answer incorrect; numbers must match token-bounded.
 - Full set: 540 samples, built in ~4 s; nominal 512/1024/2048 give mean cache lengths 533/1044/2066 tokens.
+- **2K CPU pilot (18 samples, commit aa7cd7b):** 17/18 correct; golden `answer_margin_min` 9.9–27.5 on correct
+  answers. The failure (constraint, nominal depth 0.9) returned the distractor placed 3 sentences after the target
+  (margin −6.3, `mentions_distractor=True`): distractors produce the intended retrieval confusion at long context.
+  At 512 tokens accuracy is at ceiling (36/36), so length is the main difficulty knob; no redesign before the GPU run.
 
 ## D8 — M0 split and GPU-free validation (2026-09-17)
 

@@ -63,6 +63,12 @@ def test_gsm8k_gold_and_extraction():
     assert extract_gsm8k_prediction("so 3+4=7\n#### 7") == ("7", "marker")
     assert extract_gsm8k_prediction("#### $1,250") == ("1250", "marker")
     assert extract_gsm8k_prediction("The answer is 42.") == ("42", "last_number")
+    # Real Qwen3 pilot outputs (2026-09-17)
+    boxed_only = "A = 498\n$$\n\n### **Final Answer:**\n\n$$\n\\boxed{623}\n$$"
+    assert extract_gsm8k_prediction(boxed_only) == ("623", "boxed")
+    boxed_marker = "= 48 hours\n$$\n\n### Final Answer:\n\n$$\n\\boxed{#### 48}\n$$"
+    assert extract_gsm8k_prediction(boxed_marker) == ("48", "marker")
+    assert extract_gsm8k_prediction("step 1 gives 12\n\\boxed{1,250} dollars") == ("1250", "boxed")
     assert extract_gsm8k_prediction("no idea") == (None, "none")
     assert score_gsm8k("#### 18.0", {"gold": "18"})["correct"]
     out = score_gsm8k("it is 18", {"gold": "18"})
