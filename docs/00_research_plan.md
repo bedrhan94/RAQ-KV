@@ -217,7 +217,7 @@ Qwen modellerinin sayıları HF config'lerinden okundu. Qwen3-1.7B için doğrul
 
 | Dataset | Seviye | Ölçtüğü şey | M0 boyutu | Neden |
 |---|---|---|---|---|
-| **RAQ-Probe v0** (kendi üretimimiz, sentetik, seed'li) | L1 / L2 / L3 öncesi | Tip-etiketli bilgi geri çağırma ve tool-argument çıkarma: EM, cevap NLL'i, KL | 6 tip × 3 derinlik × 3 uzunluk (512/1K/2K) × 10 = 540 örnek | Token tipi ve pozisyon **yapısı gereği biliniyor**. Q49 bu etiketleri gerektiriyor; gerçek dataset'lerde bu etiket yok |
+| **RAQ-Probe v0** (kendi üretimimiz, sentetik, seed'li) | L1 / L2 / L3 öncesi | Tip-etiketli bilgi geri çağırma ve tool-argument çıkarma: cevap logit marjı (birincil), float64 cevap NLL'i, EM | 6 tip × 3 derinlik × 4 uzunluk (512/1K/2K/4K) × 10 = 720 örnek (güncelleme: D9) | Token tipi ve pozisyon **yapısı gereği biliniyor**. Q49 bu etiketleri gerektiriyor; gerçek dataset'lerde bu etiket yok |
 | **WikiText-2 (test)** | L1 | Cache-koşullu PPL ve KL (1536 token prefix cache'te, 512 token continuation skorlanır) | 40 parça | KV quantization literatürüyle trend karşılaştırması |
 | **GSM8K (test)** | L1 reasoning | EM (greedy, non-thinking) | 200 | Çok adımlı reasoning; uzun decode'a duyarlılık |
 

@@ -87,6 +87,13 @@ Each entry: context, decision, evidence, consequences. Newest last.
   At 512 tokens accuracy is at ceiling (36/36), so length is the main difficulty knob.
 - **Golden float64 answer NLL on correct samples (2K pilot, CPU fp32):** per-type means 9e-13 (tool_arg) to 2.3e-6
   (entity); i.e. resolvable in float64 where float32 returned exactly 0. Reference for Saturday's bf16 values.
+- **4K CPU pilot (18 samples, commit cf9a47c):** 18/18 correct; golden `answer_margin_min` 1.4–28.5 (median 16.9;
+  the 1.4 case is an `id` at depth 0.1). Across pilots EM is near ceiling at every length (512: 36/36, 2K: 17/18,
+  4K: 18/18) and correct-answer margins are similar at 2K and 4K, so length is not a strong difficulty knob for this
+  model; the only failure was distractor confusion.
+- **Length decision:** keep 512/1024/2048 and add 4096 (720 samples). 4096 represents the KV-memory-dominant regime
+  that motivates the project; shorter lengths anchor the length/position axis. Margins (not EM) carry the
+  fault-sensitivity analyses, so EM ceiling does not remove headroom.
 - **Summaries never pool margins across correctness:** `answer_margin_min_mean_if_correct` (distance to a flip) and
   `..._if_incorrect` (distance from being right) are reported separately, with golden accuracy alongside.
 

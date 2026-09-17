@@ -1,11 +1,13 @@
-# RAQ-Probe v0: 6 fact types x 3 nominal lengths x 10 filler groups x 3 paired depths = 540 samples.
+# RAQ-Probe v0: 6 fact types x 4 nominal lengths x 10 filler groups x 3 paired depths = 720 samples.
+# 4096 added after CPU pilots (decisions D9): accuracy is near ceiling at every length, so the long-context condition
+# is kept for the KV-memory-dominant regime rather than as a difficulty knob.
 # Filler: WikiText-2 raw TRAIN split (disjoint from the test split used for perplexity). Revision verified 2026-09-17.
 dataset:
   name: raq_probe
   version: v0
   generator_seed: 0
   fact_types: [number, id, date, entity, constraint, tool_arg]
-  context_lengths: [512, 1024, 2048]
+  context_lengths: [512, 1024, 2048, 4096]
   depths: [0.1, 0.5, 0.9]
   groups_per_cell: 10
   n_distractors: 2
