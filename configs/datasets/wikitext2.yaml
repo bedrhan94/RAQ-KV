@@ -1,0 +1,11 @@
+# WikiText-2 (raw) test split, cache-conditioned perplexity chunks. Revision verified 2026-09-17.
+# Chunk = prefix_len (cached) + continuation_len (scored through the cache) + 1 token.
+dataset:
+  name: wikitext2
+  hf_id: Salesforce/wikitext
+  subset: wikitext-2-raw-v1
+  split: test
+  revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  n_chunks: 40
+  prefix_len: 1536
+  continuation_len: 512

@@ -1,0 +1,14 @@
+# M0a full-precision serving latency (TTFT/TPOT/E2E). Requires an otherwise idle GPU.
+# Claim supported: measured latency of the unmodified baseline; token-pruning speedups are compared to it (M4).
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m0a_latency
+task:
+  kind: latency
+  prompt_lens: [512, 1024, 2048]
+  gen_len: 64
+  warmup: 2
+  repeats: 5
+sweep:
+  seed: [0, 1, 2]

@@ -1,0 +1,10 @@
+# Primary development model (plan §D). Revision verified 2026-09-17.
+model:
+  hf_id: Qwen/Qwen3-1.7B
+  revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+  short_name: qwen3-1p7b
+  dtype: bfloat16
+  attn_implementation: sdpa
+  device: cuda
+  chat_template_kwargs:
+    enable_thinking: false

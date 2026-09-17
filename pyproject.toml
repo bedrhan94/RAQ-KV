@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raq_kv"
+version = "0.0.1"
+description = "Reliability-aware joint token compression, mixed-precision KV quantization and unequal error protection for LLM agents"
+readme = "README.md"
+requires-python = ">=3.11"
+# Loose lower bounds only; exact reproducible pins live in requirements.txt.
+dependencies = [
+    "torch>=2.11",
+    "transformers==5.17.0",
+    "datasets>=5.0",
+    "pydantic>=2.13",
+    "pyyaml>=6.0",
+    "numpy>=2.0",
+    "pandas>=3.0",
+    "scipy>=1.18",
+    "matplotlib>=3.11",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0", "ruff>=0.16"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "gpu: requires a free CUDA GPU",
+    "slow: loads a real model (downloads / minutes of CPU)",
+]
+addopts = "-m 'not gpu and not slow'"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

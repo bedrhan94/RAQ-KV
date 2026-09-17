@@ -1,0 +1,23 @@
+# Environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Experiment outputs are never committed (raw data lives on disk, not in git)
+outputs/*
+!outputs/README.md
+
+# Hugging Face / local caches
+.hf_cache/
+*.safetensors
+*.bin
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

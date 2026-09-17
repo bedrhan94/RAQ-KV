@@ -1,0 +1,5 @@
+# Normalize to LF in the repository and working tree on every OS (stable diffs, provenance hashes, test vectors).
+* text=auto eol=lf
+*.npy binary
+*.pt binary
+*.png binary

@@ -1,0 +1,11 @@
+# M0a golden baseline: BF16, full context, no ECC, no faults, GPU.
+# Claim supported: reference point for every Delta-quality number in the paper (plan §G, M0).
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m0a_golden_ppl
+task:
+  kind: cache_ppl
+  store_token_nll: true
+sweep:
+  seed: [0, 1, 2]
