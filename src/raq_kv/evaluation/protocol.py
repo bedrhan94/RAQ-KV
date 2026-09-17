@@ -51,8 +51,22 @@ def prefill(model: nn.Module, context_ids: torch.Tensor) -> KVSnapshot:
 
 @dataclass
 class ScoreResult:
-    token_nll: torch.Tensor  # float32 [n], natural log
-    logprobs: torch.Tensor | None  # float32 [n, vocab] when requested (for KL against golden)
+    token_nll: torch.Tensor  # [n], natural log, in the requested log-prob dtype
+    token_margin: torch.Tensor  # float32 [n]: logit(target) - max logit over all other tokens (< 0 => argmax flips)
+    logprobs: torch.Tensor | None  # [n, vocab] when requested (for KL against golden)
+
+    def slice(self, start: int) -> ScoreResult:
+        return ScoreResult(
+            self.token_nll[start:], self.token_margin[start:], None if self.logprobs is None else self.logprobs[start:]
+        )
+
+
+def target_margins(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """logit[target] - max_{v != target} logit[v] per position. Unlike NLL it does not saturate near p = 1."""
+    logits = logits.float()
+    target_logit = logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    others = logits.scatter(-1, targets.unsqueeze(-1), float("-inf"))
+    return target_logit - others.max(dim=-1).values
 
 
 @torch.no_grad()
@@ -62,8 +76,13 @@ def score_through_cache(
     input_ids: torch.Tensor,
     target_ids: torch.Tensor,
     return_logprobs: bool = False,
+    logprob_dtype: torch.dtype = torch.float32,
 ) -> ScoreResult:
-    """Teacher-forced scoring of ``target_ids`` given ``input_ids`` fed on top of the snapshot cache."""
+    """Teacher-forced scoring of ``target_ids`` given ``input_ids`` fed on top of the snapshot cache.
+
+    ``logprob_dtype=torch.float64`` is needed when NLL values are tiny: in float32, log-probabilities of confident
+    tokens round to exactly 0 (observed on RAQ-Probe answers), hiding small degradations.
+    """
     _check_batch(input_ids)
     if target_ids.shape != input_ids.shape:
         raise ValueError("target_ids must have the same shape as input_ids")
@@ -73,25 +92,30 @@ def score_through_cache(
         past_key_values=cache,
         position_ids=_positions(snapshot.next_position, input_ids.shape[1], input_ids.device),
         use_cache=True,
-    ).logits
-    logprobs = torch.log_softmax(logits[0].float(), dim=-1)
-    token_nll = -logprobs.gather(-1, target_ids[0].unsqueeze(-1)).squeeze(-1)
-    return ScoreResult(token_nll=token_nll, logprobs=logprobs if return_logprobs else None)
+    ).logits[0]
+    targets = target_ids[0]
+    logprobs = torch.log_softmax(logits.to(logprob_dtype), dim=-1)
+    token_nll = -logprobs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    return ScoreResult(token_nll, target_margins(logits, targets), logprobs if return_logprobs else None)
 
 
 @torch.no_grad()
 def score_answer(
-    model: nn.Module, snapshot: KVSnapshot, query_ids: torch.Tensor, answer_ids: torch.Tensor
-) -> torch.Tensor:
-    """Per-token NLL of ``answer_ids`` when the query is fed on top of the snapshot and the answer is teacher-forced.
+    model: nn.Module,
+    snapshot: KVSnapshot,
+    query_ids: torch.Tensor,
+    answer_ids: torch.Tensor,
+    logprob_dtype: torch.dtype = torch.float64,
+) -> ScoreResult:
+    """Scores of ``answer_ids`` when the query is fed on top of the snapshot and the answer is teacher-forced.
 
-    Returns float32 ``[len(answer)]``; entry j is -log p(answer_j | cache, query, answer_<j).
+    Entry j of the result refers to answer token j: -log p(answer_j | cache, query, answer_<j) and its logit margin.
     """
     _check_batch(query_ids)
     _check_batch(answer_ids)
     seq = torch.cat([query_ids, answer_ids], dim=1)
-    res = score_through_cache(model, snapshot, seq[:, :-1], seq[:, 1:])
-    return res.token_nll[query_ids.shape[1] - 1 :]
+    res = score_through_cache(model, snapshot, seq[:, :-1], seq[:, 1:], logprob_dtype=logprob_dtype)
+    return res.slice(query_ids.shape[1] - 1)
 
 
 @dataclass

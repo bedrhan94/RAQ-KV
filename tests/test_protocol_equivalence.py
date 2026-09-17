@@ -35,7 +35,23 @@ def test_score_answer_matches_single_pass(tiny_model, token_ids):
     expected = -logp[positions, seq[0, cache_len + q :]]
     snap = prefill(tiny_model, seq[:, :cache_len])
     got = score_answer(tiny_model, snap, seq[:, cache_len : cache_len + q], seq[:, cache_len + q :])
-    torch.testing.assert_close(got, expected, atol=ATOL, rtol=0)
+    assert got.token_nll.dtype == torch.float64 and got.token_margin.shape == (a,)
+    torch.testing.assert_close(got.token_nll.float(), expected, atol=ATOL, rtol=0)
+
+
+def test_target_margins_sign_matches_argmax():
+    from raq_kv.evaluation.protocol import target_margins
+
+    logits = torch.tensor([[2.0, 5.0, 1.0], [0.5, 0.2, 0.1]])
+    margins = target_margins(logits, torch.tensor([1, 2]))
+    torch.testing.assert_close(margins, torch.tensor([3.0, -0.4]))
+
+
+def test_float64_logprobs_resolve_confident_tokens():
+    logits = torch.tensor([[40.0, 20.0, 18.0]])
+    nll32 = -torch.log_softmax(logits, -1)[0, 0]
+    nll64 = -torch.log_softmax(logits.double(), -1)[0, 0]
+    assert float(nll32) == 0.0 and float(nll64) > 0.0  # the saturation that motivated float64 answer scoring
 
 
 def test_scoring_does_not_mutate_snapshot(tiny_model, token_ids):

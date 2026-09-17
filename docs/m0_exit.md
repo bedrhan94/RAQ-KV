@@ -10,7 +10,8 @@ M0 is closed only when every row is ✅ with evidence (file path, commit, value)
 | 4 | Interrupted runner resumes without duplicate units | ✅ | `tests/test_runner_resume.py`; rerun of `m0a_cpu_smoke` skipped 3/3 units |
 | 5 | Every record has provenance; CSV regenerable from raw | ✅ | `outputs/raw/qwen3-1p7b_wikitext2_cache_ppl_fp32_noecc_nofault_p0_cpu_s0-f96bb32e/manifest.json`, `scripts/aggregate.py` |
 | 6 | Decode rate measured on an idle GPU (sizes the M2 fault campaign) | ⏳ | `m0a_latency` → `decode_tokens_per_s_mean` |
-| 7 | RAQ-Probe golden EM in 85–100% per type × depth | ⏳ (M0b) | M0b |
+| 7 | RAQ-Probe golden accuracy (`correct`) in 85–100% per fact type × depth; answer NLL recorded | CPU pilot ⏳ · GPU ⏳ | `m0b_golden_probe` → `outputs/csv/m0b_*` rows `fact_type=…|depth_nominal=…` |
+| 8 | GSM8K golden run completes; `####` extraction rate reported | CPU pilot ⏳ · GPU ⏳ | `m0b_golden_gsm8k` → `extraction_marker_rate` |
 
 ## GPU session (run only when `python scripts/check_env.py` reports no busy-GPU warning)
 
@@ -19,8 +20,14 @@ python scripts/check_env.py
 RAQ_TEST_DEVICE=cuda python -m pytest -m slow tests/slow -s        # criteria 1-3; copy printed diagnostics above
 python scripts/run_experiment.py --config configs/experiments/m0a_golden_ppl.yaml
 python scripts/run_experiment.py --config configs/experiments/m0a_latency.yaml
-python scripts/aggregate.py --name m0a --filter qwen3-1p7b_wikitext2
+python scripts/run_experiment.py --config configs/experiments/m0b_golden_probe.yaml
+python scripts/run_experiment.py --config configs/experiments/m0b_golden_gsm8k.yaml
+python scripts/aggregate.py --name m0 --filter _cuda_
 ```
+
+Order matters only for convenience: criteria 1-3 first (minutes), then golden perplexity and latency (minutes), then
+the probe (540 samples) and GSM8K (200 problems, up to 512 new tokens each; the longest step). Golden QA runs use a
+single runtime seed because greedy decoding is deterministic; replicate variance comes from dataset resampling.
 
 PowerShell: set the device with `$env:RAQ_TEST_DEVICE = "cuda"` before the pytest line.
 

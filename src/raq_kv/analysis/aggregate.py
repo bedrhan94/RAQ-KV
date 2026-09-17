@@ -59,6 +59,7 @@ def _qa_row(condition: str, g: pd.DataFrame) -> dict[str, Any]:
         "tokens_retained_mean": g["tokens_retained"].mean(),
     }
     optional = {
+        "answer_margin_min_mean": "answer_margin_min",
         "answer_nll_mean": "answer_nll_mean",
         "answer_first_token_nll": "answer_first_token_nll",
         "mentions_distractor_rate": "mentions_distractor",

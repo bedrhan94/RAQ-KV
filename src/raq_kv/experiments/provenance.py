@@ -23,11 +23,17 @@ from raq_kv.utils.paths import repo_root
 _PACKAGES = ("torch", "transformers", "datasets", "tokenizers", "huggingface-hub", "numpy", "pandas", "pydantic")
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> str | None:
+def _run_bytes(cmd: list[str], cwd: Path | None = None) -> bytes | None:
+    # Bytes, not text: on Windows ``text=True`` decodes with the ANSI code page and crashes on UTF-8 diffs.
     try:
-        return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=True, timeout=30).stdout.strip()
+        return subprocess.run(cmd, cwd=cwd, capture_output=True, check=True, timeout=30).stdout
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def _run(cmd: list[str], cwd: Path | None = None) -> str | None:
+    out = _run_bytes(cmd, cwd)
+    return out.decode("utf-8", errors="replace").strip() if out is not None else None
 
 
 def git_state(root: Path | None = None) -> dict[str, Any]:
@@ -35,13 +41,13 @@ def git_state(root: Path | None = None) -> dict[str, Any]:
     commit = _run(["git", "rev-parse", "HEAD"], root)
     status = _run(["git", "status", "--porcelain", "--untracked-files=no"], root)
     dirty = bool(status) if status is not None else None
-    diff = _run(["git", "diff", "HEAD"], root) if commit else None
+    diff = _run_bytes(["git", "diff", "HEAD"], root) if commit else None
     return {
         "commit": commit,
         "dirty": dirty,
         "describe": f"{commit}-dirty" if commit and dirty else commit,
         # Identifies the exact uncommitted tracked-file changes, so "same commit, different local edits" is detectable.
-        "diff_sha256": hashlib.sha256(diff.encode("utf-8")).hexdigest() if diff else None,
+        "diff_sha256": hashlib.sha256(diff).hexdigest() if diff else None,
         "branch": _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], root),
     }
 

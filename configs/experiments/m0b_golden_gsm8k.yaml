@@ -6,5 +6,5 @@ name: m0b_golden_gsm8k
 task:
   kind: qa_generate
   score_answer_nll: false
-sweep:
-  seed: [0, 1, 2]
+# Deterministic greedy decoding: one runtime seed. Determinism across seeds is checked on m0a_golden_ppl (criterion 2).
+seed: 0

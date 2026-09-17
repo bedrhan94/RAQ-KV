@@ -1,0 +1,16 @@
+# GPU-free difficulty pilot at the longest nominal context (2048 tokens, 1 group per type -> 18 samples, CPU float32).
+# Not a baseline. Purpose: does the golden accuracy band hold at 2K, and what are golden logit margins?
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m0b_cpu_pilot_probe_2k
+model:
+  dtype: float32
+  device: cpu
+dataset:
+  context_lengths: [2048]
+  groups_per_cell: 1
+task:
+  kind: qa_generate
+  score_answer_nll: true
+seed: 0

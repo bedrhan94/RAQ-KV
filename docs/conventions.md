@@ -34,6 +34,18 @@ requires bumping `SCHEMA_VERSION` and recording the change in `decisions.md`.
 Golden and perturbed conditions start from the same phase-1 tensors. For cache-conditioned perplexity a chunk is
 `prefix_len` cached tokens + `continuation_len` read inputs + 1, so every scored logit depends on the cache.
 
+**Phase split for chat prompts (RAQ-Probe, GSM8K).** The full prompt is rendered with the chat template and tokenized
+once; the split is a character offset moved left to a token boundary (a straddling token belongs to phase 2).
+- Phase 1 (cache): chat-template prefix (incl. tool schema if any) + intro + document / problem statement.
+- Phase 2 (read): question or instruction + assistant header; then generated tokens.
+- **Known confounds:** template tokens always occupy the first cache positions (attention-sink region), and
+  `tool_arg` prompts have a ~150-token longer tool-schema prefix, which shifts absolute positions of their documents.
+  Analyses by token role must control for absolute and relative position (`meta.depth_actual`, span token indices).
+- Generated tokens' own KV is not transformed in M0-M2 (only the phase-1 cache is).
+
+**Spans.** `[token_start, token_end)` covers every token overlapping the span's characters, so edge tokens may include
+neighbouring characters (e.g. `.ĊĊ`). Span-to-token mapping is verified at build time by decoding.
+
 ## 4. Bits and bytes
 
 - Bit indexing inside an integer code: **LSB = bit 0**, MSB = bit `b-1` (fixed now; used from M1/M2).

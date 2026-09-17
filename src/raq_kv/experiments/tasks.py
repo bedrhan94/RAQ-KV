@@ -223,15 +223,21 @@ class QAGenerate:
         if self.task.score_answer_nll and s.gold_text is not None and s.gold_scored_chars is not None:
             enc = tok(s.gold_text, add_special_tokens=False, return_offsets_mapping=True)
             gold_ids = torch.tensor(enc["input_ids"], device=dev).unsqueeze(0)
-            nll = score_answer(model, snapshot, query_ids, gold_ids).cpu()
+            res = score_answer(model, snapshot, query_ids, gold_ids)
+            nll, margin = res.token_nll.cpu(), res.token_margin.cpu()
             t0, t1 = char_span_to_tokens([tuple(o) for o in enc["offset_mapping"]], *s.gold_scored_chars)
-            scored = nll[t0:t1]
             record.update({
-                "answer_nll_sum": float(scored.double().sum()),
-                "answer_nll_mean": float(scored.double().mean()),
-                "answer_n_tokens": int(scored.numel()),
-                "answer_first_token_nll": float(scored[0]),
-                "gold_continuation_nll_mean": float(nll.double().mean()),
+                # Primary continuous metric: distance to an argmax flip on the answer value tokens (does not saturate).
+                "answer_margin_min": float(margin[t0:t1].min()),
+                "answer_margin_mean": float(margin[t0:t1].mean()),
+                "answer_first_token_margin": float(margin[t0]),
+                # float64 NLL of the answer value tokens (float32 rounds confident tokens to exactly 0).
+                "answer_nll_sum": float(nll[t0:t1].sum()),
+                "answer_nll_mean": float(nll[t0:t1].mean()),
+                "answer_first_token_nll": float(nll[t0]),
+                "answer_n_tokens": t1 - t0,
+                "gold_continuation_nll_mean": float(nll.mean()),
+                "gold_continuation_margin_min": float(margin.min()),
             })
 
         mem2 = cuda_memory(dev)

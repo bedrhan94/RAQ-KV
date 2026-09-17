@@ -60,6 +60,28 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D9 — RAQ-Probe v0 design (2026-09-17)
+
+- **Primary metric = minimum gold-token logit margin over the answer value** (`answer_margin_min`:
+  logit(gold) − max logit(other), teacher-forced through the cache; for `tool_arg` only the argument value inside the
+  canonical `<tool_call>`). It is the distance to an argmax flip, so it links directly to SDC (flip ⇔ margin < 0).
+  Secondary: float64 answer NLL, then EM (`correct`, `em_strict`). The golden EM band (85-100%) remains an M0 sanity
+  criterion.
+  - *Why not NLL as primary (revised 2026-09-17):* the 512-token CPU pilot (36 samples, commit 33be27a) had 100%
+    accuracy and float32 answer NLL of exactly 0.0 (median; max 2.6e-5): confident log-probabilities round to 0 in
+    float32, so NLL sits on its floor at golden and hides small degradations. NLL is now computed in float64, and the
+    non-saturating margin is primary. EM alone is at ceiling at 512 tokens, as expected for a 1.7B model on
+    single-needle retrieval with 2 distractors.
+- **Distractors** (same type and template, different invented keys/values) are critical-looking but task-irrelevant
+  content: they separate content type from task relevance in Q49.
+- **number vs constraint** share the surface type (integers above 2100, not year-like) and differ in role.
+- **Paired depth variants:** filler text and distractor slots are identical across depths; target slots are chosen by
+  filler-token fraction. Observed actual depth ranges for nominal 0.1/0.5/0.9: 0.06-0.21 / 0.39-0.62 / 0.80-0.98
+  (spread from long WikiText sentences in 512-token contexts); `meta.depth_actual` is recorded for use as a covariate.
+- **Filler:** WikiText-2 raw train split with tokenization artefacts cleaned; keys/values must not occur in the filler.
+- **Correctness rules:** listing a distractor value makes an answer incorrect; numbers must match token-bounded.
+- Full set: 540 samples, built in ~4 s; nominal 512/1024/2048 give mean cache lengths 533/1044/2066 tokens.
+
 ## D8 — M0 split and GPU-free validation (2026-09-17)
 
 - **Context:** the only GPU was busy (10.8/16.3 GiB, 98% utilization) when implementation started.
