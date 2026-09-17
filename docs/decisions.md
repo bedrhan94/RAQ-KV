@@ -84,7 +84,11 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - **2K CPU pilot (18 samples, commit aa7cd7b):** 17/18 correct; golden `answer_margin_min` 9.9–27.5 on correct
   answers. The failure (constraint, nominal depth 0.9) returned the distractor placed 3 sentences after the target
   (margin −6.3, `mentions_distractor=True`): distractors produce the intended retrieval confusion at long context.
-  At 512 tokens accuracy is at ceiling (36/36), so length is the main difficulty knob; no redesign before the GPU run.
+  At 512 tokens accuracy is at ceiling (36/36), so length is the main difficulty knob.
+- **Golden float64 answer NLL on correct samples (2K pilot, CPU fp32):** per-type means 9e-13 (tool_arg) to 2.3e-6
+  (entity); i.e. resolvable in float64 where float32 returned exactly 0. Reference for Saturday's bf16 values.
+- **Summaries never pool margins across correctness:** `answer_margin_min_mean_if_correct` (distance to a flip) and
+  `..._if_incorrect` (distance from being right) are reported separately, with golden accuracy alongside.
 
 ## D8 — M0 split and GPU-free validation (2026-09-17)
 

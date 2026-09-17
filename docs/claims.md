@@ -13,3 +13,13 @@ changed after looking at the data. Full rationale: `00_research_plan.md` §I.
 | Q48 | Corr(QuantSens, FaultSens), raw and partial on KV magnitude | M1 + M2, gate-1 | Scatter + CI | Partial ρ ≥ 0.6 shared signal; ≤ 0.3 separate signals | PROPOSED | planned |
 | Q49 | Critical token types have higher task-level SDC than filler at matched position / layer / bit | M2 (RAQ-Probe), M6 | Odds-ratio plot | OR > 1 with CI excluding 1 | PROPOSED | planned |
 | C4 | Token-level metrics under-estimate agent failures | M6 | Metric-disagreement plot | Weak rank correlation between KL damage and task failure | PROPOSED | planned |
+
+## Vehicle notes
+
+- **RAQ-Probe** is the fault-sensitivity vehicle for H1/Q49 (known token roles, facts inside the cache). Analyses of
+  margin changes use samples that are correct at golden; golden accuracy is reported separately.
+- **GSM8K is a Level-1 reasoning reference only, not a fault-sensitivity vehicle in M0–M3.** Its cached problem text
+  averages ~62 tokens, while most of its KV comes from generated reasoning, which is not transformed until decode-time
+  policies exist (M5). Weak GSM8K sensitivity in M1–M3 is expected by construction and must not be read as evidence
+  against H1.
+- **WikiText cache-conditioned perplexity** measures general LM degradation from the cached prefix.

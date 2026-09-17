@@ -59,7 +59,6 @@ def _qa_row(condition: str, g: pd.DataFrame) -> dict[str, Any]:
         "tokens_retained_mean": g["tokens_retained"].mean(),
     }
     optional = {
-        "answer_margin_min_mean": "answer_margin_min",
         "answer_nll_mean": "answer_nll_mean",
         "answer_first_token_nll": "answer_first_token_nll",
         "mentions_distractor_rate": "mentions_distractor",
@@ -67,6 +66,14 @@ def _qa_row(condition: str, g: pd.DataFrame) -> dict[str, Any]:
     for out_col, col in optional.items():
         if col in g:
             row[out_col] = pd.to_numeric(g[col], errors="coerce").mean()
+    if "answer_margin_min" in g:
+        # Margin of a correct answer is distance to a flip; of a wrong answer, distance from being right. Never pool.
+        margin = pd.to_numeric(g["answer_margin_min"], errors="coerce")
+        correct = g["correct"].astype(bool)
+        row["answer_margin_min_mean_if_correct"] = margin[correct].mean()
+        row["answer_margin_min_q10_if_correct"] = margin[correct].quantile(0.1) if correct.any() else float("nan")
+        row["answer_margin_min_mean_if_incorrect"] = margin[~correct].mean()
+        row["n_incorrect"] = int((~correct).sum())
     if "extraction_method" in g:
         for method in ("marker", "boxed", "last_number", "none"):
             row[f"extraction_{method}_rate"] = (g["extraction_method"] == method).mean()
