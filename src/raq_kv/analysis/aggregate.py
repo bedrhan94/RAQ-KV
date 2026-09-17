@@ -48,7 +48,42 @@ def _summarize_latency(df: pd.DataFrame) -> list[dict[str, Any]]:
     return rows
 
 
-_SUMMARIZERS = {"cache_ppl": _summarize_cache_ppl, "latency": _summarize_latency}
+def _qa_row(condition: str, g: pd.DataFrame) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "condition": condition,
+        "n_units": len(g),
+        "accuracy": g["correct"].mean(),
+        "em_strict": g["em_strict"].mean(),
+        "generated_tokens_mean": g["generated_tokens"].mean(),
+        "stopped_on_eos_rate": g["stopped_on_eos"].mean(),
+        "tokens_retained_mean": g["tokens_retained"].mean(),
+    }
+    optional = {
+        "answer_nll_mean": "answer_nll_mean",
+        "answer_first_token_nll": "answer_first_token_nll",
+        "mentions_distractor_rate": "mentions_distractor",
+    }
+    for out_col, col in optional.items():
+        if col in g:
+            row[out_col] = pd.to_numeric(g[col], errors="coerce").mean()
+    if "extraction_method" in g:
+        row["extraction_marker_rate"] = (g["extraction_method"] == "marker").mean()
+    return row
+
+
+def _summarize_qa(df: pd.DataFrame) -> list[dict[str, Any]]:
+    rows = [_qa_row("all", df)]
+    for col in ("meta.fact_type", "meta.nominal_len", "meta.depth_nominal"):
+        if col in df:
+            for value, g in df.groupby(col, sort=True):
+                rows.append(_qa_row(f"{col[5:]}={value}", g))
+    if "meta.fact_type" in df and "meta.depth_nominal" in df:  # the M0 golden-band cells (type x depth)
+        for (ftype, depth), g in df.groupby(["meta.fact_type", "meta.depth_nominal"], sort=True):
+            rows.append(_qa_row(f"fact_type={ftype}|depth_nominal={depth}", g))
+    return rows
+
+
+_SUMMARIZERS = {"cache_ppl": _summarize_cache_ppl, "latency": _summarize_latency, "qa_generate": _summarize_qa}
 
 
 def summarize_experiment(exp_dir: Path) -> list[dict[str, Any]]:
@@ -70,7 +105,7 @@ def summarize_experiment(exp_dir: Path) -> list[dict[str, Any]]:
         "units_complete": len(records) == manifest["unit_keys_total"],
         "git_commits": ";".join(sorted({str(r["provenance"]["git"]["describe"]) for r in manifest["runs"]})),
     }
-    df = pd.DataFrame(records)
+    df = pd.json_normalize(records, max_level=1)  # nested dicts (meta, kv_budget) become "meta.x" columns
     return [{**base, **row} for row in _SUMMARIZERS[cfg["task"]["kind"]](df)]
 
 

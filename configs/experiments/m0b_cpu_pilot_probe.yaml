@@ -1,0 +1,16 @@
+# GPU-free difficulty pilot for RAQ-Probe (float32, CPU, 512-token contexts, 2 groups per type -> 36 samples).
+# Not a baseline. Purpose: check the golden accuracy band before the GPU run and catch prompt/scorer problems.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m0b_cpu_pilot_probe
+model:
+  dtype: float32
+  device: cpu
+dataset:
+  context_lengths: [512]
+  groups_per_cell: 2
+task:
+  kind: qa_generate
+  score_answer_nll: true
+seed: 0

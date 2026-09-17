@@ -40,7 +40,8 @@ def make_cfg(tmp_path: Path) -> ExperimentConfig:
     return ExperimentConfig.model_validate({
         "name": "fake", "seed": 0,
         "model": {"hf_id": "org/m", "revision": "abcdef123", "short_name": "m", "device": "cpu"},
-        "dataset": {"revision": "1234567abc", "n_chunks": 1, "prefix_len": 4, "continuation_len": 2},
+        "dataset": {"name": "wikitext2", "revision": "1234567abc", "n_chunks": 1, "prefix_len": 4,
+                    "continuation_len": 2},
         "task": {"kind": "cache_ppl"},
         "output": {"root": str(tmp_path)},
     })

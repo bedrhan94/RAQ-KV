@@ -1,0 +1,10 @@
+# M0b golden GSM8K-200 (BF16, GPU, non-thinking mode). Claim supported: S0 reasoning reference for Level-1 deltas.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/gsm8k_200.yaml
+name: m0b_golden_gsm8k
+task:
+  kind: qa_generate
+  score_answer_nll: false
+sweep:
+  seed: [0, 1, 2]

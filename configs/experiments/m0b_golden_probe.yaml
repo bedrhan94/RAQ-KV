@@ -1,0 +1,11 @@
+# M0b golden RAQ-Probe (BF16, GPU). Claims supported: S0 (golden reference for Q49 and H1 token-type analyses);
+# M0 exit criterion 7 (golden accuracy band 85-100% per fact type x depth).
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m0b_golden_probe
+task:
+  kind: qa_generate
+  score_answer_nll: true
+sweep:
+  seed: [0, 1, 2]

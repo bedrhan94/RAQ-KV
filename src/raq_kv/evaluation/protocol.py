@@ -79,6 +79,21 @@ def score_through_cache(
     return ScoreResult(token_nll=token_nll, logprobs=logprobs if return_logprobs else None)
 
 
+@torch.no_grad()
+def score_answer(
+    model: nn.Module, snapshot: KVSnapshot, query_ids: torch.Tensor, answer_ids: torch.Tensor
+) -> torch.Tensor:
+    """Per-token NLL of ``answer_ids`` when the query is fed on top of the snapshot and the answer is teacher-forced.
+
+    Returns float32 ``[len(answer)]``; entry j is -log p(answer_j | cache, query, answer_<j).
+    """
+    _check_batch(query_ids)
+    _check_batch(answer_ids)
+    seq = torch.cat([query_ids, answer_ids], dim=1)
+    res = score_through_cache(model, snapshot, seq[:, :-1], seq[:, 1:])
+    return res.token_nll[query_ids.shape[1] - 1 :]
+
+
 @dataclass
 class GenerationResult:
     tokens: list[int]

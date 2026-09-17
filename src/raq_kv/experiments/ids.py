@@ -40,9 +40,10 @@ def slug(cfg: ExperimentConfig) -> str:
     # M0 configs have no quantization / ECC / fault / pruning sections: they are full precision, unprotected,
     # fault-free and unpruned by construction. Later schema versions derive these tokens from their sections.
     device = cfg.model.device.split(":")[0]
+    version = getattr(cfg.dataset, "version", "")
     parts = [
         cfg.model.short_name,
-        cfg.dataset.name,
+        f"{cfg.dataset.name}{version}",
         cfg.task.kind,
         _DTYPE_SHORT[cfg.model.dtype],
         "noecc",

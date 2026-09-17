@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import torch
 
-from raq_kv.evaluation.protocol import greedy_decode, prefill, score_through_cache
+from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, score_through_cache
 
 ATOL = 1e-5
 
@@ -24,6 +24,18 @@ def test_two_phase_scoring_matches_single_pass(tiny_model, token_ids):
     torch.testing.assert_close(res.logprobs, single[prefix : prefix + cont], atol=ATOL, rtol=0)
     expected_nll = -single[prefix : prefix + cont].gather(-1, token_ids[0, prefix + 1 : prefix + cont + 1, None])
     torch.testing.assert_close(res.token_nll, expected_nll.squeeze(-1), atol=ATOL, rtol=0)
+
+
+def test_score_answer_matches_single_pass(tiny_model, token_ids):
+    cache_len, q, a = 30, 6, 5
+    seq = token_ids[:, : cache_len + q + a]
+    with torch.no_grad():
+        logp = torch.log_softmax(tiny_model(seq).logits[0].float(), -1)
+    positions = torch.arange(cache_len + q - 1, cache_len + q + a - 1)
+    expected = -logp[positions, seq[0, cache_len + q :]]
+    snap = prefill(tiny_model, seq[:, :cache_len])
+    got = score_answer(tiny_model, snap, seq[:, cache_len : cache_len + q], seq[:, cache_len + q :])
+    torch.testing.assert_close(got, expected, atol=ATOL, rtol=0)
 
 
 def test_scoring_does_not_mutate_snapshot(tiny_model, token_ids):

@@ -1,0 +1,10 @@
+# GSM8K test subset (200 problems, fixed sampling seed). Revision verified 2026-09-17.
+dataset:
+  name: gsm8k
+  hf_id: openai/gsm8k
+  subset: main
+  split: test
+  revision: 740312add88f781978c0658806c59bc2815b9866
+  n_samples: 200
+  subset_seed: 0
+  max_new_tokens: 512

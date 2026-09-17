@@ -26,6 +26,22 @@ class LoadedModel:
     device: torch.device
     dtype: torch.dtype
     memory: dict[str, int]
+    eos_token_ids: frozenset[int]
+
+
+def collect_eos_ids(model: PreTrainedModel, tokenizer: PreTrainedTokenizerBase) -> frozenset[int]:
+    """Union of the generation-config EOS ids and the tokenizer EOS id (Qwen3: <|im_end|> and <|endoftext|>)."""
+    ids: set[int] = set()
+    gen_eos = getattr(getattr(model, "generation_config", None), "eos_token_id", None)
+    if isinstance(gen_eos, int):
+        ids.add(gen_eos)
+    elif gen_eos is not None:
+        ids.update(int(i) for i in gen_eos)
+    if tokenizer.eos_token_id is not None:
+        ids.add(int(tokenizer.eos_token_id))
+    if not ids:
+        raise RuntimeError("no EOS token id found")
+    return frozenset(ids)
 
 
 def load_tokenizer(cfg: ModelConfig) -> PreTrainedTokenizerBase:
@@ -47,11 +63,13 @@ def load_model(cfg: ModelConfig) -> LoadedModel:
     actual_impl = model.config._attn_implementation
     if actual_impl != cfg.attn_implementation:
         raise RuntimeError(f"requested attention '{cfg.attn_implementation}' but model uses '{actual_impl}'")
+    tokenizer = load_tokenizer(cfg)
     return LoadedModel(
         model=model,
-        tokenizer=load_tokenizer(cfg),
+        tokenizer=tokenizer,
         geometry=KVGeometry.from_hf_config(model.config, dtype),
         device=device,
         dtype=dtype,
         memory=module_bytes(model),
+        eos_token_ids=collect_eos_ids(model, tokenizer),
     )

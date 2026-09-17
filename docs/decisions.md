@@ -4,6 +4,8 @@ Each entry: context, decision, evidence, consequences. Newest last.
 
 ## D1 — Primary model: Qwen3-1.7B @ `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` (2026-09-17)
 
+- **Status:** explicitly approved by the project owner on 2026-09-17.
+
 - **Why:** 8 KV heads (usable head axis; Qwen2.5-1.5B has 2), uniform full attention (no sliding-window layers),
   native tool-calling template and a verified non-thinking switch (so M6 does not force a model change), ungated.
 - **Evidence:** HF config fields read on 2026-09-17; chat template probe (`<tool_call>{json}</tool_call>`).

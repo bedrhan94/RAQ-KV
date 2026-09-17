@@ -1,0 +1,16 @@
+# RAQ-Probe v0: 6 fact types x 3 nominal lengths x 10 filler groups x 3 paired depths = 540 samples.
+# Filler: WikiText-2 raw TRAIN split (disjoint from the test split used for perplexity). Revision verified 2026-09-17.
+dataset:
+  name: raq_probe
+  version: v0
+  generator_seed: 0
+  fact_types: [number, id, date, entity, constraint, tool_arg]
+  context_lengths: [512, 1024, 2048]
+  depths: [0.1, 0.5, 0.9]
+  groups_per_cell: 10
+  n_distractors: 2
+  filler_hf_id: Salesforce/wikitext
+  filler_subset: wikitext-2-raw-v1
+  filler_split: train
+  filler_revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  max_new_tokens: 64
