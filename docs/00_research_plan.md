@@ -325,7 +325,7 @@ Her milestone için verilenler: **Amaç**, **Çıktılar**, **Çıkış kriteri*
   - Metrikler: token sayısı, NLL/PPL, EM, TTFT, TPOT, e2e, tokens/s, KV byte (gerçek ve analitik), tepe bellek
   - `bit_accounting` v0 (FP16 yolu)
 - **Çıkış kriterleri:**
-  1. Gerçek modelde tek geçiş ile iki fazlı yol aynı greedy token'ları üretir ve aradaki KL < 1e-4'tür (değer kaydedilir). Golden **tanım gereği** iki fazlı yoldur. Eşleştirme aynı snapshot üzerinden yapıldığı için bu kontrol sadece bir sağlama işlevi görür.
+  1. Gerçek modelde tek geçiş ile iki fazlı yol aynı argmax'ı verir. KL değeri kaydedilir; float32'de KL < 1e-4 şartı aranır. BF16'da kernel yolları farklı olabileceği için KL yalnızca raporlanır, geçme koşulu değildir. Golden **tanım gereği** iki fazlı yoldur ve eşleştirme aynı snapshot üzerinden yapılır; bu kontrol bir sağlamadır. İzleme: `docs/m0_exit.md`.
   2. Aynı seed ile yeniden koşulduğunda token'lar ve metrikler aynıdır. Deterministik olmayan kernel'ler varsa kaydedilir.
   3. Analitik KV byte = tensörlerin nbytes toplamı (tam eşitlik). Ayrıca 2K token'da `memory_allocated` farkıyla en fazla %2 sapma.
   4. Runner deneyin ortasında öldürülüp yeniden başlatıldığında tekrarlanan birim olmaz.
