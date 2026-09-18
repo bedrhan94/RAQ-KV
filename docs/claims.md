@@ -6,7 +6,7 @@ changed after looking at the data. Full rationale: `00_research_plan.md` §I.
 
 | ID | Claim | Experiments | Figures / tables | Decision rule | Threshold status | Status |
 |---|---|---|---|---|---|---|
-| S0 | Measurement protocol is valid (reference for all Δ) | M0a/M0b golden, protocol tests | Setup table | Exit criteria M0 (plan §G) | n/a | running |
+| S0 | Measurement protocol is valid (reference for all Δ) | M0a/M0b golden, protocol tests | Setup table | Exit criteria M0 (plan §G) | n/a | criteria 1-6 met 2026-09-19; 7-8 pending the golden QA runs |
 | H1 | Sensitivity is heterogeneous across layer / KV-head / token type at fixed bit position | M1, M2 | Layer and bit heatmaps | Top 10% cells carry ≥ 50% damage (support); ≤ 20% (refute) | PROPOSED | planned |
 | H2 | Adaptive allocation beats uniform INT4 + SECDED and magnitude-only at equal total bits (±1%, metadata included) | M3 gate-2, M5 | Pareto fronts, paired table | Paired bootstrap 95% CI excludes 0; Holm-corrected McNemar p < 0.05; ≥ 2 model families | PROPOSED | planned |
 | H3 | Joint score beats the best single-signal policy | M5 ablations | Ablation table | Significant at equal budget; every ablation degrades | PROPOSED | planned |
@@ -23,3 +23,5 @@ changed after looking at the data. Full rationale: `00_research_plan.md` §I.
   policies exist (M5). Weak GSM8K sensitivity in M1–M3 is expected by construction and must not be read as evidence
   against H1.
 - **WikiText cache-conditioned perplexity** measures general LM degradation from the cached prefix.
+- **Noise floor:** in bf16, cache-geometry changes alone move logits by up to ~0.3 (KL ~1e-4) without changing the
+  argmax (D10). Effect sizes below that floor are not evidence of anything.

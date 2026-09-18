@@ -60,6 +60,20 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D10 — bfloat16 numerical noise floor for cache-geometry changes (2026-09-19)
+
+- **Measurement:** physically pruning cache entries versus hiding the same entries with a 2D attention mask is
+  mathematically identical. On GPU: float32 gives max |Δlogit| = 0.0000 (max KL 9e-9, both sdpa and eager); bfloat16
+  gives max |Δlogit| = 0.25 (sdpa) / 0.41 (eager), max KL ~1e-4, argmax unchanged. Re-running the same path twice
+  gives exactly 0 (kernels are deterministic), and a mask that hides nothing also gives exactly 0 — so the gap comes
+  from changing the set of accumulated keys, not from the mask path.
+- **Consequences:**
+  - In bf16, any effect below ~0.3 logits / ~1e-4 KL cannot be attributed to an injected fault or to quantization.
+    M2 must report this floor next to its effect sizes, and threshold-based SDC definitions must sit above it.
+  - Conditions are always compared through the *same* code path (same cache geometry and kernels), so the floor
+    largely cancels in paired comparisons; cross-geometry comparisons (e.g. pruned vs unpruned) carry it.
+  - The pruning-equivalence test gates on argmax equality plus a KL bound in bf16, and on exact logits in float32.
+
 ## D9 — RAQ-Probe v0 design (2026-09-17)
 
 - **Primary metric = minimum gold-token logit margin over the answer value** (`answer_margin_min`:
