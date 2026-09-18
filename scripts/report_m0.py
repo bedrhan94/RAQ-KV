@@ -60,11 +60,17 @@ def _ppl_section(raw_root: Path) -> tuple[str, dict[str, Any]]:
     identical = all(per_seed_nll[seeds[0]] == per_seed_nll[s] for s in seeds[1:]) if len(seeds) > 1 else None
     exact_kv = bool((df["kv_bytes_actual"] == df["kv_bytes_analytic"]).all())
     alloc = pd.to_numeric(df["prefill_cuda_allocated_delta_bytes"], errors="coerce")
-    alloc_ratio = float((alloc / df["kv_bytes_analytic"]).max())
+    ratios = (alloc / df["kv_bytes_analytic"]).dropna()
+    # The first measured unit of a process also pays one-off allocations (kernel workspaces, rotary buffers), so the
+    # steady-state statistics are the meaningful ones; tests/slow measures a clean prefill separately.
+    steady = ratios.drop(index=df.groupby("exp_id").head(1).index, errors="ignore")
+    alloc_ratio = float(steady.max()) if len(steady) else float(ratios.max())
     facts = {
         "determinism_identical_token_nll": identical,
         "kv_analytic_equals_tensor_bytes": exact_kv,
-        "max_allocator_to_analytic_ratio": alloc_ratio,
+        "allocator_ratio_median": float(ratios.median()),
+        "allocator_ratio_max_steady_state": alloc_ratio,
+        "allocator_ratio_max_including_first_unit": float(ratios.max()),
         "n_units": len(df),
         "corpus_ppl": corpus_ppl(df["nll_sum"].tolist(), df["n_scored_tokens"].tolist()),
         "git": sorted({r["provenance"]["git"]["describe"] for m in manifests for r in m["runs"]}),
@@ -73,7 +79,9 @@ def _ppl_section(raw_root: Path) -> tuple[str, dict[str, Any]]:
         "",
         f"- Identical per-token NLL across seeds: **{identical}** (greedy teacher forcing has no stochasticity)",
         f"- Analytic KV bytes == sum of tensor bytes: **{exact_kv}**",
-        f"- Allocator delta / analytic KV bytes: **{alloc_ratio:.4f}** (criterion: within 2%)",
+        f"- Allocator delta / analytic KV bytes: median **{ratios.median():.4f}**, steady-state max "
+        f"**{alloc_ratio:.4f}** (criterion: within 2%); including each run's first unit the max is "
+        f"{ratios.max():.4f}, which carries one-off warm-up allocations",
     ]
     return "\n".join(lines) + "\n", facts
 
@@ -101,7 +109,8 @@ def _probe_section(raw_root: Path) -> tuple[str, dict[str, Any]]:
     df = pd.json_normalize(records, max_level=1)
     df["correct"] = df["correct"].astype(bool)
     cells = df.groupby(["meta.fact_type", "meta.depth_nominal"])["correct"].mean()
-    worst_cell = cells.idxmin(), float(cells.min())
+    worst_type, worst_depth = cells.idxmin()
+    worst_cell = f"{worst_type} @ depth {float(worst_depth):g}", float(cells.min())
     lines = [
         f"Overall accuracy **{_fmt(df['correct'].mean())}** over {len(df)} samples "
         f"(strict EM {_fmt(df['em_strict'].mean())}, distractor mentioned {_fmt(df['mentions_distractor'].mean())}).",
@@ -126,14 +135,14 @@ def _probe_section(raw_root: Path) -> tuple[str, dict[str, Any]]:
         "```",
         "",
         f"- Weakest (fact type, depth) cell: **{worst_cell[0]}** at accuracy {worst_cell[1]:.3f} "
-        f"(criterion 7: every cell in 0.85–1.00)",
+        f"(criterion 7: every cell in 0.85-1.00)",
         f"- Answer NLL (float64) median {df['answer_nll_mean'].median():.3e}, "
         f"max {df['answer_nll_mean'].max():.3e}",
     ]
     facts = {
         "accuracy": float(df["correct"].mean()),
         "min_cell_accuracy": worst_cell[1],
-        "min_cell": str(worst_cell[0]),
+        "min_cell": worst_cell[0],
         "margin_min_q10_correct": float(df[df["correct"]]["answer_margin_min"].quantile(0.1)),
         "n_samples": len(df),
     }

@@ -5,6 +5,7 @@ after any transformers upgrade.
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, score_through_cache
@@ -72,6 +73,17 @@ def test_greedy_decode_matches_generate(tiny_model, token_ids):
     # Same result when the first part of the prompt comes from a snapshot.
     snap = prefill(tiny_model, prompt[:, :15])
     assert greedy_decode(tiny_model, prompt[:, 15:], max_new_tokens=8, snapshot=snap).tokens == ref_tokens
+
+
+def test_greedy_decode_reports_step_margins(tiny_model, token_ids):
+    prompt = token_ids[:, :20]
+    out = greedy_decode(tiny_model, prompt, max_new_tokens=4)
+    assert len(out.margins) == len(out.tokens) == 4
+    assert all(m >= 0 for m in out.margins)  # chosen token is the argmax by construction
+    with torch.no_grad():
+        logits = tiny_model(prompt).logits[0, -1].float()
+    top2 = torch.topk(logits, 2).values
+    assert out.margins[0] == pytest.approx(float(top2[0] - top2[1]), abs=1e-5)
 
 
 def test_greedy_decode_stops_on_eos(tiny_model, token_ids):

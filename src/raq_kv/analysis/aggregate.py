@@ -66,6 +66,10 @@ def _qa_row(condition: str, g: pd.DataFrame) -> dict[str, Any]:
     for out_col, col in optional.items():
         if col in g:
             row[out_col] = pd.to_numeric(g[col], errors="coerce").mean()
+    if "gen_margin_min_value" in g:
+        gen_margin = pd.to_numeric(g["gen_margin_min_value"], errors="coerce")
+        row["gen_margin_min_value_mean_if_correct"] = gen_margin[g["correct"].astype(bool)].mean()
+        row["gen_margin_value_coverage"] = gen_margin.notna().mean()
     if "answer_margin_min" in g:
         # Margin of a correct answer is distance to a flip; of a wrong answer, distance from being right. Never pool.
         margin = pd.to_numeric(g["answer_margin_min"], errors="coerce")

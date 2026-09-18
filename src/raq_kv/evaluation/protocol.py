@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 from torch import nn
@@ -121,6 +122,7 @@ def score_answer(
 @dataclass
 class GenerationResult:
     tokens: list[int]
+    margins: list[float]  # per step: logit(chosen) - logit(runner-up); the decode-path distance to a different token
     stopped_on_eos: bool
     final_next_position: int
 
@@ -159,10 +161,13 @@ def greedy_decode(
     logits = out.logits
 
     tokens: list[int] = []
+    margins: list[float] = []
     stopped = False
     for step in range(max_new_tokens):
-        token = int(logits[0, -1].argmax().item())
+        top2 = torch.topk(logits[0, -1].float(), 2)
+        token = int(top2.indices[0].item())
         tokens.append(token)
+        margins.append(float(top2.values[0] - top2.values[1]))
         if on_token is not None:
             on_token(token)
         if eos_token_ids and token in eos_token_ids:
@@ -177,4 +182,18 @@ def greedy_decode(
             use_cache=True,
         ).logits
         next_pos += 1
-    return GenerationResult(tokens=tokens, stopped_on_eos=stopped, final_next_position=next_pos)
+    return GenerationResult(tokens=tokens, margins=margins, stopped_on_eos=stopped, final_next_position=next_pos)
+
+
+def token_char_spans(tokenizer: Any, tokens: list[int]) -> tuple[list[tuple[int, int]], str]:
+    """Character span of each generated token inside the incrementally decoded text.
+
+    Byte-level BPE makes per-token decoding unreliable, so spans come from the growth of the decoded prefix.
+    """
+    spans: list[tuple[int, int]] = []
+    previous = ""
+    for i in range(len(tokens)):
+        current = tokenizer.decode(tokens[: i + 1], skip_special_tokens=True)
+        spans.append((len(previous), len(current)))
+        previous = current
+    return spans, previous

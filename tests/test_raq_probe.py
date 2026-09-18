@@ -93,6 +93,20 @@ def test_depth_variants_share_filler_and_distractors(tokenizer):
     assert depths == sorted(depths) and depths[0] < 0.3 and depths[-1] > 0.7
 
 
+def test_token_char_spans_cover_generated_text(tokenizer):
+    from raq_kv.evaluation.protocol import token_char_spans
+
+    text = '<tool_call>\n{"name": "get_account_balance", "arguments": {"account_number": "25768669"}}\n</tool_call>'
+    tokens = tokenizer(text, add_special_tokens=False)["input_ids"]
+    spans, decoded = token_char_spans(tokenizer, tokens)
+    assert decoded == text
+    assert spans[0][0] == 0 and spans[-1][1] == len(text)
+    assert all(a <= b for a, b in spans) and all(x[1] == y[0] for x, y in zip(spans, spans[1:], strict=False))
+    v0 = text.index("25768669")
+    value_tokens = [i for i, (a, b) in enumerate(spans) if a < v0 + 8 and b > v0]
+    assert value_tokens and "25768669" in tokenizer.decode([tokens[i] for i in value_tokens])
+
+
 def test_builder_is_deterministic(tokenizer):
     a = make_builder(tokenizer).build_group("entity", 512, 1)
     b = make_builder(tokenizer).build_group("entity", 512, 1)

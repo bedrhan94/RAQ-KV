@@ -26,7 +26,7 @@ from raq_kv.data.wikitext import PPLChunk, chunks_fingerprint, make_chunks, toke
 from raq_kv.evaluation.latency import measure_generation_latency
 from raq_kv.evaluation.memory import allocator_delta, cuda_memory, reset_peak
 from raq_kv.evaluation.metrics import nll_stats
-from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, score_through_cache
+from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, score_through_cache, token_char_spans
 from raq_kv.evaluation.scoring import SCORERS
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
@@ -192,6 +192,32 @@ class QAGenerate:
         return {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict(),
                 "eos_token_ids": sorted(self.lm.eos_token_ids)}
 
+    @staticmethod
+    def _generation_margins(tok: Any, gen: Any, prediction: str, gold: str | None) -> dict[str, Any]:
+        """Decode-path margins: distance to a different token at each generated step.
+
+        Unlike the teacher-forced margin these do not depend on our tokenization of the gold string, which matters
+        for multi-token answers the model may split differently (observed on invented entity names).
+        """
+        out: dict[str, Any] = {
+            "gen_margin_min_all": min(gen.margins) if gen.margins else None,
+            "gen_margin_mean_all": sum(gen.margins) / len(gen.margins) if gen.margins else None,
+            "gen_margin_min_value": None,
+            "gen_value_tokens": None,
+        }
+        if not gold or gold not in prediction:
+            return out
+        spans, text = token_char_spans(tok, gen.tokens)
+        start = text.find(gold)
+        if start < 0:
+            return out
+        end = start + len(gold)
+        inside = [m for (a, b), m in zip(spans, gen.margins, strict=True) if a < end and b > start]
+        if inside:
+            out["gen_margin_min_value"] = min(inside)
+            out["gen_value_tokens"] = len(inside)
+        return out
+
     def run_unit(self, unit_key: str) -> dict[str, Any]:
         assert self.lm is not None, "setup() must be called first"
         s = self.samples[unit_key]
@@ -208,6 +234,7 @@ class QAGenerate:
         gen = greedy_decode(model, query_ids, s.max_new_tokens, snapshot=snapshot,
                             eos_token_ids=set(self.lm.eos_token_ids))
         prediction = tok.decode(gen.tokens, skip_special_tokens=True)
+        gen_margins = self._generation_margins(tok, gen, prediction, s.reference.get("gold"))
         record: dict[str, Any] = {
             "sample_id": unit_key,
             "meta": s.meta,
@@ -217,6 +244,7 @@ class QAGenerate:
             "generated_tokens": len(gen.tokens),
             "stopped_on_eos": gen.stopped_on_eos,
             "reference": s.reference,
+            **gen_margins,
             **SCORERS[s.scorer](prediction, s.reference),
         }
 

@@ -1,0 +1,11 @@
+# Definitive M0 golden RAQ-Probe run: identical to m0b_golden_probe but recorded with decode-path margins
+# (gen_margin_*), added after the first golden run showed teacher-forced margins can be negative on correct answers
+# whose surface string the model tokenizes differently (invented entity names). See decisions D9.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m0b_golden_probe_margins
+task:
+  kind: qa_generate
+  score_answer_nll: true
+seed: 0
