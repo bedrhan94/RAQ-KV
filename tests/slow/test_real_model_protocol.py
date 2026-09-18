@@ -91,6 +91,12 @@ def test_kv_bytes_match_cuda_allocator(lm):
 
 
 def test_middle_pruning_equals_masking(lm, ids):
+    """Physically pruning cache entries must equal masking them (identical mathematics).
+
+    In float32 the two paths agree to ~1e-7. In bfloat16 they differ by ~0.3 in logits (KL ~1e-4) purely because
+    dropping keys changes the accumulation set/order; argmax still agrees. That gap is the bf16 numerical noise
+    floor for cache-geometry changes — see docs/m0_exit.md; effects below it cannot be attributed to a fault.
+    """
     prefix, n = 256, 8
     pruned = [1, 17, 18, 100, 101, 102, 200, 255]
     keep = torch.tensor([i for i in range(prefix) if i not in pruned])
@@ -100,7 +106,14 @@ def test_middle_pruning_equals_masking(lm, ids):
     mask = torch.ones(1, prefix + n, dtype=torch.long, device=lm.device)
     mask[0, pruned] = 0
     with torch.no_grad():
-        ref = lm.model(chunk, past_key_values=full.to_cache(), position_ids=pos, attention_mask=mask).logits.float()
-        got = lm.model(chunk, past_key_values=full.select_tokens(keep).to_cache(), position_ids=pos).logits.float()
-    tol = 1e-3 if lm.dtype == torch.float32 else 5e-2
-    assert float((ref - got).abs().max()) < tol
+        ref = lm.model(chunk, past_key_values=full.to_cache(), position_ids=pos, attention_mask=mask).logits[0].float()
+        got = lm.model(chunk, past_key_values=full.select_tokens(keep).to_cache(), position_ids=pos).logits[0].float()
+    lp_ref, lp_got = torch.log_softmax(ref, -1), torch.log_softmax(got, -1)
+    max_kl = float((lp_ref.exp() * (lp_ref - lp_got)).sum(-1).max())
+    print(f"\n[diagnostic] dtype={lm.dtype} pruned-vs-masked max|logit delta|="
+          f"{float((ref - got).abs().max()):.4f}, max KL={max_kl:.3e}")
+    assert torch.equal(ref.argmax(-1), got.argmax(-1))
+    if lm.dtype == torch.float32:
+        assert float((ref - got).abs().max()) < 1e-3
+    else:
+        assert max_kl < 5e-3
