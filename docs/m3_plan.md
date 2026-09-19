@@ -22,7 +22,9 @@ error rate over each arm's own storage**, compare four ways of spending the same
 | **C** | **32** | **none** | SECDED | 4.8640 | spends every one of B's data check bits on precision instead |
 | **D** | 64 | SECDED, **layers 9–27** | SECDED | 4.8626 | half to precision, half to protection where D21 found damage |
 | **E** | 64 | SECDED, **layers 0–18** | SECDED | 4.8626 | **bit-identical to D**, protection placed where D21 found none |
-| A | 128 | none | none | 4.2567 (−12.3%) | cost reference, *not* iso-budget: the M1/M2 operating point |
+| A | 128 | none | none | 4.2604 (−12.3%) | cost reference, *not* iso-budget: the M1/M2 operating point |
+| G | 128 | none | SECDED | 4.3581 (−10.3%) | cost reference, added after A–E: how little does the 98% cost? |
+| H | 128 | none | **range check, no code** | 4.2605 (**+0.075%** over A) | cost reference, added after D27: is the fix a code at all? |
 
 `scripts/check_iso_budget.py` costs the configs before any of them runs and exits non-zero if the set is not
 within tolerance; its arithmetic is pinned bit-for-bit against the real quantizer and codec in
@@ -44,9 +46,11 @@ within tolerance; its arithmetic is pinned bit-for-bit against the real quantize
 ## The fault model (D23)
 
 A trial is a **bit error rate applied to everything the arm declares it stores**: codes, quantization metadata,
-and its own ECC check bits. Check-bit flips are included and are not a curiosity — they make the decoder compute
-a syndrome for an error that did not happen and "repair" intact data. Sparing them would hand the protected arms
-an immunity no physical memory grants, and the equal-budget claim rests on exactly that being honest.
+its ECC check bits, and — for the range-guarded arm — the guard's own stored bounds. Check-bit flips are not a
+curiosity: they make the decoder compute a syndrome for an error that did not happen and "repair" intact data.
+Bound flips are not either: a corrupted bound narrows the range and the guard clamps hundreds of valid scales
+(D29). Sparing either would hand the protected arms an immunity no physical memory grants, and the equal-budget
+claim rests on exactly that being honest.
 
 Two physical regimes matter, and both are already reachable without new code (measured occupancy, D23):
 
@@ -90,5 +94,5 @@ metadata-independent policies and an explicit DUE erasure policy, ECC bits in `B
 storage-wide fault model, the `protection_arm` task, the five arm configs, the rate sweep, and the iso-budget
 checker.
 
-Open: run the rate calibration, then the campaign; report SDC/DUE/masked per arm with paired CIs; export ECC
-golden vectors for later RTL (plan §39).
+Run and reported (see `docs/m3_exit.md`): the rate calibration, the six arms at BER 1e-6, arms D/E and G/H at
+1e-5. Open: the long-context placement test, and ECC golden vectors for later RTL (plan §39).
