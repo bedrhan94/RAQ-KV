@@ -16,6 +16,7 @@ from raq_kv.config.schema import (
     CachePPLTask,
     ExperimentConfig,
     FaultInjectionTask,
+    FaultQATask,
     GSM8KConfig,
     LatencyTask,
     QATask,
@@ -34,7 +35,7 @@ from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, sco
 from raq_kv.evaluation.scoring import SCORERS
 from raq_kv.experiments.ids import experiment_id
 from raq_kv.faults.injector import injected_snapshot
-from raq_kv.faults.plan import describe_site, generate_plan, save_plan
+from raq_kv.faults.plan import describe_site, generate_plan, generate_plan_in_tokens, save_plan
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
 from raq_kv.quantization.apply import QuantReport, quantize_region, quantize_snapshot, quantize_to_codes
@@ -481,6 +482,106 @@ class FaultInjection:
         }
 
 
+class FaultQA:
+    """Role-targeted faults on the probe: the Q49 vehicle.
+
+    For each sample the cached document is quantized once, the fault-free answer is generated as that sample's
+    golden, and then faults are aimed at the tokens holding the answer, at same-type distractor tokens, at filler
+    tokens and at quantization metadata. Outcomes are task-level: did the answer stop being correct?
+    """
+
+    def __init__(self, cfg: ExperimentConfig) -> None:
+        assert isinstance(cfg.task, FaultQATask) and cfg.quantization is not None
+        self.cfg = cfg
+        self.task: FaultQATask = cfg.task
+        self.tokenizer = load_tokenizer(cfg.model)
+        samples = build_raq_probe(cfg.dataset, self.tokenizer, dict(cfg.model.chat_template_kwargs))
+        if self.task.n_samples is not None:
+            step = max(1, len(samples) // self.task.n_samples)
+            samples = samples[::step][: self.task.n_samples]  # spread over types, lengths and depths
+        self.samples = {s.sample_id: s for s in samples}
+        self._fingerprint = samples_fingerprint(samples)
+        self.lm: LoadedModel | None = None
+
+    def unit_keys(self) -> list[str]:
+        return list(self.samples)
+
+    def data_fingerprint(self) -> dict[str, Any]:
+        return {"raq_probe_samples_sha256": self._fingerprint, "n_samples": len(self.samples)}
+
+    def setup(self) -> dict[str, Any]:
+        self.lm = load_model(self.cfg.model)
+        return {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict()}
+
+    @staticmethod
+    def _role_tokens(sample: PromptSample, cache_len: int) -> dict[str, list[int]]:
+        """Cached token indices per role: the answer's own tokens, distractor values, and everything else."""
+        target, distractor = [], []
+        for span in sample.spans:
+            if span.label != "fact_value":
+                continue
+            bucket = target if span.role == "target" else distractor
+            bucket.extend(range(span.token_start, min(span.token_end, cache_len)))
+        special = set(target) | set(distractor)
+        filler = [t for t in range(cache_len) if t not in special]
+        return {"target_value": target, "distractor_value": distractor, "filler": filler}
+
+    def run_unit(self, unit_key: str) -> dict[str, Any]:
+        assert self.lm is not None and self.cfg.quantization is not None
+        sample = self.samples[unit_key]
+        model, dev, tok = self.lm.model, self.lm.device, self.lm.tokenizer
+        ids = sample.prompt_ids.to(dev).unsqueeze(0)
+        query_ids = ids[:, sample.cache_len :]
+        eos = set(self.lm.eos_token_ids)
+
+        reset_peak(dev)
+        snapshot = prefill(model, ids[:, : sample.cache_len])
+        qkv = quantize_to_codes(snapshot, self.cfg.quantization)
+        base = qkv.to_snapshot()
+        golden_gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=base, eos_token_ids=eos)
+        golden_text = tok.decode(golden_gen.tokens, skip_special_tokens=True)
+        golden_score = SCORERS[sample.scorer](golden_text, sample.reference)
+
+        roles = self._role_tokens(sample, sample.cache_len)
+        seed = derive_seed(self.cfg.seed, unit_key, "fault_qa")
+        plan = []
+        for role, count in (("target_value", self.task.n_target), ("distractor_value", self.task.n_distractor),
+                            ("filler", self.task.n_filler)):
+            plan += generate_plan_in_tokens(qkv, derive_seed(seed, role), roles[role], role, count)
+        plan += generate_plan(qkv, seed=derive_seed(seed, "meta"), n_uniform=0, n_metadata=self.task.n_metadata)
+
+        rows = []
+        for _ in range(self.task.n_control):
+            text = tok.decode(greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=base,
+                                            eos_token_ids=eos).tokens, skip_special_tokens=True)
+            rows.append({"stratum": "no_fault", "target": "none", "layer": -1, "part": "none", "bit": -1,
+                         "prediction_changed": text != golden_text,
+                         **{f"faulty_{k}": v for k, v in SCORERS[sample.scorer](text, sample.reference).items()}})
+        for site in plan:
+            with injected_snapshot(qkv, site, base) as (faulty, info):
+                gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=faulty, eos_token_ids=eos)
+            text = tok.decode(gen.tokens, skip_special_tokens=True)
+            score = SCORERS[sample.scorer](text, sample.reference)
+            rows.append({
+                **describe_site(site, qkv), **info,
+                "prediction_changed": text != golden_text,
+                "prediction": text if text != golden_text else None,
+                "gen_margin_min_all": min(gen.margins) if gen.margins else None,
+                **{f"faulty_{k}": v for k, v in score.items()},
+            })
+
+        return {
+            "sample_id": unit_key,
+            "meta": sample.meta,
+            **kv_record_fields(self.lm, base, sample.cache_len, qkv.report),
+            "golden_correct": bool(golden_score["correct"]),
+            "golden_prediction": golden_text,
+            "role_token_counts": {role: len(tokens) for role, tokens in roles.items()},
+            "n_sites": len(plan),
+            "faults": rows,
+        }
+
+
 def build_task(cfg: ExperimentConfig) -> Task:
     if isinstance(cfg.task, CachePPLTask):
         return CachePPL(cfg)
@@ -492,4 +593,6 @@ def build_task(cfg: ExperimentConfig) -> Task:
         return QuantSensitivity(cfg)
     if isinstance(cfg.task, FaultInjectionTask):
         return FaultInjection(cfg)
+    if isinstance(cfg.task, FaultQATask):
+        return FaultQA(cfg)
     raise NotImplementedError(f"no task for kind '{cfg.task.kind}'")

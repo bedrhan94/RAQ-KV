@@ -156,8 +156,27 @@ class FaultInjectionTask(StrictModel):
     n_control: int = Field(default=2, ge=0, description="No-fault scorings; must produce exactly zero deltas")
 
 
+class FaultQATask(StrictModel):
+    """Faults aimed at token roles on the probe: does corrupting the KV of the answer-bearing token matter more
+    than corrupting filler? Outcomes are task-level (the answer changes), not token-level.
+
+    Strata are the probe's own span labels — ``target_value`` (the tokens holding the answer), ``distractor_value``
+    (same-type, task-irrelevant), ``filler`` (everything else in the document) — plus ``metadata`` and no-fault
+    controls. This is the Q49 vehicle.
+    """
+
+    kind: Literal["fault_qa"] = "fault_qa"
+    n_samples: int | None = Field(default=120, description="Probe samples to use; None means all")
+    n_target: int = Field(default=8, ge=0)
+    n_distractor: int = Field(default=6, ge=0)
+    n_filler: int = Field(default=8, ge=0)
+    n_metadata: int = Field(default=4, ge=0)
+    n_control: int = Field(default=1, ge=0)
+
+
 Task = Annotated[
-    CachePPLTask | LatencyTask | QATask | QuantSensitivityTask | FaultInjectionTask, Field(discriminator="kind")
+    CachePPLTask | LatencyTask | QATask | QuantSensitivityTask | FaultInjectionTask | FaultQATask,
+    Field(discriminator="kind"),
 ]
 
 _TASK_DATASETS: dict[str, tuple[str, ...]] = {
@@ -166,6 +185,7 @@ _TASK_DATASETS: dict[str, tuple[str, ...]] = {
     "qa_generate": ("raq_probe", "gsm8k"),
     "quant_sensitivity": ("wikitext2",),
     "fault_injection": ("wikitext2",),
+    "fault_qa": ("raq_probe",),
 }
 
 
@@ -214,11 +234,11 @@ class ExperimentConfig(StrictModel):
     def _check_lengths(self) -> ExperimentConfig:
         if self.dataset.name not in _TASK_DATASETS[self.task.kind]:
             raise ValueError(f"task '{self.task.kind}' does not support dataset '{self.dataset.name}'")
-        if isinstance(self.task, FaultInjectionTask):
+        if isinstance(self.task, FaultInjectionTask | FaultQATask):
             if self.quantization is None:
-                raise ValueError("fault_injection needs a quantization section: faults land in stored codes")
+                raise ValueError(f"{self.task.kind} needs a quantization section: faults land in stored codes")
             if self.quantization.residual_window:
-                raise ValueError("fault_injection does not support a residual window yet")
+                raise ValueError(f"{self.task.kind} does not support a residual window yet")
         if isinstance(self.task, LatencyTask) and isinstance(self.dataset, WikiText2Config):
             corpus_tokens = self.dataset.n_chunks * (self.dataset.prefix_len + self.dataset.continuation_len + 1)
             if max(self.task.prompt_lens) > corpus_tokens:

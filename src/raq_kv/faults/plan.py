@@ -111,6 +111,28 @@ def generate_plan(qkv: QuantizedKV, seed: int, n_uniform: int, n_msb: int = 0, n
     return sites
 
 
+def generate_plan_in_tokens(qkv: QuantizedKV, seed: int, tokens: list[int], stratum: str, n: int) -> list[FaultSite]:
+    """Draw ``n`` code sites whose token index is restricted to ``tokens``.
+
+    This is what makes Q49 answerable: the probe knows which cached tokens hold the target fact, which hold
+    same-type distractors and which are filler, so faults can be aimed at a role instead of at random storage.
+    """
+    rng = random.Random(seed)
+    parts = _quantized_parts(qkv)
+    if not parts or not tokens:
+        return []
+    sites = []
+    for _ in range(n):
+        layer, part, qt = parts[rng.randrange(len(parts))]
+        batch, heads, n_tokens, channels = qt.codes.shape
+        token = tokens[rng.randrange(len(tokens))]
+        if token >= n_tokens:
+            continue
+        index = (rng.randrange(batch), rng.randrange(heads), token, rng.randrange(channels))
+        sites.append(FaultSite(layer, part, "code", index, rng.randrange(qt.bits), stratum))
+    return sites
+
+
 def describe_site(site: FaultSite, qkv: QuantizedKV) -> dict[str, Any]:
     """Human- and analysis-readable labels for one site (bit significance, token/head position, group)."""
     tensor = qkv.part(site.layer, site.part)

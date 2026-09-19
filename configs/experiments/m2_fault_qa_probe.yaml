@@ -1,0 +1,20 @@
+# Q49: does a bit flip in the KV of the answer-bearing token matter more than one in filler?
+# Faults are aimed at token roles the probe knows by construction (target value, same-type distractor, filler)
+# plus quantization metadata, at the safe operating point. Outcomes are task-level: did the answer stop being
+# correct? Position is recorded (meta.depth_actual) so the role effect can be separated from depth.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m2_fault_qa_probe
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: fault_qa
+  n_samples: 120
+  n_target: 8
+  n_distractor: 6
+  n_filler: 8
+  n_metadata: 4
+  n_control: 1
+seed: 0

@@ -123,6 +123,38 @@ def test_lsb_sites_move_the_stored_value_least_but_not_negligibly():
     assert lsb >= 1 / ((1 << 4) - 1) - 1e-9  # one code step, not "nothing"
 
 
+def test_role_targeted_sites_stay_inside_their_tokens():
+    qkv = _qkv(tokens=20)
+    from raq_kv.faults.plan import generate_plan_in_tokens
+
+    target_tokens = [5, 6, 7]
+    sites = generate_plan_in_tokens(qkv, seed=2, tokens=target_tokens, stratum="target_value", n=30)
+    assert len(sites) == 30
+    assert all(s.stratum == "target_value" and s.target == "code" for s in sites)
+    assert {s.index[2] for s in sites} <= set(target_tokens)
+    assert len({s.index[2] for s in sites}) > 1  # not stuck on one token
+    assert {s.part for s in sites} == {"keys", "values"}  # both parts reachable
+
+
+def test_role_tokens_split_target_distractor_and_filler():
+    from raq_kv.data.prompts import PromptSample, Span
+    from raq_kv.experiments.tasks import FaultQA
+
+    spans = (
+        Span("fact_value", "target", 0, 1, 10, 13, "4821"),
+        Span("fact_value", "distractor", 0, 1, 30, 32, "7777"),
+        Span("fact_sentence", "target", 0, 1, 5, 20, "..."),  # not a value span: ignored
+    )
+    sample = PromptSample(sample_id="s", prompt_text="", prompt_ids=torch.zeros(40, dtype=torch.long),
+                          cache_len=35, scorer="exact_value", reference={}, gold_text=None,
+                          gold_scored_chars=None, max_new_tokens=8, spans=spans)
+    roles = FaultQA._role_tokens(sample, sample.cache_len)
+    assert roles["target_value"] == [10, 11, 12]
+    assert roles["distractor_value"] == [30, 31]
+    assert set(roles["filler"]).isdisjoint({10, 11, 12, 30, 31})
+    assert len(roles["filler"]) == 35 - 5
+
+
 def test_describe_site_labels_codes_and_metadata():
     qkv = _qkv()
     code = describe_site(FaultSite(0, "keys", "code", (0, 1, 2, 3), 3, "uniform"), qkv)
