@@ -186,19 +186,27 @@ def main() -> int:
     parser.add_argument("--output-root", default="outputs")
     parser.add_argument("--campaign", default="m2_fault_campaign")
     parser.add_argument("--quant-map", default="m1_quant_sensitivity_blocks")
-    parser.add_argument("--probe", default="m2_fault_qa_probe")
+    parser.add_argument("--probe", nargs="*", default=["m2_fault_qa_probe", "m2_fault_qa_burst",
+                                                       "m2_fault_qa_burst_2bit", "m2_fault_qa_row"])
     args = parser.parse_args()
     root = resolve_output_root(args.output_root)
     raw = root / "raw"
     rng = np.random.default_rng(0)
 
-    body = ["# M2: single-bit faults in the stored KV cache", "", __doc__.split("\n\n", 1)[1], ""]
+    body = ["# M2: faults in the stored KV cache", "", __doc__.split("\n\n", 1)[1], ""]
     campaign = load_flat(raw, args.campaign, "faults")
-    for title, (text, facts) in (
+    sections = [
         (f"Damage profile ({args.campaign})", damage_section(campaign) if not campaign.empty else ("_no run_", {})),
         ("Q48 — do the two sensitivities agree?", q48_section(raw, campaign, args.quant_map, rng)),
-        ("Q49 — does the corrupted token's role matter?", q49_section(load_flat(raw, args.probe, "faults"))),
-    ):
+    ]
+    # Q49 was measured at three corruption scales; the answer depends on which, so all of them are reported.
+    for probe_name in args.probe:
+        probe = load_flat(raw, probe_name, "faults")
+        if not probe.empty:
+            burst = int(probe["n_flips"].max()) if "n_flips" in probe else 1
+            sections.append((f"Q49 — role of the corrupted token ({probe_name}, up to {burst} bits per fault)",
+                             q49_section(probe)))
+    for title, (text, facts) in sections:
         body += [f"## {title}", "", text, ""]
         print(f"[{title}] {facts}")
 
