@@ -16,7 +16,7 @@ Criteria from `00_research_plan.md` §G (M1). M1 closes when every row is ✅ wi
 | 2 | Quantizer verified independently of the model | ✅ | `tests/test_quantization.py`: grid-representable values round-trip exactly, error decreases monotonically with bits, finer granularity never worse, bit accounting equals the stored objects, region patching touches only its region |
 | 3 | Quality vs precision/granularity measured with paired statistics | ✅ | `outputs/reports/m1_quantization_report.md`: 13 variants × 40 chunks, paired per-token ΔNLL with bootstrap CIs (D12) |
 | 4 | Effective bits include quantization metadata | ✅ | fp16 scales/zeros counted in `BitBudget.quant_metadata_bits`; e.g. K4/chan+V4/token = 4.14 bits/value, not 4.00 |
-| 5 | Per-region sensitivity profile with a measured noise floor | ✅ | `m1_quant_sensitivity` (40 chunks × 56 regions + 320 null measurements): noise band [−0.0048, +0.0038] nats; 18/56 regions clear it; top 10% carry 40.2%; split-half stability 0.901; ANOVA F = 18.1; keys 11× values (D13) |
+| 5 | Per-region sensitivity profile with a measured noise floor | ✅ | `m1_quant_sensitivity` (40 chunks × 56 regions + 320 nulls): noise band [−0.0048, +0.0038] nats; **24/56 regions differ from the null (Welch, Holm)**, 18 clear the conservative band; top 10% carry 40.2%; split-half stability 0.901; keys 11× values (D13). Head-level map (448 regions): only 37 differ from the null (D14) |
 | 6 | Positive control: the profiler detects heterogeneity when it exists | ✅ | `m1_quant_sensitivity_mismatched` (per-token key stress): top 10% of regions carry 76.6% of damage, split-half Spearman 0.93 (Spearman-Brown 0.96), ANOVA F = 572, keys 0.458 vs values 0.0007 nats |
 | 7 | Defaults for later milestones stated and justified | ✅ | D12: keys per-channel, values per-token; operating points 8-bit (lossless), 4-bit (+0.14 PPL), 2-bit (PPL 23.0) |
 
@@ -30,11 +30,11 @@ Criteria from `00_research_plan.md` §G (M1). M1 closes when every row is ✅ wi
 
 ## Handover to M2
 
-- **Shared granularity for Q48.** The correlation between quantization sensitivity and fault sensitivity can only
-  be computed where both maps exist. The layer×part map (56 cells) is measured; a head×part map (448 cells) is
-  being measured to see whether head-level quantization sensitivity is resolvable at all — a single head is 1/8 of
-  a part, so its damage may fall inside the null band. If it does, Q48 runs at layer×part and that limitation is
-  stated; the fault side can still be analysed at head and bit granularity on its own.
+- **Shared granularity for Q48 is layer×part** (D14): at head level only 8% of the 448 regions are distinguishable
+  from the null, versus 43% of the 56 layer×part regions, and rank stability drops from 0.90 to 0.72. The fault
+  side may still be analysed at head and bit granularity on its own; the correlation uses layer×part.
+- **Sensitivity is declared by a Welch test against the null distribution with Holm correction** (D14), with the
+  conservative band criterion reported alongside.
 - **The fault campaign needs its own null condition**, and it is not either of the existing ones: D10 measures
   cache-geometry change in bf16 and D13's band measures lossless re-quantization. Neither says what a bit flip
   that lands somewhere inert does. A fraction of injections must therefore target bits expected to be harmless

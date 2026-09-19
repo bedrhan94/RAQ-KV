@@ -60,6 +60,29 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D14 — Q48 is computed at layer×part; head level stays exploratory (2026-09-19)
+
+Head-level profile (448 regions = 28 layers × 8 KV heads × {keys, values}, 40 chunks, 640 null measurements):
+
+| | layer×part (56) | head×part (448) |
+|---|---|---|
+| Regions differing from null (Welch, Holm p<0.05) | **24 (43%)** | **37 (8%)** |
+| Regions clearing the conservative band | 18 | 10 |
+| Split-half rank stability | 0.901 (SB 0.948) | 0.725 (SB 0.841) |
+| Largest region damage | 0.0291 nats | 0.0181 nats |
+
+- A single KV head is 1/8 of a part, and at deployment precision its quantization damage mostly falls inside the
+  noise band: only 8% of head regions are distinguishable from lossless re-quantization. **Q48 (QS vs fault
+  sensitivity) is therefore computed at layer×part**, where 43% of regions carry measurable signal and the ranking
+  is stable (0.90). The head-level map is kept as an exploratory layer, not as a correlation input.
+- The head-level concentration statistic (top 10% carry 58%) must not be read as support for H1: when most cells
+  are noise, top-k share is inflated by the noise tail. Concentration is only meaningful over cells that clear the
+  null, which is why the Welch/Holm count is the headline number.
+- **Statistical convention fixed here and inherited by M2:** a region counts as sensitive when its measurements
+  differ from the null distribution by a Welch test with Holm correction across regions — not when its mean clears
+  the spread of individual null measurements (that comparison mixes a mean with single-measurement scatter and is
+  over-conservative). Both numbers are reported.
+
 ## D13 — Quantization sensitivity is real but modest at deployment precision (2026-09-19)
 
 Profile: one region (layer × keys/values) at a time forced to 2 bits with the deployment granularity

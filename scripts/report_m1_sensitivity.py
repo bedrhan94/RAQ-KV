@@ -45,12 +45,40 @@ def load_profile(raw_root: Path, name: str) -> tuple[pd.DataFrame, dict[str, Any
     raise SystemExit(f"no completed profile named '{name}'")
 
 
-def _region_table(df: pd.DataFrame) -> pd.DataFrame:
-    grouped = df.groupby(["layer", "part"])["delta_nll_mean"]
+def _region_keys(df: pd.DataFrame) -> list[str]:
+    """Group by head as well when the profile is head-level; otherwise a head profile collapses to layer means."""
+    return ["layer", "part", "head"] if df["head"].notna().any() else ["layer", "part"]
+
+
+def _region_table(df: pd.DataFrame, null_df: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Per-region mean with a CI, plus a Welch test against the null distribution with Holm correction.
+
+    Comparing a region's *mean* to the spread of individual null measurements is over-conservative; the right
+    question is whether the region's measurements come from a different distribution than the null ones.
+    """
+    keys = _region_keys(df)
+    grouped = df.groupby(keys)["delta_nll_mean"]
     table = grouped.agg(["mean", "std", "count"]).reset_index()
     table["sem"] = table["std"] / np.sqrt(table["count"])
     table["ci95_half"] = stats.t.ppf(0.975, table["count"] - 1) * table["sem"]
     table["significant"] = table["mean"] - table["ci95_half"] > 0
+
+    if null_df is not None and not null_df.empty:
+        null_values = null_df["delta_nll_mean"].to_numpy()
+        p_values = []
+        for _, group in df.groupby(keys):
+            result = stats.ttest_ind(group["delta_nll_mean"].to_numpy(), null_values, equal_var=False)
+            p_values.append(float(result.pvalue))
+        order = np.argsort(p_values)
+        n = len(p_values)
+        holm = np.empty(n)
+        running = 0.0
+        for rank, idx in enumerate(order):
+            running = max(running, (n - rank) * p_values[idx])
+            holm[idx] = min(1.0, running)
+        table["p_vs_null"] = p_values
+        table["p_holm"] = holm
+        table["differs_from_null"] = (holm < 0.05) & (table["mean"] > null_values.mean())
     return table.sort_values("mean", ascending=False).reset_index(drop=True)
 
 
@@ -67,7 +95,7 @@ def _concentration(values: np.ndarray) -> dict[str, float]:
 
 def _split_half(df: pd.DataFrame, rng: np.random.Generator, n_splits: int = 200) -> dict[str, float]:
     chunks = sorted(df["chunk"].unique())
-    wide = df.pivot_table(index=["layer", "part"], columns="chunk", values="delta_nll_mean")
+    wide = df.pivot_table(index=_region_keys(df), columns="chunk", values="delta_nll_mean")
     rhos = []
     for _ in range(n_splits):
         perm = rng.permutation(chunks)
@@ -101,8 +129,8 @@ def analyse(df: pd.DataFrame, meta: dict[str, Any]) -> tuple[str, dict[str, Any]
     else:
         null_df = df.iloc[0:0]
     band = _noise_band(null_df)
-    table = _region_table(df)
-    groups = [g["delta_nll_mean"].to_numpy() for _, g in df.groupby(["layer", "part"])]
+    table = _region_table(df, null_df)
+    groups = [g["delta_nll_mean"].to_numpy() for _, g in df.groupby(_region_keys(df))]
     f_stat, p_value = stats.f_oneway(*groups)
     rng = np.random.default_rng(0)
     stability = _split_half(df, rng)
@@ -110,10 +138,11 @@ def analyse(df: pd.DataFrame, meta: dict[str, Any]) -> tuple[str, dict[str, Any]
     by_part = df.groupby("part")["delta_nll_mean"].mean().round(5).to_dict()
 
     clears_band = int((table["mean"] - table["ci95_half"] > band.get("null_p97.5", 0.0)).sum()) if band else None
+    differs = int(table["differs_from_null"].sum()) if "differs_from_null" in table else None
     facts = {**meta, **conc, **stability, **band, "anova_F": float(f_stat), "anova_p": float(p_value),
              "n_regions": len(table), "significant_regions": int(table["significant"].sum()),
              "max_mean_delta": float(table["mean"].max()), "min_mean_delta": float(table["mean"].min()),
-             "regions_clearing_noise_band": clears_band, "by_part": by_part}
+             "regions_clearing_noise_band": clears_band, "regions_above_null_holm": differs, "by_part": by_part}
     pivot = df.pivot_table(index="layer", columns="part", values="delta_nll_mean").round(4)
     body = [
         f"### `{meta['exp_id']}`", "",
@@ -127,7 +156,8 @@ def analyse(df: pd.DataFrame, meta: dict[str, Any]) -> tuple[str, dict[str, Any]
         (f"- Noise band from {band['null_n']} lossless ({meta['null_bits']}-bit) region measurements: "
          f"mean {band['null_mean']:+.5f}, sd {band['null_sd']:.5f}, 95% span "
          f"[{band['null_p2.5']:+.5f}, {band['null_p97.5']:+.5f}]. "
-         f"**{clears_band}/{len(table)} regions clear it** (lower CI above the band's upper edge)."
+         f"**{clears_band}/{len(table)} regions clear it** (lower CI above the band's upper edge, conservative); "
+         f"**{differs}/{len(table)} differ from the null distribution** (Welch test, Holm-corrected p < 0.05)."
          if band else "- No null condition in this run: the noise floor is unknown."),
         f"- Mean damage: keys {by_part.get('keys', float('nan')):.5f} vs values "
         f"{by_part.get('values', float('nan')):.5f} nats.",
