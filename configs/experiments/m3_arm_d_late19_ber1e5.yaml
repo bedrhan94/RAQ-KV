@@ -1,0 +1,34 @@
+# M3 arm d_late19 at BER 1e-5 -- the placement test, moved to a rate where it has power.
+#
+# Why this rate (D26): at 1e-6 both arms recorded ZERO task failures and the answer-changed proxy was discordant in
+# only 5 of 58 samples, so a paired sample-level test would need 233-547 samples. Raising the rate raises per-sample
+# damage and therefore discordance, which is the cheap lever: at 40-60% discordance only 34-118 samples are needed.
+#
+# This run has two jobs, in order:
+#   1. Check that damage is still linear in uncorrected code flips one decade up. The per-code-flip rate
+#      (1.29e-5 failures) was estimated from 3 events in a single sample, so extrapolating it two decades to size a
+#      1e-4 campaign would be building on sand. This is the intermediate point that tests it.
+#   2. Measure the discordance rate, which sizes the final placement run.
+#
+# Arms D and E are bit-identical and differ only in which nine layers are left unprotected (D exposes 0-8, E exposes
+# 19-27), so this is H2b with everything else held fixed.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m3_arm_d_late19_ber1e5
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 64}
+  values: {bits: 4, axis: per_token}
+protection:
+  data_codec: secded
+  data_word_bits: 64
+  data_layers: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+  metadata_codec: secded
+  metadata_word_bits: 16
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-5
+  n_trials: 8
+  n_control: 1
+seed: 0

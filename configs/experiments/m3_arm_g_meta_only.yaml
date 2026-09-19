@@ -1,0 +1,30 @@
+# M3 arm G -- the cheap recommendation: protect only the quantization metadata, change nothing else.
+#
+# Added after arms A-D landed (2026-09-20). Arm C showed that correcting metadata alone removes 98% of the
+# fault-induced task failures, but arm C pays for that with 4x finer key groups (0.628 bits/value of metadata,
+# whose SECDED then costs 0.236) purely to keep it iso-budget with arm B. The finer groups are not what protects
+# it. This arm keeps arm A's quantization exactly and adds nothing but metadata SECDED:
+#
+#   A  g128, no protection              4.2629 bits/value   (reference)
+#   G  g128 + metadata SECDED           4.3615 bits/value   +2.3% over A, -10.3% under B
+#   B  g128 + uniform data+meta SECDED  4.8615 bits/value   +14.0% over A
+#
+# It is deliberately NOT iso-budget with B/C/D/E: the question is not "which way to spend a fixed budget" but
+# "how little does the 98% cost". Reported as a cost-benefit arm, never as an equal-budget competitor.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m3_arm_g_meta_only
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_codec: secded
+  metadata_word_bits: 16
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-6
+  n_trials: 8
+  n_control: 1
+seed: 0
