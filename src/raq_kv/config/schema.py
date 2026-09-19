@@ -116,12 +116,17 @@ class QATask(StrictModel):
 
 
 class QuantSensitivityTask(StrictModel):
-    """Per-region quantization sensitivity: quantize exactly one region to ``spec`` and leave the rest in full
-    precision, measuring the paired per-token NLL increase. Regions are enumerated per chunk, so the golden pass
-    and every region share one prefill."""
+    """Per-region quantization sensitivity: quantize exactly one region and leave the rest in full precision,
+    measuring the paired per-token NLL increase. Regions are enumerated per chunk, so the golden pass and every
+    region share one prefill.
+
+    Keys and values use their own stress specification: applying one granularity to both would confound "this
+    region matters" with "this granularity is wrong for keys" (the M1 sweep shows per-token keys are catastrophic).
+    """
 
     kind: Literal["quant_sensitivity"] = "quant_sensitivity"
-    spec: QuantSpec = Field(default_factory=lambda: QuantSpec(bits=2, axis="per_token"))
+    key_spec: QuantSpec = Field(default_factory=lambda: QuantSpec(bits=2, axis="per_channel"))
+    value_spec: QuantSpec = Field(default_factory=lambda: QuantSpec(bits=2, axis="per_token"))
     granularity: Literal["layer_part", "head_part"] = "layer_part"
     n_chunks: int | None = Field(default=None, description="Chunks to profile; defaults to the dataset's n_chunks")
 

@@ -120,8 +120,11 @@ def summarize_experiment(exp_dir: Path, include_superseded: bool = False) -> lis
         "units_complete": len(records) == manifest["unit_keys_total"],
         "git_commits": ";".join(sorted({str(r["provenance"]["git"]["describe"]) for r in manifest["runs"]})),
     }
+    summarizer = _SUMMARIZERS.get(cfg["task"]["kind"])
+    if summarizer is None:  # e.g. profiling runs, which have their own analysis
+        return []
     df = pd.json_normalize(records, max_level=1)  # nested dicts (meta, kv_budget) become "meta.x" columns
-    return [{**base, **row} for row in _SUMMARIZERS[cfg["task"]["kind"]](df)]
+    return [{**base, **row} for row in summarizer(df)]
 
 
 def summarize_all(raw_root: Path, name_filter: str | None = None, include_superseded: bool = False) -> pd.DataFrame:

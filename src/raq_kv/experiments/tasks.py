@@ -351,7 +351,8 @@ class QuantSensitivity:
 
         rows = []
         for layer, part, head in self._regions():
-            perturbed, stats = quantize_region(snapshot, layer, part, self.task.spec, head)
+            spec = self.task.key_spec if part == "keys" else self.task.value_spec
+            perturbed, stats = quantize_region(snapshot, layer, part, spec, head)
             nll = score_through_cache(model, perturbed, inputs, targets).token_nll.double().cpu()
             delta = nll - golden
             rows.append({
@@ -367,7 +368,8 @@ class QuantSensitivity:
             **kv_record_fields(self.lm, snapshot, chunk.prefix_len),
             "golden_nll_mean": float(golden.mean()),
             "n_scored_tokens": int(golden.numel()),
-            "spec": self.task.spec.model_dump(),
+            "key_spec": self.task.key_spec.model_dump(),
+            "value_spec": self.task.value_spec.model_dump(),
             "granularity": self.task.granularity,
             "regions": rows,
         }

@@ -119,8 +119,14 @@ def main() -> int:
     ]
     base_row = table[table["variant"] == BASELINE_LABEL]
     if not base_row.empty:
-        body.append(f"Passthrough control: corpus PPL {float(base_row['corpus_ppl'].iloc[0]):.4f} "
-                    f"(M0 golden: 14.3920) — must match.")
+        golden = _load(root / "raw", "m0a_golden_ppl")
+        line = f"Passthrough control: corpus PPL {float(base_row['corpus_ppl'].iloc[0]):.6f}"
+        if golden:
+            g = pd.DataFrame(golden[0]["records"])
+            golden_ppl = corpus_ppl(g["nll_sum"].tolist(), g["n_scored_tokens"].tolist())
+            same = abs(golden_ppl - float(base_row["corpus_ppl"].iloc[0])) < 1e-9
+            line += f"; M0 golden {golden_ppl:.6f} — {'identical' if same else 'DIFFERS, investigate'}."
+        body.append(line)
     out = root / "reports" / "m1_quantization_report.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(body), encoding="utf-8")

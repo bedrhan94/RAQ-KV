@@ -9,7 +9,12 @@ task:
   kind: quant_sensitivity
   granularity: layer_part
   n_chunks: 8
-  spec:
+  # Stress precision per part, chosen from the M1 sweep: per-token keys are catastrophic even at 4 bits, so keys are
+  # stressed per-channel. This asks "which region suffers most under the policy we would actually deploy".
+  key_spec:
+    bits: 2
+    axis: per_channel
+  value_spec:
     bits: 2
     axis: per_token
 seed: 0
