@@ -19,4 +19,8 @@ task:
   value_spec:
     bits: 2
     axis: per_token
+  # Null condition: the same regions at 8 bits, which the sweep showed to be lossless. Their spread is the
+  # measurement's noise band, so a stress delta that does not clear it cannot be called sensitivity.
+  null_bits: 8
+  null_regions: 8
 seed: 0

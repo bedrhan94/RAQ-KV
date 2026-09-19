@@ -129,6 +129,12 @@ class QuantSensitivityTask(StrictModel):
     value_spec: QuantSpec = Field(default_factory=lambda: QuantSpec(bits=2, axis="per_token"))
     granularity: Literal["layer_part", "head_part"] = "layer_part"
     n_chunks: int | None = Field(default=None, description="Chunks to profile; defaults to the dataset's n_chunks")
+    # Null condition: the same regions quantized at a precision the sweep showed to be lossless. Their deltas are
+    # the measurement's own noise band; a stress delta that does not clear it means nothing.
+    # Both default to None (feature off) so that adding them did not change the identity of runs made before it
+    # existed - optional features must be opt-in, see identity_dict's exclude_none.
+    null_bits: int | None = Field(default=None, description="Bit width of the null condition; None disables it")
+    null_regions: int | None = Field(default=None, ge=0, description="Regions sampled per chunk for the null run")
 
 
 Task = Annotated[CachePPLTask | LatencyTask | QATask | QuantSensitivityTask, Field(discriminator="kind")]

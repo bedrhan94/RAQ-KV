@@ -6,6 +6,7 @@ units *before* the model is loaded (tokenizer/data only), so a fully finished ex
 
 from __future__ import annotations
 
+import random
 from typing import Any, Protocol
 
 import torch
@@ -18,6 +19,7 @@ from raq_kv.config.schema import (
     LatencyTask,
     QATask,
     QuantSensitivityTask,
+    QuantSpec,
     RAQProbeConfig,
 )
 from raq_kv.data.gsm8k import build_gsm8k
@@ -32,6 +34,7 @@ from raq_kv.evaluation.scoring import SCORERS
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
 from raq_kv.quantization.apply import QuantReport, quantize_region, quantize_snapshot
+from raq_kv.utils.seed import derive_seed
 
 
 class Task(Protocol):
@@ -349,14 +352,24 @@ class QuantSensitivity:
         snapshot = prefill(model, chunk.context_ids.to(dev).unsqueeze(0))
         golden = score_through_cache(model, snapshot, inputs, targets).token_nll.double().cpu()
 
+        regions = self._regions()
+        conditions: list[tuple[int, str, int | None, QuantSpec, bool]] = [
+            (layer, part, head, self.task.key_spec if part == "keys" else self.task.value_spec, False)
+            for layer, part, head in regions
+        ]
+        if self.task.null_bits and self.task.null_regions:
+            rng = random.Random(derive_seed(self.cfg.seed, unit_key, "null"))
+            for layer, part, head in rng.sample(regions, k=min(self.task.null_regions, len(regions))):
+                base = self.task.key_spec if part == "keys" else self.task.value_spec
+                conditions.append((layer, part, head, base.model_copy(update={"bits": self.task.null_bits}), True))
+
         rows = []
-        for layer, part, head in self._regions():
-            spec = self.task.key_spec if part == "keys" else self.task.value_spec
+        for layer, part, head, spec, is_null in conditions:
             perturbed, stats = quantize_region(snapshot, layer, part, spec, head)
             nll = score_through_cache(model, perturbed, inputs, targets).token_nll.double().cpu()
             delta = nll - golden
             rows.append({
-                "layer": layer, "part": part, "head": head,
+                "layer": layer, "part": part, "head": head, "is_null": is_null, "bits": spec.bits,
                 "delta_nll_mean": float(delta.mean()), "delta_nll_max": float(delta.max()),
                 "delta_nll_frac_worse": float((delta > 0).double().mean()),
                 "sqnr_db": stats["sqnr_db"], "mse": stats["mse"],
