@@ -8,7 +8,9 @@ name: m1_quant_sensitivity
 task:
   kind: quant_sensitivity
   granularity: layer_part
-  n_chunks: 8
+  # 8 chunks were underpowered: single-region damage under the deployment granularity is ~0.01 nats while
+  # chunk-to-chunk variation is ~0.02, giving no stable region ranking (Spearman -0.05 between two chunks).
+  n_chunks: 40
   # Stress precision per part, chosen from the M1 sweep: per-token keys are catastrophic even at 4 bits, so keys are
   # stressed per-channel. This asks "which region suffers most under the policy we would actually deploy".
   key_spec:

@@ -60,6 +60,35 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D12 — KV precision/granularity: per-channel keys, per-token values (2026-09-19)
+
+M1 sweep, 13 variants × 40 WikiText-2 chunks, paired per-token NLL against the bf16 passthrough (which reproduces
+the M0 golden corpus perplexity exactly: 14.391535 both).
+
+| Variant | eff. bits/value | KV MiB / 1K tok | corpus PPL | paired ΔNLL/token [95% CI] |
+|---|---|---|---|---|
+| bf16 passthrough | 16.00 | 109.4 | 14.3915 | 0 |
+| K 8b/chan · V 8b/token | 8.14 | 55.6 | 14.3910 | −0.0000 [−0.0009, 0.0008] |
+| K 4b/chan · V 4b/token | 4.14 | 28.3 | 14.5301 | +0.0096 [0.0047, 0.0142] |
+| K 4b/g32 · V 4b/g32 | 5.00 | 34.2 | 15.4895 | +0.0735 |
+| K 4b/token · V 4b/token | 4.25 | 29.1 | **3226.8** | +5.41 |
+| K 2b/chan · V 2b/token | 2.14 | 14.6 | 23.0484 | +0.4710 |
+| K 2b/g32 · V 2b/g32 | 3.00 | 20.5 | **10782.9** | +6.62 |
+| K 2b/token · V 2b/token | 2.25 | 15.4 | **639252.7** | +10.70 |
+
+- **Keys must be quantized per channel.** Per-token key scales are catastrophic even at 4 bits (PPL 3227), because
+  key channels carry persistent outliers; per-channel scales are nearly lossless at the same budget. Grouping
+  channels *within* a token (`group_channel`) does not fix it (2-bit g32: PPL 10783): the outlier structure lives
+  along the channel axis across tokens. This reproduces KIVI's observation on Qwen3, which was not guaranteed —
+  Qwen3 applies QK-Norm, so key statistics differ from the Llama models the original observation came from.
+- **Per-channel keys are also cheaper in metadata** at long context: one scale per (head, channel) instead of per
+  (head, token), so 4-bit K/V costs 4.14 effective bits per value, not 4.25.
+- **Defaults from here on:** keys per-channel, values per-token. 8-bit is lossless (CI includes 0), 4-bit costs
+  +0.14 PPL at 3.9× less KV memory, 2-bit is degraded but functional (PPL 23.0) — the interesting operating point
+  for M5's mixed-precision allocation.
+- Symmetric 4-bit per-token (PPL 18.9) beats asymmetric per-token (3227) but both are far worse than per-channel,
+  so symmetry is a second-order choice compared with the axis.
+
 ## D11 — Exact logit ties in bfloat16 make greedy output tie-break dependent (2026-09-19)
 
 - **Measurement:** the two golden RAQ-Probe runs (same data, same model, code differing only in how the next token is

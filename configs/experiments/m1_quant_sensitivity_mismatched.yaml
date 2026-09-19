@@ -1,0 +1,18 @@
+# Contrast profile: keys stressed with the WRONG granularity (per-token), which the M1 sweep showed is
+# catastrophic. Purpose is not a deployment setting but a magnifier: it exposes where the key outliers live.
+# Claim supported: C2 (where sensitivity concentrates) and the interpretation of the deployment-grade profile.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m1_quant_sensitivity_mismatched
+task:
+  kind: quant_sensitivity
+  granularity: layer_part
+  n_chunks: 8
+  key_spec:
+    bits: 2
+    axis: per_token
+  value_spec:
+    bits: 2
+    axis: per_token
+seed: 0
