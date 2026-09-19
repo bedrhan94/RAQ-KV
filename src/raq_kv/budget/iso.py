@@ -107,6 +107,9 @@ def predict_budget(
         n_meta_regions = 1 if spec.symmetric else 2
         ecc_meta += _check_bits(groups * SCALE_BITS, protection.metadata_codec,
                                 protection.metadata_word_bits) * layers * n_meta_regions
+        if protection.metadata_guard == "range":
+            # Two float16 bounds per guarded region: negligible, and counted for exactly that reason.
+            ecc_meta += 2 * SCALE_BITS * layers * n_meta_regions
     return ArmBudget(data, meta, ecc_data, ecc_meta, tokens, per_part * layers * 2)
 
 

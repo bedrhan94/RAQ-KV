@@ -138,3 +138,44 @@ def test_metadata_erasure_collapses_the_group_to_its_zero_point():
     expected = stored.zeros[idx].to(torch.float32) if stored.zeros is not None else torch.zeros(())
     got = read.values[0][0, idx[1], idx[2], :]
     assert torch.allclose(got, expected.expand_as(got).to(got.dtype), atol=1e-3)
+
+
+def test_range_guard_catches_an_exponent_flip_that_explodes_a_scale():
+    """The measured mechanism of metadata damage is magnitude explosion (D27), and a range check is free.
+
+    Bit 14 of a float16 multiplies it by 65536. The guard stores two bounds per region -- what a real system
+    already knows at quantization time -- and clamps anything outside them.
+    """
+    clean = _qkv().to_snapshot()
+    qkv = _qkv()
+    guard = ProtectedKV(qkv, metadata_guard="range")
+    assert guard.guard_bits == len(guard.bounds) * 32 and guard.ecc_bits == guard.guard_bits
+    inject(qkv, FaultSite(0, "values", "scale", (0, 1, 3, 0), 14, "metadata"))
+    read, stats = guard.read()
+    assert stats.out_of_range == 1, "an exploded scale must be flagged"
+    damaged = (read.values[0] - clean.values[0]).abs().max()
+    unguarded, _ = ProtectedKV(qkv).read()
+    assert damaged < (unguarded.values[0] - clean.values[0]).abs().max(), "clamping must reduce the damage"
+
+
+def test_range_guard_is_silent_on_a_clean_read_and_on_mantissa_flips():
+    """It must not fire when nothing is wrong, and it cannot see a flip that lands inside the observed range."""
+    qkv = _qkv()
+    guard = ProtectedKV(qkv, metadata_guard="range")
+    clean_read, stats = guard.read()
+    assert stats.out_of_range == 0
+    for a, b in zip(_qkv().to_snapshot().values, clean_read.values, strict=True):
+        assert torch.equal(a, b), "a guarded read of clean metadata changes nothing"
+    inject(qkv, FaultSite(0, "values", "scale", (0, 1, 3, 0), 0, "metadata"))  # least significant mantissa bit
+    _, stats2 = guard.read()
+    assert stats2.out_of_range == 0, "a mantissa flip stays in range; the guard is honest about not seeing it"
+
+
+def test_guard_and_codec_compose_with_the_codec_first():
+    qkv = _qkv()
+    guard = ProtectedKV(qkv, metadata_codec="secded", metadata_word_bits=16, metadata_guard="range")
+    assert guard.ecc_bits > guard.guard_bits, "both costs are counted"
+    inject(qkv, FaultSite(0, "values", "scale", (0, 1, 3, 0), 14, "metadata"))
+    _, stats = guard.read()
+    # SECDED repairs it, so the guard has nothing left to flag.
+    assert stats.corrected == 1 and stats.out_of_range == 0

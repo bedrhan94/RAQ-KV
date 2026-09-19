@@ -248,14 +248,21 @@ class ProtectionConfig(StrictModel):
     data_codec: Literal["none", "parity", "secded"] = "none"
     data_word_bits: int = Field(default=64, gt=1)
     data_layers: tuple[int, ...] | None = Field(default=None, description="None protects every layer")
+    # A plausibility check, not a code: two float16 bounds per metadata region (about 3.5 kbit against 596 Mbit)
+    # against which every scale and zero point is validated on read. It exists because the measured mechanism of
+    # metadata damage is magnitude explosion, not arbitrary corruption: a float16 scale's bit 14 multiplies it by
+    # 65536 and bit 13 divides it by 250 (D27), and a range check catches exactly those without any ECC.
+    # Defaults to None, not "none": a new field with a non-None default would change the identity
+    # hash of every stored run that has a protection section (tests/test_raw_store_integrity.py).
+    metadata_guard: Literal["range"] | None = None
     metadata_codec: Literal["none", "parity", "secded"] = "none"
     metadata_word_bits: int = Field(default=16, gt=1)
     due_policy: Literal["erasure_mid", "pass_through"] = "erasure_mid"
 
     @model_validator(mode="after")
     def _check(self) -> ProtectionConfig:
-        if self.data_codec == "none" and self.metadata_codec == "none":
-            raise ValueError("protection section with no codec; omit the section instead")
+        if self.data_codec == "none" and self.metadata_codec == "none" and self.metadata_guard is None:
+            raise ValueError("protection section with no codec and no guard; omit the section instead")
         return self
 
 

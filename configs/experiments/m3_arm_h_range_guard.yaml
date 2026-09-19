@@ -1,0 +1,36 @@
+# M3 arm H -- is the fix a code at all, or just a plausibility check?
+#
+# D27 measured the mechanism behind metadata's dominance, and it is not arbitrary corruption: a float16 scale's
+# bit 14 multiplies it by 65536, bit 13 divides it by 250, bit 15 flips its sign, and the ten mantissa bits move
+# it by at most 36%. NaN is not the mechanism (rate 0.0009, and only when one value is hit twice, which does not
+# happen at campaign rates). So the damaging flips are exactly the ones that push a scale outside the range the
+# clean tensor occupied -- and a range check sees those for free.
+#
+# The guard stores two float16 bounds per metadata region: 3.5 kbit against 596 Mbit, i.e. 0.0006% of storage,
+# versus metadata SECDED's 0.096 bits/value and uniform data SECDED's 0.500. What a real system needs to know to
+# build these bounds it already computes while quantizing.
+#
+#   A  no protection             4.2605 bits/value   31.8% task failure (measured)
+#   H  range-checked metadata    ~4.2605             this run
+#   G  metadata SECDED           4.3581              0.0% task failure (measured)
+#   B  uniform data+meta SECDED  4.8581              0.0% task failure (measured)
+#
+# If H matches G, the paper's recommendation changes from "protect the metadata with ECC" to "check that the
+# metadata is plausible", and the protection axis of the M5 allocator becomes nearly free. If H falls short, the
+# gap measures what correction buys over detection-and-clamping, which is worth knowing either way.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m3_arm_h_range_guard
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_guard: range
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-6
+  n_trials: 8
+  n_control: 1
+seed: 0

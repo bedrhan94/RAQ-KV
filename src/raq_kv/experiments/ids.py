@@ -68,7 +68,9 @@ def _protection_token(cfg: ExperimentConfig) -> str:
         parts.append(f"d{short[p.data_codec]}{p.data_word_bits}{scope}")
     if p.metadata_codec != "none":
         parts.append(f"m{short[p.metadata_codec]}")
-    return "-".join(parts)
+    if p.metadata_guard is not None:
+        parts.append("mRNG")  # range-checked metadata: a plausibility guard, not a code
+    return "-".join(parts) or "noecc"
 
 
 def slug(cfg: ExperimentConfig) -> str:

@@ -48,11 +48,13 @@ class ProtectionStats:
     corrected: int = 0
     uncorrectable: int = 0
     words_read: int = 0
+    out_of_range: int = 0
     regions: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {"corrected_words": self.corrected, "due_words": self.uncorrectable,
-                "words_read": self.words_read, **{f"due_{k}": v for k, v in self.regions.items()}}
+                "words_read": self.words_read, "out_of_range_values": self.out_of_range,
+                **{f"due_{k}": v for k, v in self.regions.items()}}
 
 
 class ProtectedKV:
@@ -71,10 +73,14 @@ class ProtectedKV:
         metadata_word_bits: int = 16,
         data_layers: tuple[int, ...] | None = None,
         due_policy: str = "erasure_mid",
+        metadata_guard: str | None = None,
     ) -> None:
         self.qkv = qkv
         self.due_policy = due_policy
+        self.metadata_guard = metadata_guard
         self.codes: dict[tuple[int, str, str], RegionCode] = {}
+        # Plausibility bounds, recorded from the clean tensor exactly as a real system would at quantization time.
+        self.bounds: dict[tuple[int, str, str], tuple[float, float]] = {}
         for layer in range(qkv.num_layers):
             for part in ("keys", "values"):
                 stored = qkv.part(layer, part)
@@ -82,11 +88,15 @@ class ProtectedKV:
                     continue
                 if data_codec != "none" and (data_layers is None or layer in data_layers):
                     self.codes[(layer, part, "code")] = self._encode_codes(stored, data_codec, data_word_bits)
-                if metadata_codec != "none":
-                    for target, tensor in (("scale", stored.scales), ("zero", stored.zeros)):
-                        if tensor is not None:
-                            self.codes[(layer, part, target)] = self._encode_float16(
-                                tensor, metadata_codec, metadata_word_bits)
+                for target, tensor in (("scale", stored.scales), ("zero", stored.zeros)):
+                    if tensor is None:
+                        continue
+                    if metadata_codec != "none":
+                        self.codes[(layer, part, target)] = self._encode_float16(
+                            tensor, metadata_codec, metadata_word_bits)
+                    if metadata_guard == "range":
+                        self.bounds[(layer, part, target)] = (
+                            float(tensor.min().to(torch.float32)), float(tensor.max().to(torch.float32)))
 
     @staticmethod
     def _encode_codes(stored: QuantizedTensor, codec_name: str, word_bits: int) -> RegionCode:
@@ -104,7 +114,31 @@ class ProtectedKV:
 
     @property
     def ecc_bits(self) -> int:
-        return sum(region.ecc_bits for region in self.codes.values())
+        """Every bit the protection itself costs: check bits, plus the guard's stored bounds."""
+        return sum(region.ecc_bits for region in self.codes.values()) + self.guard_bits
+
+    @property
+    def guard_bits(self) -> int:
+        """Two float16 bounds per guarded region. Tiny, but counted: an uncounted bit is a free lunch."""
+        return len(self.bounds) * 2 * 16
+
+    def _apply_guard(self, key: tuple[int, str, str], tensor: torch.Tensor,
+                     stats: ProtectionStats) -> torch.Tensor:
+        """Replace implausible metadata with the nearest stored bound.
+
+        This is detection plus a bounded repair, not correction: a scale that a fault multiplied by 65536 is
+        clamped back to the largest value the clean tensor held, which is wrong but wrong by a factor the model
+        can absorb. It cannot see a flip that leaves the value inside the observed range, which is most mantissa
+        bits — and those are the flips that move a scale by at most 36% (D27).
+        """
+        low, high = self.bounds[key]
+        bad = (tensor < low) | (tensor > high) | ~torch.isfinite(tensor)
+        n_bad = int(bad.sum())
+        if not n_bad:
+            return tensor
+        stats.out_of_range += n_bad
+        fixed = torch.where(torch.isfinite(tensor), tensor, torch.full_like(tensor, low))
+        return fixed.clamp(min=low, max=high)
 
     @staticmethod
     def _erasure_fill(region: RegionCode) -> torch.Tensor:
@@ -164,13 +198,18 @@ class ProtectedKV:
         for target in ("scale", "zero"):
             key = (layer, part, target)
             tensor = scales if target == "scale" else zeros
-            if key in self.codes and tensor is not None:
+            if tensor is None:
+                continue
+            if key in self.codes:
                 repaired = self._decode_region(key, float16_to_bits(tensor).reshape(-1), stats)
-                fixed = bits_to_float16(repaired.reshape(-1, 16)).reshape(tensor.shape)
-                if target == "scale":
-                    scales = fixed
-                else:
-                    zeros = fixed
+                tensor = bits_to_float16(repaired.reshape(-1, 16)).reshape(tensor.shape)
+            if key in self.bounds:
+                # After the codec, so the guard only sees what the code could not repair.
+                tensor = self._apply_guard(key, tensor, stats)
+            if target == "scale":
+                scales = tensor
+            else:
+                zeros = tensor
         # type(stored) keeps the symmetric subclass, whose dequantization differs from the asymmetric one.
         repaired_tensor = type(stored)(codes, scales, zeros, stored.bits, stored.axis, stored.group_size,
                                        stored.orig_dtype)
@@ -253,4 +292,5 @@ def build_protection(qkv: QuantizedKV, cfg: ProtectionConfig | None) -> Protecte
         return None
     return ProtectedKV(qkv, data_codec=cfg.data_codec, data_word_bits=cfg.data_word_bits,
                        metadata_codec=cfg.metadata_codec, metadata_word_bits=cfg.metadata_word_bits,
-                       data_layers=cfg.data_layers, due_policy=cfg.due_policy)
+                       data_layers=cfg.data_layers, due_policy=cfg.due_policy,
+                       metadata_guard=cfg.metadata_guard)
