@@ -60,6 +60,19 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D11 — Exact logit ties in bfloat16 make greedy output tie-break dependent (2026-09-19)
+
+- **Measurement:** the two golden RAQ-Probe runs (same data, same model, code differing only in how the next token is
+  selected — `argmax` vs `topk(2)`) produced byte-identical teacher-forced scores for all 720 samples but different
+  generations for 3. All three had an exact logit tie (decode-path margin 0.0) at the step after the answer value
+  ("3711" vs "3711 euros"); all three remained correct.
+- **Consequences:**
+  - ~0.4% of greedy steps here sit on an exact tie; at a tie the emitted token reflects the tie-break rule, not the
+    model. A token-level output change at a tie is not evidence of corruption, so M2's SDC definition uses
+    task-level outcomes and reports the tie rate alongside token-level change rates.
+  - Ties are recorded: `gen_margin_min_all == 0` flags them per sample.
+  - Generation uses one tie-break rule everywhere (`torch.topk`), so golden and perturbed runs are comparable.
+
 ## D10 — bfloat16 numerical noise floor for cache-geometry changes (2026-09-19)
 
 - **Measurement:** physically pruning cache entries versus hiding the same entries with a 2D attention mask is

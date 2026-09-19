@@ -20,10 +20,16 @@ from raq_kv.utils.io import read_json, read_jsonl
 from raq_kv.utils.paths import resolve_output_root
 
 
-def _records(raw_root: Path, pattern: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """All records plus manifests of experiments whose id matches ``pattern``."""
-    records: list[dict[str, Any]] = []
-    manifests: list[dict[str, Any]] = []
+def _records(
+    raw_root: Path, pattern: str, names: tuple[str, ...] | None = None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Records plus manifests of experiments matching ``pattern``.
+
+    ``names`` selects experiment configs by name in order of preference: the first name that has results wins, so a
+    superseding rerun (e.g. the probe recorded with decode-path margins) is used instead of the earlier one rather
+    than pooled with it.
+    """
+    by_name: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {}
     for exp in sorted(raw_root.glob(pattern)):
         if not (exp / "manifest.json").exists():
             continue
@@ -31,10 +37,17 @@ def _records(raw_root: Path, pattern: str) -> tuple[list[dict[str, Any]], list[d
         rows = read_jsonl(exp / "results.jsonl")
         if not rows:
             continue
+        records, manifests = by_name.setdefault(manifest["config"]["name"], ([], []))
         manifests.append(manifest)
-        for r in rows:
-            records.append({**r, "seed": manifest["config"]["seed"]})
-    return records, manifests
+        records.extend({**r, "seed": manifest["config"]["seed"]} for r in rows)
+    if names:
+        for name in names:
+            if name in by_name:
+                return by_name[name]
+        return [], []
+    all_records = [r for records, _ in by_name.values() for r in records]
+    all_manifests = [m for _, manifests in by_name.values() for m in manifests]
+    return all_records, all_manifests
 
 
 def _fmt(x: float, digits: int = 3) -> str:
@@ -103,16 +116,18 @@ def _latency_section(raw_root: Path) -> tuple[str, dict[str, Any]]:
 
 
 def _probe_section(raw_root: Path) -> tuple[str, dict[str, Any]]:
-    records, _ = _records(raw_root, "*raq_probev0*bf16*cuda*")
+    records, manifests = _records(raw_root, "*raq_probev0*bf16*cuda*",
+                                  names=("m0b_golden_probe_margins", "m0b_golden_probe"))
     if not records:
         return "_no GPU probe run found_\n", {}
     df = pd.json_normalize(records, max_level=1)
     df["correct"] = df["correct"].astype(bool)
+    run_name = manifests[0]["config"]["name"]
     cells = df.groupby(["meta.fact_type", "meta.depth_nominal"])["correct"].mean()
     worst_type, worst_depth = cells.idxmin()
     worst_cell = f"{worst_type} @ depth {float(worst_depth):g}", float(cells.min())
     lines = [
-        f"Overall accuracy **{_fmt(df['correct'].mean())}** over {len(df)} samples "
+        f"Run `{run_name}`. Overall accuracy **{_fmt(df['correct'].mean())}** over {len(df)} samples "
         f"(strict EM {_fmt(df['em_strict'].mean())}, distractor mentioned {_fmt(df['mentions_distractor'].mean())}).",
         "",
         "Accuracy by fact type × nominal context length:",
@@ -139,8 +154,22 @@ def _probe_section(raw_root: Path) -> tuple[str, dict[str, Any]]:
         f"- Answer NLL (float64) median {df['answer_nll_mean'].median():.3e}, "
         f"max {df['answer_nll_mean'].max():.3e}",
     ]
+    if "gen_margin_min_value" in df:
+        gen = pd.to_numeric(df["gen_margin_min_value"], errors="coerce")
+        ties = int((pd.to_numeric(df["gen_margin_min_all"], errors="coerce") == 0).sum())
+        ok = df["correct"]
+        lines += [
+            f"- Exact logit ties during generation: {ties}/{len(df)} samples (bf16 logits are coarse enough for two "
+            "tokens to tie; the chosen token then depends on the tie-break rule, not on the model)",
+            f"- Decode-path margin on the answer value (correct samples): median {gen[ok].median():.2f}, "
+            f"10th pct {gen[ok].quantile(0.1):.2f}, min {gen[ok].min():.2f}; located in "
+            f"{gen.notna().mean():.1%} of samples",
+            "- Teacher-forced margins can be negative on correct answers the model tokenizes differently; the "
+            "decode-path margin is the tokenization-independent version (decisions D9).",
+        ]
     facts = {
         "accuracy": float(df["correct"].mean()),
+        "run_name": run_name,
         "min_cell_accuracy": worst_cell[1],
         "min_cell": worst_cell[0],
         "margin_min_q10_correct": float(df[df["correct"]]["answer_margin_min"].quantile(0.1)),

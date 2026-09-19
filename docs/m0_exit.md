@@ -1,5 +1,20 @@
 # M0 exit checklist
 
+**Status: M0 CLOSED on 2026-09-19** — all eight criteria met on an idle RTX 5060 Ti (BF16, Qwen3-1.7B @ 70d244cc).
+Full numbers: `outputs/reports/m0_golden_report.md`; raw records under `outputs/raw/`.
+
+Golden baselines every later milestone measures against:
+
+| Quantity | Value |
+|---|---|
+| WikiText-2 cache-conditioned perplexity (1536 cached + 512 scored, 40 chunks × 3 seeds) | **14.392** (identical in all seeds) |
+| RAQ-Probe v0 accuracy (720 samples) | **0.994**; weakest cell 0.975 |
+| RAQ-Probe decode-path margin on correct answers | median **19.25**, 10th pct 9.56 |
+| GSM8K-200 accuracy (non-thinking) | **0.825** |
+| KV cache | 112 KiB/token; 450 MiB at 4K tokens; analytic = measured |
+| Latency (512/1024/2048-token prompts) | TTFT 89/218/601 ms; decode 39.6/38.2/32.7 tok/s |
+| bf16 noise floor for cache-geometry changes (D10) | ~0.3 logits, KL ~1e-4 |
+
 M0 is closed only when every row is ✅ with evidence (file path, commit, value). Criteria from `00_research_plan.md` §G.
 
 | # | Criterion | Status | Evidence / how to check |
@@ -10,8 +25,8 @@ M0 is closed only when every row is ✅ with evidence (file path, commit, value)
 | 4 | Interrupted runner resumes without duplicate units | ✅ | `tests/test_runner_resume.py`; rerun of `m0a_cpu_smoke` skipped 3/3 units |
 | 5 | Every record has provenance; CSV regenerable from raw | ✅ | `outputs/raw/qwen3-1p7b_wikitext2_cache_ppl_fp32_noecc_nofault_p0_cpu_s0-f96bb32e/manifest.json`, `scripts/aggregate.py` |
 | 6 | Decode rate measured on an idle GPU (sizes the M2 fault campaign) | ✅ | BF16, RTX 5060 Ti: TTFT 89/218/601 ms and 39.6/38.2/32.7 decode tok/s at 512/1024/2048 prompt tokens; prefill 6.0k/4.9k/3.5k tok/s. RAQ-Probe golden unit time 0.44/0.60/1.02/2.34 s at 512/1K/2K/4K |
-| 7 | RAQ-Probe golden accuracy (`correct`) in 85–100% per fact type × depth; answer margin and float64 NLL recorded | CPU pilots ✅ · GPU ⏳ | CPU fp32 pilots: 512 tokens 36/36 correct (commit 33be27a, margins not yet recorded); 2048 tokens 17/18 correct, golden `answer_margin_min` 9.9–27.5, the one failure (constraint, depth 0.9) chose the nearest later distractor (margin −6.3) (commit aa7cd7b); 4096 tokens 18/18 correct, margins 1.4–28.5 (commit cf9a47c). GPU (720 samples): `m0b_golden_probe` rows `fact_type=…|depth_nominal=…` |
-| 8 | GSM8K golden run completes; answer extraction rates reported | CPU pilot ✅ · GPU ⏳ | CPU pilot 4 problems: 3 correct; extraction marker 2, boxed-only 1 (boxed extraction added afterwards), 145–324 new tokens. GPU: `m0b_golden_gsm8k` → `extraction_*_rate` |
+| 7 | RAQ-Probe golden accuracy (`correct`) in 85–100% per fact type × depth; answer margin and float64 NLL recorded | ✅ | **GPU BF16, 720 samples (`m0b_golden_probe_margins`): accuracy 0.994, weakest cell 0.975 (constraint @ depth 0.5), strict EM 0.985, distractor mentioned 0.4%. Decode-path margin on correct answers: median 19.25, 10th pct 9.56, min 0.12; teacher-forced margin by type 10.0 (entity) to 26.5 (tool_arg). 3/720 generations hit an exact bf16 logit tie (D11).** Earlier CPU fp32 pilots: 512 tokens 36/36; 2048 tokens 17/18 (the failure chose the nearest later distractor); 4096 tokens 18/18 |
+| 8 | GSM8K golden run completes; answer extraction rates reported | ✅ | **GPU BF16, 200 problems: accuracy 0.825**; extraction marker 173 / boxed 23 / last-number 4 (accuracy 0.83 / 0.87 / 0.25); 4 runs hit the 512-token cap; mean 250 generated tokens, 6.4 s per problem; cached problem text averages 62 tokens |
 
 ## GPU session (run only when `python scripts/check_env.py` reports no busy-GPU warning)
 
