@@ -1,0 +1,15 @@
+# Quantization-sensitivity profile under the token-block scheme that replaced per-channel keys (D15), so that
+# Q48 correlates a quantization map and a fault map measured on the SAME storage scheme.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m1_quant_sensitivity_blocks
+task:
+  kind: quant_sensitivity
+  granularity: layer_part
+  n_chunks: 40
+  key_spec: {bits: 2, axis: group_token, group_size: 128}
+  value_spec: {bits: 2, axis: per_token}
+  null_bits: 8
+  null_regions: 8
+seed: 0

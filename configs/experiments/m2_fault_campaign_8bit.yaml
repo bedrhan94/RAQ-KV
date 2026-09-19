@@ -1,0 +1,19 @@
+# Same campaign at 8 bits. At 4 bits the MSB/LSB hierarchy was nearly flat (D17) because every code step is
+# large; at 8 bits steps are 16x finer, so this is the condition where bit significance should appear if it
+# exists. Claim supported: whether bit position deserves a place in the protection policy at all.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m2_fault_campaign_8bit
+quantization:
+  keys: {bits: 8, axis: group_token, group_size: 128}
+  values: {bits: 8, axis: per_token}
+task:
+  kind: fault_injection
+  n_chunks: 20
+  n_uniform: 80
+  n_msb: 20
+  n_metadata: 20
+  n_lsb: 20
+  n_control: 2
+seed: 0

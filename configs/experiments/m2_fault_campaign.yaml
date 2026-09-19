@@ -1,0 +1,19 @@
+# M2 main campaign at the safe operating point (4-bit block-128 keys, 4-bit per-token values).
+# 40 chunks x 122 injections gives ~86 code sites per (layer, part) cell, which is what Q48 correlates against
+# the quantization-sensitivity map measured on the same scheme.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m2_fault_campaign
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: fault_injection
+  n_chunks: 40
+  n_uniform: 60
+  n_msb: 20
+  n_metadata: 20
+  n_lsb: 20
+  n_control: 2
+seed: 0
