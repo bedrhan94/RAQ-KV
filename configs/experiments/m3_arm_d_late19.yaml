@@ -1,0 +1,27 @@
+# M3 arm D -- selective protection, late layers (the D18/D21 map)
+# One of the iso-budget arms of the M3 comparison (docs/m3_plan.md). Every arm in the set {B, C, D, E} lands within
+# 0.18% of the same effective bits per cached value at every probe length; the budget is checked before the run
+# by scripts/check_iso_budget.py, not by hand.
+# Half the freed bits to precision (group 64), the rest to SECDED on layers 9-27 -- where whole-row bursts
+# actually cost answers (D21). Bit-identical to arm E; only the protected layer set differs.
+
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m3_arm_d_late19
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 64}
+  values: {bits: 4, axis: per_token}
+protection:
+  data_codec: secded
+  data_word_bits: 64
+  data_layers: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+  metadata_codec: secded
+  metadata_word_bits: 16
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-6
+  n_trials: 8
+  n_control: 1
+seed: 0

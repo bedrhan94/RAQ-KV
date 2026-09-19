@@ -106,3 +106,15 @@ def test_conflicts_are_detected(tmp_path: Path):
     write_json_atomic(manifest_path, manifest)
     with pytest.raises(ExperimentConflictError, match="config hash"):
         run_experiment(cfg, task_factory=lambda _c: FakeTask(), log=lambda _m: None)
+
+
+def test_a_working_tree_change_mid_process_is_refused(tmp_path, monkeypatch):
+    """A sweep that edits source between its experiments would record a code state that never executed."""
+    from raq_kv.experiments import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "_PROCESS_CODE_STATE", None)
+    first = {"commit": "abc", "diff_sha256": "d1"}
+    runner_mod._check_process_code_state(first)
+    runner_mod._check_process_code_state(dict(first))  # same state again is fine
+    with pytest.raises(runner_mod.ExperimentConflictError, match="working tree changed"):
+        runner_mod._check_process_code_state({"commit": "abc", "diff_sha256": "d2"})

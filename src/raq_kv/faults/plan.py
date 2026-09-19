@@ -5,7 +5,10 @@ protection configuration (M3), so NONE / PARITY / SECDED see *identical* faults 
 ones. Each site addresses one bit of one stored element:
 
 * ``code``  — (layer, part, head, token, channel, bit) of an integer code;
-* ``scale`` / ``zero`` — (layer, part, flat group index, bit) of a float16 quantization parameter.
+* ``scale`` / ``zero`` — (layer, part, flat group index, bit) of a float16 quantization parameter;
+* ``check:<region>`` — (layer, part, word index, bit) of the ECC check bits guarding that region. Check bits
+  occupy real storage, so a fault model that spares them would hand the protected arm an advantage that no
+  physical memory grants it; see :mod:`raq_kv.faults.storage`.
 
 Sampling is stratified so that rare-but-important classes (MSBs, metadata) are represented without making the
 plan unbalanced by accident.
@@ -31,7 +34,9 @@ from raq_kv.quantization.apply import QuantizedKV
 from raq_kv.quantization.base import QuantizedTensor
 from raq_kv.utils.io import JsonlAppender, read_jsonl
 
-Target = Literal["code", "scale", "zero"]
+Target = Literal["code", "scale", "zero", "check:code", "check:scale", "check:zero"]
+
+CHECK_PREFIX = "check:"
 
 
 @dataclass(frozen=True)
@@ -41,7 +46,18 @@ class FaultSite:
     target: Target
     index: tuple[int, ...]  # index into the codes tensor, or into the scale/zero tensor
     bit: int
-    stratum: str  # why this site was drawn: uniform | msb | metadata | lsb_midrange
+    stratum: str  # why this site was drawn: uniform | msb | metadata | lsb_midrange | storage_seu
+
+    @property
+    def is_check(self) -> bool:
+        return self.target.startswith(CHECK_PREFIX)
+
+    @property
+    def check_region(self) -> str:
+        """For a check site, the region whose check bits it hits (``code`` / ``scale`` / ``zero``)."""
+        if not self.is_check:
+            raise ValueError(f"{self.target!r} is not a check-bit site")
+        return self.target[len(CHECK_PREFIX):]
 
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "index": list(self.index)}

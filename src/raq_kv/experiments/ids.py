@@ -56,6 +56,21 @@ def group_hash(cfg: ExperimentConfig) -> str:
     return sha256_hex(identity)
 
 
+def _protection_token(cfg: ExperimentConfig) -> str:
+    """e.g. ``noecc``, ``mSEC`` (metadata only), ``dSEC64-mSEC``, ``dSEC64L0-6`` (layer-selective)."""
+    p = cfg.protection
+    if p is None:
+        return "noecc"
+    short = {"none": "", "parity": "PAR", "secded": "SEC"}
+    parts = []
+    if p.data_codec != "none":
+        scope = "" if p.data_layers is None else f"L{min(p.data_layers)}-{max(p.data_layers)}"
+        parts.append(f"d{short[p.data_codec]}{p.data_word_bits}{scope}")
+    if p.metadata_codec != "none":
+        parts.append(f"m{short[p.metadata_codec]}")
+    return "-".join(parts)
+
+
 def slug(cfg: ExperimentConfig) -> str:
     # M0 configs have no quantization / ECC / fault / pruning sections: they are full precision, unprotected,
     # fault-free and unpruned by construction. Later schema versions derive these tokens from their sections.
@@ -66,7 +81,7 @@ def slug(cfg: ExperimentConfig) -> str:
         f"{cfg.dataset.name}{version}",
         cfg.task.kind,
         _quant_token(cfg),
-        "noecc",
+        _protection_token(cfg),
         "nofault",
         "p0",
         device,

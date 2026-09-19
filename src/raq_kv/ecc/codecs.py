@@ -93,6 +93,17 @@ def _hamming_layout(data_bits: int) -> tuple[int, torch.Tensor]:
     return r, h
 
 
+def _parity_matmul(code: torch.Tensor, h: torch.Tensor) -> torch.Tensor:
+    """Row parities of ``code`` under check matrix ``h``, i.e. ``(code @ h.T) mod 2``.
+
+    Done in float32 rather than int32 because CUDA has no integer matmul (``addmm_cuda`` is not implemented for
+    Int). The counts summed here are at most the codeword length (72), so float32 represents them exactly and the
+    result is the same bit for bit on CPU and GPU -- which ``tests/test_ecc.py`` checks exhaustively.
+    """
+    products = code.to(torch.float32) @ h.to(torch.float32).T
+    return (products.to(torch.int64) % 2).to(torch.uint8)
+
+
 class SecdedCodec:
     """Extended Hamming: corrects any single-bit error, detects any double-bit error.
 
@@ -131,16 +142,16 @@ class SecdedCodec:
         self._to(payload.device)
         code = self._codeword(payload)
         # Each Hamming parity is the XOR of the data bits its check row covers.
-        hamming = (code.to(torch.int32) @ self._h.to(torch.int32).T) % 2
-        code[:, self._parity_pos] = hamming.to(torch.uint8)
+        hamming = _parity_matmul(code, self._h)
+        code[:, self._parity_pos] = hamming
         overall = (code.to(torch.int32).sum(dim=-1) % 2).to(torch.uint8).unsqueeze(-1)
-        return torch.cat([hamming.to(torch.uint8), overall], dim=-1)
+        return torch.cat([hamming, overall], dim=-1)
 
     def decode(self, payload: torch.Tensor, check: torch.Tensor) -> DecodeResult:
         self._to(payload.device)
         hamming, overall = check[:, : self._r], check[:, self._r]
         code = self._codeword(payload, hamming)
-        syndrome_bits = (code.to(torch.int32) @ self._h.to(torch.int32).T) % 2
+        syndrome_bits = _parity_matmul(code, self._h).to(torch.int32)
         weights = (1 << torch.arange(self._r, device=payload.device, dtype=torch.int32))
         syndrome = (syndrome_bits * weights).sum(dim=-1)  # 0 = no detected Hamming error, else 1-based position
         overall_mismatch = ((code.to(torch.int32).sum(dim=-1) % 2).to(torch.uint8) != overall)

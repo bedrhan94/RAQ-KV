@@ -1,0 +1,21 @@
+# M3 arm A -- unprotected reference (-12.3% bits, cost reference not iso-budget)
+# One of the iso-budget arms of the M3 comparison (docs/m3_plan.md). Every arm in the set {B, C, D, E} lands within
+# 0.18% of the same effective bits per cached value at every probe length; the budget is checked before the run
+# by scripts/check_iso_budget.py, not by hand.
+# This arm is deliberately NOT iso-budget: it is the M1/M2 operating point and shows what the 12.3%
+# spent on protection buys. Comparisons against it are cost-benefit, never equal-budget.
+
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m3_arm_a_unprot
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-6
+  n_trials: 8
+  n_control: 1
+seed: 0

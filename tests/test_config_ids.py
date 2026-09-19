@@ -82,3 +82,25 @@ def test_include_cycle_detected(tmp_path: Path):
     (tmp_path / "b.yaml").write_text("include: [a.yaml]\n", encoding="utf-8")
     with pytest.raises(ValueError, match="cycle"):
         load_experiment_configs(tmp_path / "a.yaml", root=tmp_path)
+
+
+def test_protection_token_describes_the_arm():
+    """An arm must be identifiable from its directory name: the M3 arms differ only in protection."""
+    from raq_kv.config.schema import ProtectionConfig, QuantizationConfig, QuantSpec
+    from raq_kv.experiments.ids import _protection_token
+
+    base = make_cfg(quantization=QuantizationConfig(keys=QuantSpec(bits=4, axis="group_token", group_size=64)))
+    assert _protection_token(base) == "noecc"
+    assert _protection_token(base.model_copy(update={"protection": ProtectionConfig(metadata_codec="secded")})) \
+        == "mSEC"
+    uniform = ProtectionConfig(data_codec="secded", data_word_bits=64, metadata_codec="secded")
+    assert _protection_token(base.model_copy(update={"protection": uniform})) == "dSEC64-mSEC"
+    late = ProtectionConfig(data_codec="secded", data_word_bits=64, data_layers=tuple(range(9, 28)),
+                            metadata_codec="secded")
+    early = ProtectionConfig(data_codec="secded", data_word_bits=64, data_layers=tuple(range(0, 19)),
+                             metadata_codec="secded")
+    assert _protection_token(base.model_copy(update={"protection": late})) == "dSEC64L9-27-mSEC"
+    assert _protection_token(base.model_copy(update={"protection": early})) == "dSEC64L0-18-mSEC"
+    # D and E are bit-identical but must never collide in storage.
+    assert _protection_token(base.model_copy(update={"protection": late})) \
+        != _protection_token(base.model_copy(update={"protection": early}))

@@ -416,3 +416,104 @@ the M0 golden corpus perplexity exactly: 14.391535 both).
   `tests/slow`). The golden BF16 baseline and latency runs wait for an idle GPU. CPU numbers are never used as the
   baseline (different device and dtype yield a different `exp_id`).
 - **Deviation from plan §H:** no separate `scripts/probe_cache_api.py`; the protocol and snapshot tests serve that role.
+
+## D22 — Precision and protection are not exchangeable at bit-width granularity (2026-09-20)
+
+- **Context:** `docs/m3_plan.md` specified the decisive M3 comparison as **4-bit + uniform SECDED** versus
+  **2-bit + metadata-only SECDED** "at ±1% equal budget". Before booking GPU time the two arms were costed with
+  the closed-form predictor (`src/raq_kv/budget/iso.py`, pinned bit-for-bit against the real encoders in
+  `tests/test_iso_budget.py`), on the Qwen3-1.7B geometry at 768 cached tokens.
+- **Measurement** (bits per cached scalar, `group_token` g=128, asymmetric, SECDED over 64-bit words):
+
+  | arm | data | quant metadata | ECC data | ECC metadata | total |
+  |---|---|---|---|---|---|
+  | 4-bit + uniform SECDED + metadata SECDED | 4.000 | 0.250 | 0.500 | 0.094 | **4.844** |
+  | 2-bit + metadata SECDED only | 2.000 | 0.250 | 0.000 | 0.094 | **2.344** |
+
+- **Finding:** the planned pair differs by **107%**, not ±1%. The reason is structural, not a parameter slip:
+  SECDED over 64-bit words costs 8/64 = **12.5%** of the data bits, while one step of the bit-width ladder
+  (2→4, 4→8) costs **100%**. The exchange rate between protection and precision is about **8:1**, so *no*
+  protection policy on this codec family can ever pay for a bit-width step. §6 of the brief assumed these three
+  budget axes were mutually tradeable at a common granularity; for precision-vs-protection they are not.
+- **Decision:** the tradeable margin against ECC is **quantization metadata (group size)**, not bit width. Group
+  size moves the budget in the same 0.1–1.0 bits/value range as ECC does (g=128 → 0.25, g=64 → 0.50,
+  g=32 → 1.00 bits/value), so an iso-budget family can be built by exchanging group size for check bits at fixed
+  bit width. M3's arms are rebuilt on that axis; the 2-bit arm is dropped from the iso-budget set.
+- **Consequences:** (a) the M5 allocator's decision variables become (bits, group size, codec, protected layer
+  set), and *bits* is a coarse knob that mostly selects the operating point rather than participating in the
+  fine-grained trade; (b) `iso_budget_report()` enforces the ±1% tolerance in code, and every arm's predicted
+  budget is recorded before it runs; (c) this correction of the project's own premise is a result in its own
+  right and belongs in the paper, not only in the plan.
+- **Falsification:** the 8:1 rate is codec-specific. A code with much larger overhead (e.g. BCH over short words,
+  or replication) would close the gap; if such a codec is added, this entry must be re-measured, not assumed.
+
+## D23 — The M3 fault model is a bit error rate over the *declared* representation (2026-09-20)
+
+- **Context:** check bits occupy storage and are counted in the budget, but `faults/plan.py` can only address
+  codes, scales and zero points. A protected arm would therefore have been exposed on a *smaller* fraction of the
+  bits it claims to store than an unprotected one: the extra 0.5 bits/value of an arm's SECDED would have been
+  immune by construction. Any "equal bits" comparison built that way measures the model's blind spot.
+- **Decision:** an M3 fault model draws uniformly over **every bit the arm declares** — codes + quantization
+  metadata + ECC check bits — in proportion to each region's real size (`src/raq_kv/faults/storage.py`). A
+  check-bit flip is a first-class site (`target="check:code"` etc.); it makes the decoder compute a syndrome for
+  an error that did not happen and repair intact data, i.e. a miscorrection, which the codec already classifies.
+  `flips_for_rate()` converts a bit error rate into a flip count per arm, so "the same rate" means the same thing
+  in arms of different shape.
+- **Evidence:** `tests/test_storage_faults.py` pins the inventory against the bit budget
+  (codes = `kv_data_bits`, metadata = `quant_metadata_bits`, check = `ProtectedKV.ecc_bits`), asserts every drawn
+  site is addressable and exactly reversible, and checks that drawn region shares match storage shares to within
+  four standard errors. On the test geometry check bits are 5–25% of a protected arm's storage: not negligible.
+- **Consequence — the M2 replay rule no longer generalises.** A plan is a list of (layer, part, index, bit)
+  addresses, which denote the same *physical* bits only within one layout. Replay therefore stays valid for
+  **protected vs unprotected at the same quantization** (the paired comparison that isolates the codec) and is
+  **invalid across arms with different group sizes or protection maps**; those are matched on rate instead, with
+  the trial count set by power rather than by pairing. `docs/m3_plan.md` inherited the unqualified M2 rule and is
+  corrected.
+- **Spatial correlation is the axis that decides whether ECC can help at all.** Measured word occupancy of the
+  existing generators (Qwen3-1.7B geometry, 176.2 Mbit of codes = 2.75 M 64-bit words, SECDED per word):
+
+  | generator | words with >1 flip | max flips in a word | regime |
+  |---|---|---|---|
+  | `generate_plan(n_uniform=2048)` | 0.0% | 1 | every fault correctable |
+  | `generate_plan(n_uniform=8192)` | 0.1% | 2 | first coincidences appear |
+  | `generate_bursts_in_tokens(64 b, scope="layer_token")` | 36.3% | 6 | partly correctable — the crossover |
+  | `generate_bursts_in_tokens(512 b, scope="head")` | 100% | 64 | word failure, nothing correctable |
+
+  No new generator is needed: the two physical regimes (uniform SEU, contiguous word/row failure) and the
+  crossover between them are already reachable from config. A "≤1 flip per word by construction" stratum was
+  considered and **rejected**: SECDED corrects it with probability 1 by definition, so it would be a restatement
+  of the code's datasheet dressed as a measurement.
+- **Rate calibration (pre-registered).** At D21's 4% base damage rate, halving it needs ~1113 trials per arm
+  (two-proportion, 80% power, α=0.05); at a 35–50% base rate, 58–99. The campaign therefore first sweeps the
+  rate on the *unprotected* arm alone to find the decade where damage is ~50%, then runs the full arm set at
+  three rates spanning it. The rate is a stated experimental condition, never a claim; what is compared is the
+  ordering of arms at a fixed rate, and the rate at which that ordering changes.
+- **Cost:** a full protected read is 1.3 s and a single layer-part 18 ms on CPU at 768 tokens (SECDED/64 +
+  metadata SECDED, 26.1 Mbit of check bits = 14.84% of code bits), so per-burst re-reads dominate nothing;
+  5 arms × 3 fault models × 1000 trials ≈ 1.5–3.3 h of decoding.
+
+## D24 — Provenance records the tree, not the process: a guard, and four retired pilot runs (2026-09-20)
+
+- **Context:** during the M3 rate-calibration sweep (four rates in one process) the source tree was edited between
+  experiments. The runner collects provenance per experiment, so the four manifests recorded **three different**
+  `diff_sha256` values (`41f01749c0`, `d8d02693f0`, `6e6da51d81`) for one campaign. Python had already imported the
+  modules, so every rate actually ran the *first* version: two of the manifests describe code that never executed.
+- **Why this matters more than it looks:** the damage those runs measured was probably unaffected (the edits were
+  reports, docs, and an explicit-zero field on a path the unprotected arm does not use). But "probably unaffected"
+  is not a reproducibility claim, and a manifest whose code state is wrong cannot be checked by anyone later. The
+  whole point of §28 is that a reader can reconstruct what produced a number.
+- **Decision (guard):** `runner._check_process_code_state` remembers the code state of the first experiment in a
+  process and refuses any later experiment whose state differs, with the reason stated. A silent inconsistency
+  becomes a loud refusal. Pinned by `tests/test_runner_resume.py`.
+- **Decision (the pilot runs):** all four `protection_arm` pilot directories were marked `superseded_by` with the
+  reason above and renamed to `<exp_id>.superseded-<diff>`; **no record was deleted** (§27). The calibration was
+  rerun from a committed tree.
+- **What the retired pilot still tells us** (used only to choose an experimental condition, never reported as a
+  result): on the unprotected arm, uniform SEU over the stored representation gives 5.0% of answers changed at
+  BER 1e-7 (25 flips) and 37.5% at 1e-6 (~555 flips), with task failure 3.75% and 33.75%; no-fault controls
+  exactly zero at both. **1e-6 is therefore the campaign's main operating rate**: a ~35% base rate needs ~99
+  trials per arm for 80% power against a halving, and the arms provide 480. A first protected-arm probe at 1e-6
+  corrected 286 of 286 flips, check-bit flips included, and changed no answer — as expected in a regime where
+  every fault lands in its own word.
+- **Process rule:** no edits to tracked source while a campaign is in flight. Documentation and analysis scripts
+  are no exception, because the diff hash covers the whole tree.

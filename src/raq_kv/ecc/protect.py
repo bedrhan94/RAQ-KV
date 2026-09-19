@@ -12,11 +12,13 @@ Three outcomes are counted separately, because conflating them is how reliabilit
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import torch
 
+from raq_kv.config.schema import ProtectionConfig
 from raq_kv.ecc.bits import bits_to_codes, bits_to_float16, codes_to_bits, float16_to_bits, pack_words, unpack_words
 from raq_kv.ecc.codecs import make_codec
 from raq_kv.kv.snapshot import KVSnapshot
@@ -156,9 +158,70 @@ class ProtectedKV:
                                        stored.orig_dtype)
         return dequantize(repaired_tensor)
 
+    def inject_check(self, site: Any) -> dict[str, Any]:
+        """Flip one check bit in place, reversibly.
+
+        A corrupted check bit is a real failure mode, not a technicality: the codec then computes a syndrome for
+        an error that never happened and "repairs" intact data, which is a miscorrection.
+        """
+        key = (site.layer, site.part, site.check_region)
+        region = self.codes.get(key)
+        if region is None:
+            raise ValueError(f"no check bits stored for {key}; this site cannot exist in this arm")
+        word, bit = site.index[0], site.bit
+        before = int(region.check[word, bit])
+        region.check[word, bit] = 1 - before
+        return {"stored_before": before, "stored_after": 1 - before, "relative_change": 1.0}
+
+    @contextmanager
+    def faulted_read(self, sites: list[Any], base: KVSnapshot):
+        """Inject a burst, re-read only the affected layer-parts *through the codec*, then restore.
+
+        Without this the campaign would compare protected storage against an unprotected read path; the whole
+        point is that the decoder sits between the corrupted bits and the model. Sites aimed at check bits are
+        applied to this object's own check tensors, so an arm is exposed on all of the storage it declares.
+        """
+        from raq_kv.faults.injector import inject  # local import keeps ecc independent of the fault package
+
+        def apply(site: Any) -> dict[str, Any]:
+            return self.inject_check(site) if site.is_check else inject(self.qkv, site)
+
+        infos = [apply(site) for site in sites]
+        touched = {(s.layer, s.part) for s in sites}
+        saved: dict[tuple[int, str], torch.Tensor] = {}
+        stats = ProtectionStats()
+        try:
+            for layer, part in touched:
+                tensors = base.keys if part == "keys" else base.values
+                saved[(layer, part)] = tensors[layer]
+                tensors[layer] = self.read_part(layer, part, stats)
+            yield base, {"n_flips": len(sites), **stats.to_dict(),
+                         "max_relative_change": max(i["relative_change"] for i in infos)}
+        finally:
+            for (layer, part), tensor in saved.items():
+                (base.keys if part == "keys" else base.values)[layer] = tensor
+            for site in sites:
+                apply(site)  # flipping the same bit again restores it, check bits included
+
+    def read_or_raise(self) -> KVSnapshot:
+        """Fault-free read: nothing may be corrected or flagged, so a non-zero count is a bug, not a result."""
+        snapshot, stats = self.read()
+        if stats.corrected or stats.uncorrectable:
+            raise RuntimeError(f"protected read of an uncorrupted cache reported {stats.to_dict()}")
+        return snapshot
+
     def read(self) -> tuple[KVSnapshot, ProtectionStats]:
         stats = ProtectionStats()
         keys = [self.read_part(layer, "keys", stats) for layer in range(self.qkv.num_layers)]
         values = [self.read_part(layer, "values", stats) for layer in range(self.qkv.num_layers)]
         return KVSnapshot(keys=keys, values=values, positions=self.qkv.positions,
                           next_position=self.qkv.next_position), stats
+
+
+def build_protection(qkv: QuantizedKV, cfg: ProtectionConfig | None) -> ProtectedKV | None:
+    """Config -> guard, or ``None`` when the arm stores the quantized cache unprotected."""
+    if cfg is None:
+        return None
+    return ProtectedKV(qkv, data_codec=cfg.data_codec, data_word_bits=cfg.data_word_bits,
+                       metadata_codec=cfg.metadata_codec, metadata_word_bits=cfg.metadata_word_bits,
+                       data_layers=cfg.data_layers, due_policy=cfg.due_policy)

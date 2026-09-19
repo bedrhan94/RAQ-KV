@@ -52,6 +52,27 @@ def _code_state(git: dict[str, Any]) -> tuple[str | None, str | None]:
     return git.get("commit"), git.get("diff_sha256")
 
 
+# The code that runs is the code Python imported at process start; the working tree can be edited afterwards. A
+# manifest would then record a state that never executed, which is how a sweep ends up with three different diff
+# hashes for one campaign. So the first state observed in this process is remembered and later ones are refused.
+_PROCESS_CODE_STATE: tuple[tuple[str | None, str | None], dict[str, Any]] | None = None
+
+
+def _check_process_code_state(git: dict[str, Any]) -> None:
+    """Refuse to start an experiment if the working tree changed since this process imported its modules."""
+    global _PROCESS_CODE_STATE
+    state = _code_state(git)
+    if _PROCESS_CODE_STATE is None:
+        _PROCESS_CODE_STATE = (state, git)
+        return
+    if state != _PROCESS_CODE_STATE[0]:
+        raise ExperimentConflictError(
+            f"the working tree changed while this process was running: started at {_PROCESS_CODE_STATE[0]}, now "
+            f"{state}. The already-imported code is what executes, so a manifest written now would record a state "
+            "that never ran. Restart the run instead of editing source during a campaign."
+        )
+
+
 def _check_existing(manifest: dict[str, Any], cfg: ExperimentConfig, fingerprint: dict[str, Any],
                     git: dict[str, Any], allow_code_change: bool) -> None:
     if manifest["config_hash"] != config_hash(cfg):
@@ -84,6 +105,7 @@ def run_experiment(
         raise ValueError("task produced duplicate unit keys")
     fingerprint = task.data_fingerprint()
     provenance = collect_provenance()
+    _check_process_code_state(provenance["git"])
 
     if manifest_path.exists():
         manifest = read_json(manifest_path)

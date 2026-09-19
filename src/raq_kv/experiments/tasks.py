@@ -7,6 +7,7 @@ units *before* the model is loaded (tokenizer/data only), so a fully finished ex
 from __future__ import annotations
 
 import random
+from dataclasses import replace
 from typing import Any, Protocol
 
 import torch
@@ -19,6 +20,7 @@ from raq_kv.config.schema import (
     FaultQATask,
     GSM8KConfig,
     LatencyTask,
+    ProtectionArmTask,
     QATask,
     QuantSensitivityTask,
     QuantSpec,
@@ -28,6 +30,7 @@ from raq_kv.data.gsm8k import build_gsm8k
 from raq_kv.data.prompts import PromptSample, char_span_to_tokens, samples_fingerprint
 from raq_kv.data.raq_probe import build_raq_probe
 from raq_kv.data.wikitext import PPLChunk, chunks_fingerprint, make_chunks, tokenize_wikitext2
+from raq_kv.ecc.protect import build_protection
 from raq_kv.evaluation.latency import measure_generation_latency
 from raq_kv.evaluation.memory import allocator_delta, cuda_memory, reset_peak
 from raq_kv.evaluation.metrics import nll_stats
@@ -41,6 +44,13 @@ from raq_kv.faults.plan import (
     generate_plan,
     generate_plan_in_tokens,
     save_plan,
+)
+from raq_kv.faults.storage import (
+    flips_for_rate,
+    generate_storage_plan,
+    plan_composition,
+    storage_regions,
+    total_stored_bits,
 )
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
@@ -64,7 +74,8 @@ def transform_snapshot(snapshot: KVSnapshot, cfg: ExperimentConfig) -> tuple[KVS
 
 
 def kv_record_fields(
-    lm: LoadedModel, snapshot: KVSnapshot, original_tokens: int, report: QuantReport | None = None
+    lm: LoadedModel, snapshot: KVSnapshot, original_tokens: int, report: QuantReport | None = None,
+    ecc_bits: int = 0,
 ) -> dict[str, Any]:
     """Token/retention and KV memory fields shared by all cache-reading tasks.
 
@@ -73,6 +84,10 @@ def kv_record_fields(
     diverge on purpose - see decisions D6.
     """
     budget = report.budget if report is not None else full_precision_kv_budget(lm.geometry, snapshot.seq_len)
+    if ecc_bits:
+        # Check bits are part of what the system must store, so every downstream memory number and every
+        # iso-budget comparison sees them (plan §21, decisions D6).
+        budget = replace(budget, ecc_bits=ecc_bits)
     fields = {
         "tokens_original": original_tokens,
         "tokens_retained": snapshot.seq_len,
@@ -545,7 +560,8 @@ class FaultQA:
         reset_peak(dev)
         snapshot = prefill(model, ids[:, : sample.cache_len])
         qkv = quantize_to_codes(snapshot, self.cfg.quantization)
-        base = qkv.to_snapshot()
+        guard = build_protection(qkv, self.cfg.protection)
+        base = qkv.to_snapshot() if guard is None else guard.read_or_raise()
         golden_gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=base, eos_token_ids=eos)
         golden_text = tok.decode(golden_gen.tokens, skip_special_tokens=True)
         golden_score = SCORERS[sample.scorer](golden_text, sample.reference)
@@ -573,7 +589,9 @@ class FaultQA:
                          "prediction_changed": text != golden_text,
                          **{f"faulty_{k}": v for k, v in SCORERS[sample.scorer](text, sample.reference).items()}})
         for burst in bursts:
-            with injected_burst(qkv, burst, base) as (faulty, info):
+            # With protection configured the read goes through the decoder, which is the point of the arm.
+            reader = injected_burst(qkv, burst, base) if guard is None else guard.faulted_read(burst, base)
+            with reader as (faulty, info):
                 gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=faulty, eos_token_ids=eos)
             text = tok.decode(gen.tokens, skip_special_tokens=True)
             score = SCORERS[sample.scorer](text, sample.reference)
@@ -588,7 +606,8 @@ class FaultQA:
         return {
             "sample_id": unit_key,
             "meta": sample.meta,
-            **kv_record_fields(self.lm, base, sample.cache_len, qkv.report),
+            **kv_record_fields(self.lm, base, sample.cache_len, qkv.report,
+                               ecc_bits=0 if guard is None else guard.ecc_bits),
             "golden_correct": bool(golden_score["correct"]),
             "golden_prediction": golden_text,
             "role_token_counts": {role: len(tokens) for role, tokens in roles.items()},
@@ -596,6 +615,119 @@ class FaultQA:
             "n_sites": len(bursts),
             "faults": rows,
         }
+
+
+class ProtectionArm:
+    """One M3 arm at one bit error rate: the H2 vehicle.
+
+    Per sample the cache is quantized once, the arm's protection is built over it, the fault-free answer is
+    generated through the arm's own read path (so the protected and unprotected arms differ only in faults), and
+    then ``n_trials`` independent storage-wide fault draws are applied and read back through the codec.
+
+    Each trial is classified on two independent axes, because collapsing them is how reliability results get
+    overstated: **did the answer change** (the only thing the task cares about) and **did the codec notice**
+    (corrected words, or detected-uncorrectable ones). A changed answer with nothing detected is silent data
+    corruption; a changed answer with a DUE is a failure the system could have caught and recomputed.
+    """
+
+    def __init__(self, cfg: ExperimentConfig) -> None:
+        assert isinstance(cfg.task, ProtectionArmTask) and cfg.quantization is not None
+        self.cfg = cfg
+        self.task: ProtectionArmTask = cfg.task
+        self.tokenizer = load_tokenizer(cfg.model)
+        samples = build_raq_probe(cfg.dataset, self.tokenizer, dict(cfg.model.chat_template_kwargs))
+        if self.task.n_samples is not None and self.task.n_samples < len(samples):
+            picked = random.Random(derive_seed(cfg.seed, "probe_subset")).sample(samples, self.task.n_samples)
+            samples = sorted(picked, key=lambda s: s.sample_id)
+        self.samples = {s.sample_id: s for s in samples}
+        self._fingerprint = samples_fingerprint(samples)
+        self.lm: LoadedModel | None = None
+
+    def unit_keys(self) -> list[str]:
+        return list(self.samples)
+
+    def data_fingerprint(self) -> dict[str, Any]:
+        return {"raq_probe_samples_sha256": self._fingerprint, "n_samples": len(self.samples)}
+
+    def setup(self) -> dict[str, Any]:
+        self.lm = load_model(self.cfg.model)
+        return {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict()}
+
+    def run_unit(self, unit_key: str) -> dict[str, Any]:
+        assert self.lm is not None and self.cfg.quantization is not None
+        sample = self.samples[unit_key]
+        model, dev, tok = self.lm.model, self.lm.device, self.lm.tokenizer
+        ids = sample.prompt_ids.to(dev).unsqueeze(0)
+        query_ids = ids[:, sample.cache_len :]
+        eos = set(self.lm.eos_token_ids)
+
+        reset_peak(dev)
+        snapshot = prefill(model, ids[:, : sample.cache_len])
+        qkv = quantize_to_codes(snapshot, self.cfg.quantization)
+        guard = build_protection(qkv, self.cfg.protection)
+        base = qkv.to_snapshot() if guard is None else guard.read_or_raise()
+        golden_gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=base, eos_token_ids=eos)
+        golden_text = tok.decode(golden_gen.tokens, skip_special_tokens=True)
+        golden_score = SCORERS[sample.scorer](golden_text, sample.reference)
+
+        regions = storage_regions(qkv, guard)
+        stored_bits = total_stored_bits(regions)
+        n_flips = flips_for_rate(qkv, guard, self.task.ber)
+        seed = derive_seed(self.cfg.seed, unit_key, "protection_arm")
+
+        rows = []
+        for i in range(self.task.n_control):
+            text = tok.decode(greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=base,
+                                            eos_token_ids=eos).tokens, skip_special_tokens=True)
+            rows.append({"trial": -1 - i, "n_flips": 0, "answer_changed": text != golden_text,
+                         "corrected_words": 0, "due_words": 0, "detected": False,
+                         **{f"faulty_{k}": v for k, v in SCORERS[sample.scorer](text, sample.reference).items()}})
+        for trial in range(self.task.n_trials):
+            plan = generate_storage_plan(qkv, guard, derive_seed(seed, f"trial{trial}"), n_flips)
+            reader = (injected_burst(qkv, plan, base) if guard is None
+                      else guard.faulted_read(plan, base))
+            with reader as (faulty, info):
+                gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=faulty, eos_token_ids=eos)
+            text = tok.decode(gen.tokens, skip_special_tokens=True)
+            score = SCORERS[sample.scorer](text, sample.reference)
+            changed = text != golden_text
+            # An unprotected arm has no decoder, so these are zero by construction rather than missing: a blank
+            # here would read as "not measured" in the report instead of "there was nothing to detect with".
+            due = int(info.get("due_words", 0))
+            corrected = int(info.get("corrected_words", 0))
+            rows.append({
+                "trial": trial, **info, **plan_composition(plan),
+                "corrected_words": corrected, "due_words": due, "words_read": int(info.get("words_read", 0)),
+                "detected": bool(due or corrected),
+                "answer_changed": changed,
+                "silent_corruption": bool(changed and due == 0),
+                "detected_failure": bool(changed and due > 0),
+                "prediction": text if changed else None,
+                "gen_margin_min_all": min(gen.margins) if gen.margins else None,
+                **{f"faulty_{k}": v for k, v in score.items()},
+            })
+
+        return {
+            "sample_id": unit_key,
+            "meta": sample.meta,
+            **kv_record_fields(self.lm, base, sample.cache_len, qkv.report,
+                               ecc_bits=0 if guard is None else guard.ecc_bits),
+            "golden_correct": bool(golden_score["correct"]),
+            "golden_prediction": golden_text,
+            "ber": self.task.ber,
+            "stored_bits": stored_bits,
+            "n_flips_per_trial": n_flips,
+            "storage_composition": _storage_shares(regions),
+            "faults": rows,
+        }
+
+
+def _storage_shares(regions: list[Any]) -> dict[str, int]:
+    """Bits per target family, so a reader can see what the rate was actually applied to."""
+    shares: dict[str, int] = {}
+    for region in regions:
+        shares[region.target] = shares.get(region.target, 0) + region.n_bits
+    return shares
 
 
 def build_task(cfg: ExperimentConfig) -> Task:
@@ -611,4 +743,6 @@ def build_task(cfg: ExperimentConfig) -> Task:
         return FaultInjection(cfg)
     if isinstance(cfg.task, FaultQATask):
         return FaultQA(cfg)
+    if isinstance(cfg.task, ProtectionArmTask):
+        return ProtectionArm(cfg)
     raise NotImplementedError(f"no task for kind '{cfg.task.kind}'")

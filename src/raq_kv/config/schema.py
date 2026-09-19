@@ -178,8 +178,25 @@ class FaultQATask(StrictModel):
     n_control: int = Field(default=1, ge=0)
 
 
+class ProtectionArmTask(StrictModel):
+    """One M3 arm at one bit error rate: does this arm's way of spending its bits survive faults better?
+
+    The fault model is a rate over everything the arm stores -- codes, quantization metadata and its own ECC
+    check bits -- so two arms holding the same number of bits are exposed on the same number of bits (D23). The
+    rate is a stated condition, not a claim; what is compared is the ordering of arms at a fixed rate, and the
+    rate at which that ordering changes.
+    """
+
+    kind: Literal["protection_arm"] = "protection_arm"
+    n_samples: int | None = Field(default=60, description="Probe samples to use; None means all")
+    ber: float = Field(gt=0.0, lt=1.0, description="Bit error rate over the arm's declared storage")
+    n_trials: int = Field(default=8, ge=1, description="Independent storage-wide fault draws per sample")
+    n_control: int = Field(default=1, ge=0, description="No-fault scorings; must be exactly zero damage")
+
+
 Task = Annotated[
-    CachePPLTask | LatencyTask | QATask | QuantSensitivityTask | FaultInjectionTask | FaultQATask,
+    CachePPLTask | LatencyTask | QATask | QuantSensitivityTask | FaultInjectionTask | FaultQATask
+    | ProtectionArmTask,
     Field(discriminator="kind"),
 ]
 
@@ -190,6 +207,7 @@ _TASK_DATASETS: dict[str, tuple[str, ...]] = {
     "quant_sensitivity": ("wikitext2",),
     "fault_injection": ("wikitext2",),
     "fault_qa": ("raq_probe",),
+    "protection_arm": ("raq_probe",),
 }
 
 
@@ -219,6 +237,28 @@ class QuantizationConfig(StrictModel):
         return self
 
 
+class ProtectionConfig(StrictModel):
+    """Which codec guards which part of the stored representation.
+
+    Codes and quantization metadata are configured separately because M2 found their damage per bit differs by
+    ~3000x (D21), and ``data_layers`` expresses a layer-selective policy so the fault-sensitivity map can be
+    tested as a protection policy rather than only described.
+    """
+
+    data_codec: Literal["none", "parity", "secded"] = "none"
+    data_word_bits: int = Field(default=64, gt=1)
+    data_layers: tuple[int, ...] | None = Field(default=None, description="None protects every layer")
+    metadata_codec: Literal["none", "parity", "secded"] = "none"
+    metadata_word_bits: int = Field(default=16, gt=1)
+    due_policy: Literal["erasure_mid", "pass_through"] = "erasure_mid"
+
+    @model_validator(mode="after")
+    def _check(self) -> ProtectionConfig:
+        if self.data_codec == "none" and self.metadata_codec == "none":
+            raise ValueError("protection section with no codec; omit the section instead")
+        return self
+
+
 class OutputConfig(StrictModel):
     root: str = "outputs"
 
@@ -231,6 +271,7 @@ class ExperimentConfig(StrictModel):
     dataset: Dataset
     task: Task
     quantization: QuantizationConfig | None = None
+    protection: ProtectionConfig | None = None
     output: OutputConfig = Field(default_factory=OutputConfig)
     notes: str = ""
 
@@ -243,6 +284,8 @@ class ExperimentConfig(StrictModel):
                 raise ValueError(f"{self.task.kind} needs a quantization section: faults land in stored codes")
             if self.quantization.residual_window:
                 raise ValueError(f"{self.task.kind} does not support a residual window yet")
+        if self.protection is not None and self.quantization is None:
+            raise ValueError("protection guards the quantized representation, so quantization must be configured")
         if isinstance(self.task, LatencyTask) and isinstance(self.dataset, WikiText2Config):
             corpus_tokens = self.dataset.n_chunks * (self.dataset.prefix_len + self.dataset.continuation_len + 1)
             if max(self.task.prompt_lens) > corpus_tokens:

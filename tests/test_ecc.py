@@ -151,3 +151,29 @@ def test_triple_bit_errors_expose_miscorrection_and_silent_corruption():
     # flagging anything AND being counted as safe: those cases are the SDC the campaign must attribute.
     assert int(miscorrected.sum()) + int(silent.sum()) + int((result.uncorrectable & payload_wrong).sum()) \
         == int(payload_wrong.sum())
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU to compare devices")
+@pytest.mark.parametrize("word_bits", [16, 64])
+def test_encode_and_decode_are_bit_identical_on_cpu_and_gpu(word_bits):
+    """The parity kernel runs in float32 because CUDA has no integer matmul; that must not change a single bit.
+
+    Sums here are at most the codeword length, so float32 is exact -- but 'should be exact' is the kind of claim
+    that silently stops being true, so it is measured on both devices instead.
+    """
+    codec: SecdedCodec = make_codec("secded", word_bits)  # type: ignore[assignment]
+    payload = _random_payload(512, word_bits, seed=17)
+    check = codec.encode(payload)
+    faulty = payload.clone()
+    faulty[torch.arange(512), torch.randint(0, word_bits, (512,), generator=torch.Generator().manual_seed(2))] ^= 1
+
+    gpu = torch.device("cuda")
+    check_gpu = make_codec("secded", word_bits).encode(payload.to(gpu))
+    assert torch.equal(check, check_gpu.cpu()), "check bits differ between devices"
+
+    cpu_result = codec.decode(faulty, check)
+    gpu_result = make_codec("secded", word_bits).decode(faulty.to(gpu), check.to(gpu))
+    assert torch.equal(cpu_result.data, gpu_result.data.cpu())
+    assert torch.equal(cpu_result.corrected, gpu_result.corrected.cpu())
+    assert torch.equal(cpu_result.uncorrectable, gpu_result.uncorrectable.cpu())
+    assert torch.equal(cpu_result.data, payload), "every single-bit error must be repaired on both devices"

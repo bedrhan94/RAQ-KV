@@ -1,0 +1,24 @@
+# M3 arm C -- precision-first (no data ECC at all)
+# One of the iso-budget arms of the M3 comparison (docs/m3_plan.md). Every arm in the set {B, C, D, E} lands within
+# 0.18% of the same effective bits per cached value at every probe length; the budget is checked before the run
+# by scripts/check_iso_budget.py, not by hand.
+# Spends every bit B gives to data check bits on finer key quantization instead (group 32), keeping only
+# the cheap metadata SECDED. If this arm matches B under faults, uniform data ECC is dominated.
+
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m3_arm_c_precision
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 32}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_codec: secded
+  metadata_word_bits: 16
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-6
+  n_trials: 8
+  n_control: 1
+seed: 0
