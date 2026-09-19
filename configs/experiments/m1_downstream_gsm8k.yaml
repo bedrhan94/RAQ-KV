@@ -1,0 +1,15 @@
+# Operating points on GSM8K. Expected to be insensitive by construction (only ~62 tokens of the problem sit in
+# the cache; the reasoning KV is generated in phase 2 and is not transformed until M5) - running it makes that
+# expectation a measurement instead of an assumption, and guards against reading a null result as robustness.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/gsm8k_200.yaml
+name: m1_downstream_gsm8k
+task:
+  kind: qa_generate
+  score_answer_nll: false
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 4, axis: per_channel}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: per_channel}, values: {bits: 2, axis: per_token}}

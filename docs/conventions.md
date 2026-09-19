@@ -46,13 +46,28 @@ once; the split is a character offset moved left to a token boundary (a straddli
 **Spans.** `[token_start, token_end)` covers every token overlapping the span's characters, so edge tokens may include
 neighbouring characters (e.g. `.ĊĊ`). Span-to-token mapping is verified at build time by decoding.
 
-## 4. Bits and bytes
+## 4. What is quantized (scope)
+
+- **Only the KV cache.** Weights, activations and the attention computation stay in the model's dtype (bf16 on
+  GPU). A configuration labelled "4-bit" here means 4-bit cached keys/values with bf16 weights — it is *not* a
+  4-bit model, and its numbers are not comparable with weight-quantization results.
+- **Keys are quantized after RoPE** (and after Qwen3's QK-Norm), because that is what the cache stores. Papers
+  that quantize keys *before* RoPE see different key statistics; comparisons must say which side of RoPE they are on.
+- **Offline vs online schemes.** `per_channel` and `per_tensor` compute scales over every token in the context, so
+  they are prefill-time (offline) schemes: a streaming decoder cannot form those statistics. `per_token` and
+  `group_token` are causal — a scale depends only on tokens that have already arrived. The distinction is enforced
+  by a test (`test_group_token_is_causal_and_per_channel_is_not`) and must be stated whenever an operating point
+  is quoted.
+- **Fake quantization.** Codes are reconstructed into the model dtype before attention, so the tensors in VRAM do
+  not shrink; memory is reported from the bit budget (D6).
+
+## 5. Bits and bytes
 
 - Bit indexing inside an integer code: **LSB = bit 0**, MSB = bit `b-1` (fixed now; used from M1/M2).
 - Memory numbers come from `budget/bit_accounting.py`. Bits are integers; bytes = `ceil(bits / 8)`.
 - Units: KiB = 1024 B, MiB = 1024 KiB. Never mix decimal MB into tables.
 
-## 5. Identity and records
+## 6. Identity and records
 
 - `exp_id = <slug>-<sha256(identity)[:8]>`; the identity excludes `output` and `notes`.
 - `unit_id = <exp_id>::<unit_key>`; `unit_seed = derive_seed(seed, unit_key)`.

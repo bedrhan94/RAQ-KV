@@ -1,0 +1,17 @@
+# Operating points on a downstream task. Perplexity cannot carry the claim "2-bit is usable": this project's own
+# thesis is that token-level metrics understate task damage, so the operating points must be measured on the probe.
+# Claim supported: the quality side of D12's operating points, and the first joint reading of precision vs
+# retrieval accuracy (input to M5's allocation).
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m1_downstream_probe
+task:
+  kind: qa_generate
+  score_answer_nll: true
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 8, axis: per_channel}, values: {bits: 8, axis: per_token}}
+    - {keys: {bits: 4, axis: per_channel}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: per_channel}, values: {bits: 2, axis: per_token}}
