@@ -34,8 +34,14 @@ from raq_kv.evaluation.metrics import nll_stats
 from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, score_through_cache, token_char_spans
 from raq_kv.evaluation.scoring import SCORERS
 from raq_kv.experiments.ids import experiment_id
-from raq_kv.faults.injector import injected_snapshot
-from raq_kv.faults.plan import describe_site, generate_plan, generate_plan_in_tokens, save_plan
+from raq_kv.faults.injector import injected_burst, injected_snapshot
+from raq_kv.faults.plan import (
+    describe_site,
+    generate_bursts_in_tokens,
+    generate_plan,
+    generate_plan_in_tokens,
+    save_plan,
+)
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
 from raq_kv.quantization.apply import QuantReport, quantize_region, quantize_snapshot, quantize_to_codes
@@ -496,9 +502,11 @@ class FaultQA:
         self.task: FaultQATask = cfg.task
         self.tokenizer = load_tokenizer(cfg.model)
         samples = build_raq_probe(cfg.dataset, self.tokenizer, dict(cfg.model.chat_template_kwargs))
-        if self.task.n_samples is not None:
-            step = max(1, len(samples) // self.task.n_samples)
-            samples = samples[::step][: self.task.n_samples]  # spread over types, lengths and depths
+        if self.task.n_samples is not None and self.task.n_samples < len(samples):
+            # A fixed stride hit only one depth (the generator emits a group's depths consecutively), so the
+            # subset is drawn at random from a fixed seed instead.
+            picked = random.Random(derive_seed(cfg.seed, "probe_subset")).sample(samples, self.task.n_samples)
+            samples = sorted(picked, key=lambda s: s.sample_id)
         self.samples = {s.sample_id: s for s in samples}
         self._fingerprint = samples_fingerprint(samples)
         self.lm: LoadedModel | None = None
@@ -544,11 +552,18 @@ class FaultQA:
 
         roles = self._role_tokens(sample, sample.cache_len)
         seed = derive_seed(self.cfg.seed, unit_key, "fault_qa")
-        plan = []
+        burst_bits = self.task.burst_bits or 1
+        bursts: list[list[Any]] = []
         for role, count in (("target_value", self.task.n_target), ("distractor_value", self.task.n_distractor),
                             ("filler", self.task.n_filler)):
-            plan += generate_plan_in_tokens(qkv, derive_seed(seed, role), roles[role], role, count)
-        plan += generate_plan(qkv, seed=derive_seed(seed, "meta"), n_uniform=0, n_metadata=self.task.n_metadata)
+            if burst_bits > 1:
+                bursts += generate_bursts_in_tokens(qkv, derive_seed(seed, role), roles[role], role, count,
+                                                    burst_bits)
+            else:
+                bursts += [[s] for s in generate_plan_in_tokens(qkv, derive_seed(seed, role), roles[role], role,
+                                                                count)]
+        bursts += [[s] for s in generate_plan(qkv, seed=derive_seed(seed, "meta"), n_uniform=0,
+                                              n_metadata=self.task.n_metadata)]
 
         rows = []
         for _ in range(self.task.n_control):
@@ -557,13 +572,13 @@ class FaultQA:
             rows.append({"stratum": "no_fault", "target": "none", "layer": -1, "part": "none", "bit": -1,
                          "prediction_changed": text != golden_text,
                          **{f"faulty_{k}": v for k, v in SCORERS[sample.scorer](text, sample.reference).items()}})
-        for site in plan:
-            with injected_snapshot(qkv, site, base) as (faulty, info):
+        for burst in bursts:
+            with injected_burst(qkv, burst, base) as (faulty, info):
                 gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=faulty, eos_token_ids=eos)
             text = tok.decode(gen.tokens, skip_special_tokens=True)
             score = SCORERS[sample.scorer](text, sample.reference)
             rows.append({
-                **describe_site(site, qkv), **info,
+                **describe_site(burst[0], qkv), **info,
                 "prediction_changed": text != golden_text,
                 "prediction": text if text != golden_text else None,
                 "gen_margin_min_all": min(gen.margins) if gen.margins else None,
@@ -577,7 +592,8 @@ class FaultQA:
             "golden_correct": bool(golden_score["correct"]),
             "golden_prediction": golden_text,
             "role_token_counts": {role: len(tokens) for role, tokens in roles.items()},
-            "n_sites": len(plan),
+            "burst_bits": burst_bits,
+            "n_sites": len(bursts),
             "faults": rows,
         }
 

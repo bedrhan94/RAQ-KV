@@ -1,0 +1,19 @@
+# Same role-targeted bursts at the fragile 2-bit operating point (block-32), where the probe already loses 12.8%
+# of its accuracy to quantization alone. If the role effect exists anywhere, it should be visible here.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m2_fault_qa_burst_2bit
+quantization:
+  keys: {bits: 2, axis: group_token, group_size: 32}
+  values: {bits: 2, axis: per_token}
+task:
+  kind: fault_qa
+  n_samples: 150
+  burst_bits: 16
+  n_target: 8
+  n_distractor: 6
+  n_filler: 8
+  n_metadata: 4
+  n_control: 1
+seed: 0

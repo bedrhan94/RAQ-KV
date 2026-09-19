@@ -63,6 +63,35 @@ def injected(qkv: QuantizedKV, site: FaultSite):
 
 
 @contextmanager
+def injected_burst(qkv: QuantizedKV, sites: list[FaultSite], base: KVSnapshot):
+    """Inject several faults at once (a burst) and re-dequantize only the affected layer-parts.
+
+    ``base`` is modified in place and yielded back (that is what avoids re-dequantizing 56 layer-parts per
+    injection), so a caller that wants the fault-free tensors must copy them beforehand; everything is restored
+    on exit.
+    """
+    if not sites:
+        raise ValueError("empty burst")
+    infos = [inject(qkv, site) for site in sites]
+    touched = {(s.layer, s.part) for s in sites}
+    saved = {}
+    try:
+        for layer, part in touched:
+            tensors = base.keys if part == "keys" else base.values
+            saved[(layer, part)] = tensors[layer]
+            stored = qkv.part(layer, part)
+            tensors[layer] = stored if isinstance(stored, torch.Tensor) else dequantize(stored)
+        yield base, {"n_flips": len(sites),
+                     "max_relative_change": max(i["relative_change"] for i in infos),
+                     "mean_relative_change": sum(i["relative_change"] for i in infos) / len(infos)}
+    finally:
+        for (layer, part), tensor in saved.items():
+            (base.keys if part == "keys" else base.values)[layer] = tensor
+        for site in sites:
+            inject(qkv, site)  # restore each flipped bit
+
+
+@contextmanager
 def injected_snapshot(qkv: QuantizedKV, site: FaultSite, base: KVSnapshot):
     """Yield (snapshot, info) where only the corrupted layer/part is re-dequantized.
 

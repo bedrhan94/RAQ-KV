@@ -155,6 +155,33 @@ def test_role_tokens_split_target_distractor_and_filler():
     assert len(roles["filler"]) == 35 - 5
 
 
+def test_bursts_stay_in_one_token_head_and_are_reversible():
+    from raq_kv.faults.injector import injected_burst
+    from raq_kv.faults.plan import generate_bursts_in_tokens
+
+    qkv = _qkv(tokens=20)
+    before = qkv.to_snapshot()
+    bursts = generate_bursts_in_tokens(qkv, seed=5, tokens=[7, 8], stratum="target_value", n=6, burst_bits=10)
+    assert len(bursts) == 6 and all(len(b) == 10 for b in bursts)
+    for burst in bursts:
+        first = burst[0]
+        # one memory word: same layer, part, token and head; different channels/bits
+        assert {(s.layer, s.part, s.index[0], s.index[1], s.index[2]) for s in burst} == {
+            (first.layer, first.part, first.index[0], first.index[1], first.index[2])}
+        assert len({(s.index[3], s.bit) for s in burst}) == 10
+        # injected_burst swaps tensors inside `before` in place, so keep an independent copy to compare against
+        tensors = before.keys if first.part == "keys" else before.values
+        pristine = tensors[first.layer].clone()
+        with injected_burst(qkv, burst, before) as (faulty, info):
+            assert info["n_flips"] == 10
+            faulted = (faulty.keys if first.part == "keys" else faulty.values)[first.layer]
+            assert not torch.equal(faulted, pristine)
+        assert torch.equal(tensors[first.layer], pristine)  # restored on exit
+    after = qkv.to_snapshot()
+    for a, b in zip(before.keys + before.values, after.keys + after.values, strict=True):
+        assert torch.equal(a, b)
+
+
 def test_describe_site_labels_codes_and_metadata():
     qkv = _qkv()
     code = describe_site(FaultSite(0, "keys", "code", (0, 1, 2, 3), 3, "uniform"), qkv)

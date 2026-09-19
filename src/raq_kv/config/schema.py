@@ -167,6 +167,8 @@ class FaultQATask(StrictModel):
 
     kind: Literal["fault_qa"] = "fault_qa"
     n_samples: int | None = Field(default=120, description="Probe samples to use; None means all")
+    # None means single-bit faults (the original behaviour), so adding this field left existing runs' ids intact.
+    burst_bits: int | None = Field(default=None, ge=1, description="Bits flipped together within one token's head")
     n_target: int = Field(default=8, ge=0)
     n_distractor: int = Field(default=6, ge=0)
     n_filler: int = Field(default=8, ge=0)

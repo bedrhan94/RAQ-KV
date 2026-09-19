@@ -111,6 +111,34 @@ def generate_plan(qkv: QuantizedKV, seed: int, n_uniform: int, n_msb: int = 0, n
     return sites
 
 
+def generate_bursts_in_tokens(
+    qkv: QuantizedKV, seed: int, tokens: list[int], stratum: str, n: int, burst_bits: int
+) -> list[list[FaultSite]]:
+    """``n`` bursts of ``burst_bits`` flips, each burst confined to one (layer, part, token, head).
+
+    A burst models what a memory error actually looks like: the stored bits of one token's head sit together, so
+    a corrupted word damages several of them at once. Single-bit faults at a usable operating point turned out to
+    be harmless at the task level (D19), which is why the token-role question needs this unit.
+    """
+    rng = random.Random(seed)
+    parts = _quantized_parts(qkv)
+    if not parts or not tokens:
+        return []
+    bursts = []
+    for _ in range(n):
+        layer, part, qt = parts[rng.randrange(len(parts))]
+        batch, heads, n_tokens, channels = qt.codes.shape
+        token = tokens[rng.randrange(len(tokens))]
+        if token >= n_tokens:
+            continue
+        b, head = rng.randrange(batch), rng.randrange(heads)
+        picks = rng.sample([(c, bit) for c in range(channels) for bit in range(qt.bits)],
+                           k=min(burst_bits, channels * qt.bits))
+        bursts.append([FaultSite(layer, part, "code", (b, head, token, channel), bit, stratum)
+                       for channel, bit in picks])
+    return bursts
+
+
 def generate_plan_in_tokens(qkv: QuantizedKV, seed: int, tokens: list[int], stratum: str, n: int) -> list[FaultSite]:
     """Draw ``n`` code sites whose token index is restricted to ``tokens``.
 
