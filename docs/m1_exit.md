@@ -1,0 +1,29 @@
+# M1 exit checklist — KV quantization
+
+Criteria from `00_research_plan.md` §G (M1). M1 closes when every row is ✅ with evidence.
+
+| # | Criterion | Status | Evidence |
+|---|---|---|---|
+| 1 | Passthrough reproduces the M0 golden records bit-exactly | ✅ | `tests/slow/test_golden_regression.py` (per-token NLL, predictions, margins); sweep passthrough corpus PPL 14.391535 = M0 golden 14.391535 |
+| 2 | Quantizer verified independently of the model | ✅ | `tests/test_quantization.py`: grid-representable values round-trip exactly, error decreases monotonically with bits, finer granularity never worse, bit accounting equals the stored objects, region patching touches only its region |
+| 3 | Quality vs precision/granularity measured with paired statistics | ✅ | `outputs/reports/m1_quantization_report.md`: 13 variants × 40 chunks, paired per-token ΔNLL with bootstrap CIs (D12) |
+| 4 | Effective bits include quantization metadata | ✅ | fp16 scales/zeros counted in `BitBudget.quant_metadata_bits`; e.g. K4/chan+V4/token = 4.14 bits/value, not 4.00 |
+| 5 | Per-region sensitivity profile with a measured noise floor | ⏳ | `m1_quant_sensitivity` (40 chunks, 2-bit stress at deployment granularity, 8-bit null regions) |
+| 6 | Positive control: the profiler detects heterogeneity when it exists | ✅ | `m1_quant_sensitivity_mismatched` (per-token key stress): top 10% of regions carry 76.6% of damage, split-half Spearman 0.93 (Spearman-Brown 0.96), ANOVA F = 572, keys 0.458 vs values 0.0007 nats |
+| 7 | Defaults for later milestones stated and justified | ✅ | D12: keys per-channel, values per-token; operating points 8-bit (lossless), 4-bit (+0.14 PPL), 2-bit (PPL 23.0) |
+
+## Interpretation rules fixed before reading criterion 5
+
+- A region's mean ΔNLL counts as sensitivity only if its lower 95% bound clears the null band's upper edge.
+- Negative region means are physically meaningless and are reported as a lower bound on noise.
+- Ranking claims require split-half stability, not a single-chunk comparison.
+- The mismatched-granularity profile localizes **outliers**, not deployment sensitivity; it must not be quoted as
+  "layer X matters" for allocation.
+
+## Handover to M2
+
+- Fault injection targets the same regions the profiler scores, so the sensitivity map and the fault map are
+  directly comparable (Q48) — same granularity, same chunks, same golden.
+- Effects below the bf16 noise floor (D10) or the profiler's null band cannot be attributed to a fault.
+- The 2-bit deployment setting (K per-channel, V per-token) is the precision at which faults will be injected
+  first, because it is the operating point where allocation decisions matter.
