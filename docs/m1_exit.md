@@ -1,5 +1,13 @@
 # M1 exit checklist — KV quantization
 
+**Status: M1 CLOSED on 2026-09-19.** Reports: `outputs/reports/m1_quantization_report.md`,
+`outputs/reports/m1_sensitivity_report.md`; figure: `outputs/figures/m1_quality_vs_bits.png`.
+
+Headline: the *granularity* of key quantization matters more than the bit width (per-token keys: PPL 3227 at
+4 bits; per-channel keys: 14.53). With keys per-channel and values per-token, 8-bit is lossless, 4-bit costs
++0.14 PPL at 3.9× less KV memory, and 2-bit stays usable (PPL 23.0). Per-region sensitivity at 2-bit deployment
+precision is heterogeneous and stably ranked, but only moderately concentrated (top 10% of regions carry 40%).
+
 Criteria from `00_research_plan.md` §G (M1). M1 closes when every row is ✅ with evidence.
 
 | # | Criterion | Status | Evidence |
@@ -8,7 +16,7 @@ Criteria from `00_research_plan.md` §G (M1). M1 closes when every row is ✅ wi
 | 2 | Quantizer verified independently of the model | ✅ | `tests/test_quantization.py`: grid-representable values round-trip exactly, error decreases monotonically with bits, finer granularity never worse, bit accounting equals the stored objects, region patching touches only its region |
 | 3 | Quality vs precision/granularity measured with paired statistics | ✅ | `outputs/reports/m1_quantization_report.md`: 13 variants × 40 chunks, paired per-token ΔNLL with bootstrap CIs (D12) |
 | 4 | Effective bits include quantization metadata | ✅ | fp16 scales/zeros counted in `BitBudget.quant_metadata_bits`; e.g. K4/chan+V4/token = 4.14 bits/value, not 4.00 |
-| 5 | Per-region sensitivity profile with a measured noise floor | ⏳ | `m1_quant_sensitivity` (40 chunks, 2-bit stress at deployment granularity, 8-bit null regions) |
+| 5 | Per-region sensitivity profile with a measured noise floor | ✅ | `m1_quant_sensitivity` (40 chunks × 56 regions + 320 null measurements): noise band [−0.0048, +0.0038] nats; 18/56 regions clear it; top 10% carry 40.2%; split-half stability 0.901; ANOVA F = 18.1; keys 11× values (D13) |
 | 6 | Positive control: the profiler detects heterogeneity when it exists | ✅ | `m1_quant_sensitivity_mismatched` (per-token key stress): top 10% of regions carry 76.6% of damage, split-half Spearman 0.93 (Spearman-Brown 0.96), ANOVA F = 572, keys 0.458 vs values 0.0007 nats |
 | 7 | Defaults for later milestones stated and justified | ✅ | D12: keys per-channel, values per-token; operating points 8-bit (lossless), 4-bit (+0.14 PPL), 2-bit (PPL 23.0) |
 

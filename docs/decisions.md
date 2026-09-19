@@ -60,6 +60,35 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D13 — Quantization sensitivity is real but modest at deployment precision (2026-09-19)
+
+Profile: one region (layer × keys/values) at a time forced to 2 bits with the deployment granularity
+(keys per-channel, values per-token), 40 WikiText-2 chunks, 56 regions, plus 320 null measurements at a lossless
+8 bits that define the measurement's noise band.
+
+| Quantity | Deployment granularity (2-bit) | Mismatched granularity (keys per-token, positive control) |
+|---|---|---|
+| Region damage range | −0.0211 … +0.0291 nats | −0.0247 … +7.18 nats |
+| Noise band (null, 95%) | [−0.0048, +0.0038] | not measured |
+| Regions clearing the band | 18 / 56 | — (all large effects) |
+| Top 10% share of damage | 40.2% | 76.6% |
+| Split-half rank stability | 0.901 (Spearman-Brown 0.948) | 0.929 (0.963) |
+| ANOVA across regions | F = 18.1, p ≈ 1e-138 | F = 573 |
+| Keys vs values (mean) | 0.0085 vs 0.0008 nats (11×) | 0.458 vs 0.0007 nats (640×) |
+
+- **Power matters more than it looks.** The same profile on 8 chunks gave no stable ranking (chunk-to-chunk
+  Spearman −0.05); at 40 chunks split-half stability is 0.90. Region-level claims need tens of chunks.
+- **Against the pre-registered H1 thresholds** (top 10% ≥ 50% supports, ≤ 20% refutes): 40.2% is *intermediate*.
+  The honest statement is that sensitivity is heterogeneous and stably ranked, but not extremely concentrated at
+  deployment precision. Thresholds stay as registered; the result is reported as partial.
+- **K/V asymmetry is the robust part:** keys dominate under both granularities (11× and 640×). Allocation should
+  split by part first and by layer second.
+- **Some regions clear the band in the negative direction** (min −0.0211 vs band −0.0048): quantizing them
+  slightly *improves* NLL. This is a regularization-like fluke, not a physical gain, and it is a reminder that
+  per-region deltas at this scale need the null band to be interpretable at all.
+- The mismatched-granularity profile stays in the record as a **positive control**: it shows the profiler detects
+  heterogeneity when it is present, which is what makes the modest deployment-precision numbers meaningful.
+
 ## D12 — KV precision/granularity: per-channel keys, per-token values (2026-09-19)
 
 M1 sweep, 13 variants × 40 WikiText-2 chunks, paired per-token NLL against the bf16 passthrough (which reproduces
