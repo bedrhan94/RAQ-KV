@@ -17,7 +17,7 @@ import pandas as pd
 from scipy import stats
 
 from raq_kv.evaluation.metrics import corpus_ppl
-from raq_kv.utils.io import read_json, read_jsonl
+from raq_kv.utils.io import read_json, read_jsonl, write_json_atomic
 
 
 def _summarize_cache_ppl(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -99,10 +99,12 @@ def _summarize_qa(df: pd.DataFrame) -> list[dict[str, Any]]:
 _SUMMARIZERS = {"cache_ppl": _summarize_cache_ppl, "latency": _summarize_latency, "qa_generate": _summarize_qa}
 
 
-def summarize_experiment(exp_dir: Path) -> list[dict[str, Any]]:
+def summarize_experiment(exp_dir: Path, include_superseded: bool = False) -> list[dict[str, Any]]:
+    """Summarize one experiment. Runs whose manifest carries ``superseded_by`` are skipped by default, so a rerun
+    never gets pooled with the run it replaces (the raw records stay on disk either way)."""
     manifest = read_json(exp_dir / "manifest.json")
     records = read_jsonl(exp_dir / "results.jsonl")
-    if not records:
+    if not records or (manifest.get("superseded_by") and not include_superseded):
         return []
     cfg = manifest["config"]
     base = {
@@ -122,13 +124,20 @@ def summarize_experiment(exp_dir: Path) -> list[dict[str, Any]]:
     return [{**base, **row} for row in _SUMMARIZERS[cfg["task"]["kind"]](df)]
 
 
-def summarize_all(raw_root: Path, name_filter: str | None = None) -> pd.DataFrame:
+def summarize_all(raw_root: Path, name_filter: str | None = None, include_superseded: bool = False) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for exp_dir in sorted(p for p in Path(raw_root).iterdir() if (p / "manifest.json").exists()):
         if name_filter and name_filter not in exp_dir.name:
             continue
-        rows.extend(summarize_experiment(exp_dir))
+        rows.extend(summarize_experiment(exp_dir, include_superseded=include_superseded))
     return pd.DataFrame(rows)
+
+
+def mark_superseded(exp_dir: Path, superseded_by: str, reason: str) -> None:
+    """Flag a run as replaced by another (raw records are kept; only the manifest gains provenance about it)."""
+    manifest = read_json(exp_dir / "manifest.json")
+    manifest["superseded_by"] = {"exp_id": superseded_by, "reason": reason}
+    write_json_atomic(exp_dir / "manifest.json", manifest)
 
 
 def across_seeds(per_exp: pd.DataFrame, confidence: float = 0.95) -> pd.DataFrame:

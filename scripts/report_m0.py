@@ -35,7 +35,7 @@ def _records(
             continue
         manifest = read_json(exp / "manifest.json")
         rows = read_jsonl(exp / "results.jsonl")
-        if not rows:
+        if not rows or manifest.get("superseded_by"):
             continue
         records, manifests = by_name.setdefault(manifest["config"]["name"], ([], []))
         manifests.append(manifest)
@@ -184,13 +184,17 @@ def _gsm8k_section(raw_root: Path) -> tuple[str, dict[str, Any]]:
         return "_no GPU GSM8K run found_\n", {}
     df = pd.DataFrame(records)
     rates = df["extraction_method"].value_counts(normalize=True).round(3).to_dict()
+    truncated = int((~df["stopped_on_eos"].astype(bool)).sum())
     lines = [
         f"Accuracy **{_fmt(df['correct'].mean())}** over {len(df)} problems; "
         f"mean generated tokens {_fmt(df['generated_tokens'].mean(), 1)}; "
         f"stopped on EOS {_fmt(df['stopped_on_eos'].mean())}.",
         f"Answer extraction: {rates}.",
+        f"**Truncated at the token cap: {truncated}** — these score as wrong, so any comparison that changes "
+        "generation length must report truncation next to accuracy (degraded runs tend to ramble).",
     ]
-    return "\n".join(lines) + "\n", {"accuracy": float(df["correct"].mean()), "extraction": rates}
+    return "\n".join(lines) + "\n", {"accuracy": float(df["correct"].mean()), "extraction": rates,
+                                     "truncated": truncated}
 
 
 def main() -> int:

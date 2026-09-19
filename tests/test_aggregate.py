@@ -37,6 +37,17 @@ def test_qa_summary_separates_margins_by_correctness(tmp_path: Path):
     assert rows["fact_type=id|depth_nominal=0.9"]["n_units"] == 2
 
 
+def test_superseded_runs_are_excluded(tmp_path: Path):
+    from raq_kv.analysis.aggregate import mark_superseded, summarize_all
+
+    old = _write_exp(tmp_path, [_qa(True, 10.0, "id", 0.1)], seed=0)
+    _write_exp(tmp_path, [_qa(True, 12.0, "id", 0.1)], seed=1)
+    mark_superseded(old, "exp-s1", "rerun with decode-path margins")
+    assert summarize_experiment(old) == []
+    assert set(summarize_all(tmp_path)["exp_id"]) == {"exp-s1"}
+    assert set(summarize_all(tmp_path, include_superseded=True)["exp_id"]) == {"exp-s0", "exp-s1"}
+
+
 def test_across_seeds_ci(tmp_path: Path):
     import pandas as pd
 
