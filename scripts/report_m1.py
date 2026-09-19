@@ -63,11 +63,18 @@ def _paired_delta(baseline: list[dict], variant: list[dict], rng: np.random.Gene
     return float(per_chunk.mean()), (float(np.quantile(boot, 0.025)), float(np.quantile(boot, 0.975)))
 
 
-def build_table(raw_root: Path, name: str) -> pd.DataFrame:
+def build_table(raw_root: Path, name: str, baseline_name: str = "m0a_golden_ppl") -> pd.DataFrame:
     runs = _load(raw_root, name)
     if not runs:
         raise SystemExit(f"no results for experiment name '{name}'")
     baseline = next((r for r in runs if r["config"].get("quantization") is None), None)
+    if baseline is None:
+        # A sweep without its own full-precision arm (e.g. the causality comparison) is paired against the golden
+        # run: same chunks, same tokens, same model, so per-token deltas remain exactly paired.
+        external = [r for r in _load(raw_root, baseline_name) if r["config"].get("quantization") is None]
+        if external:
+            baseline = external[0]
+            runs = [baseline, *runs]
     rng = np.random.default_rng(0)
     rows = []
     for run in runs:
@@ -104,9 +111,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-root", default="outputs")
     parser.add_argument("--name", default="m1_kv_quant_ppl")
+    parser.add_argument("--baseline-name", default="m0a_golden_ppl",
+                        help="experiment whose full-precision arm is the pairing baseline, if the sweep has none")
     args = parser.parse_args()
     root = resolve_output_root(args.output_root)
-    table = build_table(root / "raw", args.name)
+    table = build_table(root / "raw", args.name, args.baseline_name)
 
     shown = ["variant", "effective_bits_per_value", "kv_mib_per_1k_tokens", "corpus_ppl", "delta_ppl",
              "delta_nll_per_token", "delta_nll_ci95_low", "delta_nll_ci95_high", "key_sqnr_db", "value_sqnr_db"]
@@ -127,11 +136,11 @@ def main() -> int:
             same = abs(golden_ppl - float(base_row["corpus_ppl"].iloc[0])) < 1e-9
             line += f"; M0 golden {golden_ppl:.6f} — {'identical' if same else 'DIFFERS, investigate'}."
         body.append(line)
-    out = root / "reports" / "m1_quantization_report.md"
+    out = root / "reports" / f"{args.name}_report.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(body), encoding="utf-8")
     (root / "csv").mkdir(parents=True, exist_ok=True)
-    table.to_csv(root / "csv" / "m1_kv_quant_ppl.csv", index=False, encoding="utf-8")
+    table.to_csv(root / "csv" / f"{args.name}.csv", index=False, encoding="utf-8")
     print("\n".join(body))
     print(f"\nwrote {out}")
     return 0
