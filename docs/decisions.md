@@ -515,8 +515,15 @@ the M0 golden corpus perplexity exactly: 14.391535 both).
   trials per arm for 80% power against a halving, and the arms provide 480. A first protected-arm probe at 1e-6
   corrected 286 of 286 flips, check-bit flips included, and changed no answer — as expected in a regime where
   every fault lands in its own word.
-- **Process rule:** no edits to tracked source while a campaign is in flight. Documentation and analysis scripts
-  are no exception, because the diff hash covers the whole tree.
+- **Process rule:** never edit a file that a running process has already imported, and never change code between
+  the arms of one comparison. In practice that means `src/` is frozen while a campaign runs.
+- **Addendum (2026-09-20):** the rule as first written also forbade editing docs and analysis scripts, on the
+  grounds that the diff hash covers the whole tree. That was over-broad and cost waiting time. A changing hash is
+  not the hazard; a **mismatch** between the recorded state and the executed code is, and neither docs nor report
+  scripts are imported by the runner, so editing them mid-campaign leaves every manifest accurate for its own
+  start time. Leaving a number known to be wrong sitting in `docs/` for hours to preserve a uniform hash is the
+  worse trade.
+
 ## D25 — H2a answered: at equal bits, protecting the quantization metadata is ~100x more cost-effective than uniform data ECC (2026-09-20)
 
 - **Setup.** RAQ-Probe, 60 samples, 8 storage-wide fault draws per sample (480 trials per arm), BER 1e-6 over each
@@ -537,7 +544,7 @@ the M0 golden corpus perplexity exactly: 14.391535 both).
   (492.3 vs 492.5 per trial) and differ only in whether the ~32 metadata flips per trial are corrected. Same code
   damage, 50x different failure rate.
 - **Per-bit damage, properly estimated.** From that contrast: **1.29e-5 failures per code flip, 9.83e-3 per
-  metadata bit — a factor of 762**, and metadata carries **98.0% of the damage while being 6.0% of the flips**.
+  metadata bit — a factor of 762** *(superseded by D28: the per-code-flip rate was three events in one non-shared sample, i.e. noise. The supported statement is a bound — at most 6.5e-6 per code flip against about 1.0e-2 per metadata bit, so at least 1543x)*, and metadata carries **98.0% of the damage while being 6.0% of the flips**.
   D17/D21 estimated ~3072x from a handful of events; the order of magnitude survives, the point estimate does not,
   and 762x is now backed by 472 trials per arm with failures spread over **51 distinct samples** (not one fragile
   case). D17/D21's ratio should be cited as this number from here on.
@@ -635,3 +642,58 @@ the M0 golden corpus perplexity exactly: 14.391535 both).
   against 596 Mbit, i.e. free — would catch exactly the bits that matter (13, 14, 15 certainly; 12 partly) without
   any error-correcting code. Arm H must test it: if a free validity check matches metadata SECDED, the paper's
   recommendation changes from "protect the metadata with ECC" to "check that the metadata is plausible".
+## D28 — Three corrections from the 1e-5 runs, and a much tighter bound (2026-09-20)
+
+The BER 1e-5 placement runs were meant to check that damage stays linear in uncorrected code flips before that
+linearity was used to size a 1e-4 campaign. It does not, and chasing why corrected two earlier numbers.
+
+### 1. The linear extrapolation fails, and the per-code-flip rate was noise
+
+Arm D at 1e-5 carries ~1525 uncorrected code flips per trial and recorded **0 task failures in 448 trials**. The
+rate extrapolated from 1e-6 (1.29e-5 failures per code flip) predicted 1.97%. That rate came from arm C's three
+events, all in one sample that was not even in the shared denominator — i.e. it was noise given a decimal point.
+
+**Withdraw the 315x figure from D25.** Replace it with a bound, which is what the data supports:
+
+* largest exposure measured: arm D at 1e-5, longest context band, 152 trials x ~3037 uncorrected code flips =
+  **4.6e5 flip-exposures, 0 task failures** -> 95% upper bound (rule of three) **6.5e-6 per code flip**;
+* per metadata bit, from the clean A-vs-G contrast: **1.0e-2**;
+* therefore metadata is **at least 1543x** more damaging per bit, and the point estimate is unbounded because code
+  damage is consistent with zero at every exposure measured.
+
+The sentence to use: *a code bit flip has at most a 6.5e-6 chance of costing an answer; a metadata bit flip has
+about a 1.0% chance.*
+
+### 2. The "protection fails through its own erasure policy" finding was Simpson's paradox — withdrawn
+
+Arm D at 1e-5 showed 5.3% of DUE-bearing trials changing their answer against 1.2% of the rest (Fisher OR 4.79,
+p = 0.012), which looked like the erasure policy being a damage source. Stratifying by cache length destroys it:
+
+| band (tokens) | n | DUE rate | changed given DUE | changed given none |
+|---|---|---|---|---|
+| 0–700 | 88 | 0.170 | 0/15 | 0/73 |
+| 700–1400 | 136 | 0.228 | 0/31 | 0/105 |
+| 1400–2800 | 104 | 0.567 | 0/59 | 0/45 |
+| 2800–4200 | 152 | 0.697 | 11/106 | 3/46 |
+
+Long contexts have both four times the flips (so far more DUEs) and all of the damage. Inside the only band with
+any events the odds ratio falls to **1.66** on 11 versus 3 events — no effect. **Withdrawn.** The lesson is the
+same one D26 taught in a different guise: this campaign's records vary in cache length by a factor of eight, so
+*any* pooled comparison is exposed to it, and length must be a stratum or a covariate in every analysis.
+
+### 3. What replaces both: a within-run dose-response, and protection that holds where damage is worst
+
+Cache length sets the flip count, so a single run contains its own dose-response. Task failure by band:
+
+| flips per trial | A unprotected | G metadata SECDED | H range guard |
+|---|---|---|---|
+| ~130 | 5.7% | 0.0% | 0.0% |
+| ~255 | 18.4% | 0.0% | 0.0% |
+| ~504 | 40.4% | 0.0% | 0.0% |
+| ~1005 | **51.3%** | **0.0%** | **0.0%** |
+
+This is the robustness check the headline needed. "31.8% -> 0%" is an average over lengths, and the obvious
+objection is that easy short contexts carry it. They do not: at the longest contexts the unprotected cache loses
+**half** its answers and both protected arms lose none. It also reproduces the calibration curve's shape from an
+independent axis — varying flips through context length rather than through the error rate — which is a stronger
+form of the same measurement than either alone.
