@@ -1,0 +1,20 @@
+# What does causality cost? per_channel key scales span every token in the context, which a streaming decoder
+# cannot know; group_token closes a block of tokens at a time and is deployable online. Same bit budget, same
+# chunks, so the difference is the price of not looking ahead.
+# Claim supported: scope honesty for D12's "deployment granularity" and the operating points quoted from it.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m1_causality_ppl
+task:
+  kind: cache_ppl
+  store_token_nll: true
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 4, axis: per_channel}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 32}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: per_channel}, values: {bits: 2, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 128}, values: {bits: 2, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 32}, values: {bits: 2, axis: per_token}}

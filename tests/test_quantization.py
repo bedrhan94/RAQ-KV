@@ -21,7 +21,8 @@ def kv() -> torch.Tensor:
 
 
 @pytest.mark.parametrize("bits", [2, 3, 4, 8])
-@pytest.mark.parametrize("axis", ["per_tensor", "per_head", "per_channel", "per_token", "group_channel"])
+@pytest.mark.parametrize("axis", ["per_tensor", "per_head", "per_channel", "per_token", "group_channel",
+                                  "group_token"])
 @pytest.mark.parametrize("symmetric", [False, True])
 def test_codes_are_in_range_and_shapes_survive(kv, bits, axis, symmetric):
     deq, qt = quantize_dequantize(kv, bits, axis, group_size=8, symmetric=symmetric)
@@ -66,6 +67,37 @@ def test_persistent_channel_scale_favours_per_channel():
     assert error_stats(x, per_channel)["mse"] < error_stats(x, per_token)["mse"]
     # Total MSE is dominated by the largest channels; the per-channel gain shows up in relative error.
     assert worst_relative_error(per_channel) < worst_relative_error(per_token) / 100
+
+
+def _causal(axis: str, group_size: int = 8) -> bool:
+    """Does the reconstruction of early tokens depend on tokens that arrive later?
+
+    A streaming decoder can only use schemes where it does not. per_channel computes one scale over every token,
+    so it is an offline scheme; group_token closes a block once it is full.
+    """
+    g = torch.Generator().manual_seed(17)
+    x = torch.randn(1, 2, 24, 16, generator=g)
+    later = x.clone()
+    later[0, :, 20:, :] *= 50  # a violent change confined to the last block
+    early = slice(0, 16)  # tokens in earlier, already-closed blocks
+    a = quantize_dequantize(x, 4, axis, group_size=group_size)[0][:, :, early]
+    b = quantize_dequantize(later, 4, axis, group_size=group_size)[0][:, :, early]
+    return torch.equal(a, b)
+
+
+def test_group_token_is_causal_and_per_channel_is_not():
+    assert _causal("group_token"), "group_token must not let later tokens change earlier reconstructions"
+    assert not _causal("per_channel"), "control: per_channel is an offline scheme (scales span all tokens)"
+    assert _causal("per_token"), "per_token scales are per position, so they are causal too"
+
+
+def test_group_token_handles_context_lengths_that_are_not_a_multiple_of_the_block():
+    g = torch.Generator().manual_seed(23)
+    x = torch.randn(1, 2, 17, 16, generator=g)  # 17 tokens, blocks of 8 -> padded to 24
+    deq, qt = quantize_dequantize(x, 4, "group_token", group_size=8)
+    assert deq.shape == x.shape and qt.codes.shape == x.shape
+    assert qt.n_groups == 1 * 2 * 3 * 16  # 3 blocks x 16 channels
+    assert error_stats(x, deq)["sqnr_db"] > 20
 
 
 def test_values_on_the_quantization_grid_round_trip_exactly():

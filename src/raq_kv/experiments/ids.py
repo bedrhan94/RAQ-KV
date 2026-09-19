@@ -15,7 +15,8 @@ from typing import Any
 from raq_kv.config.schema import ExperimentConfig
 
 _DTYPE_SHORT = {"bfloat16": "bf16", "float16": "fp16", "float32": "fp32"}
-_AXIS_SHORT = {"per_tensor": "T", "per_head": "H", "per_channel": "C", "per_token": "t", "group_channel": "g"}
+_AXIS_SHORT = {"per_tensor": "T", "per_head": "H", "per_channel": "C", "per_token": "t", "group_channel": "g",
+               "group_token": "G"}
 
 
 def _quant_token(cfg: ExperimentConfig) -> str:
@@ -28,7 +29,8 @@ def _quant_token(cfg: ExperimentConfig) -> str:
         if spec is None:
             parts.append(f"{name}{_DTYPE_SHORT[cfg.model.dtype]}")
         else:
-            axis = _AXIS_SHORT[spec.axis] + (str(spec.group_size) if spec.axis == "group_channel" else "")
+            grouped = spec.axis in ("group_channel", "group_token")
+            axis = _AXIS_SHORT[spec.axis] + (str(spec.group_size) if grouped else "")
             parts.append(f"{name}{spec.bits}{axis}{'s' if spec.symmetric else ''}")
     if q.residual_window:
         parts.append(f"r{q.residual_window}")

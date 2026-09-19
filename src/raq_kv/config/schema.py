@@ -151,7 +151,7 @@ class QuantSpec(StrictModel):
     """Uniform integer quantization of one KV part (keys or values)."""
 
     bits: Literal[2, 3, 4, 8] = 4
-    axis: Literal["per_tensor", "per_head", "per_channel", "per_token", "group_channel"] = "per_token"
+    axis: Literal["per_tensor", "per_head", "per_channel", "per_token", "group_channel", "group_token"] = "per_token"
     group_size: int = Field(default=64, gt=0)
     symmetric: bool = False
 
