@@ -60,6 +60,31 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D19 — Single-bit faults are harmless at the task level; only metadata isn't (2026-09-19)
+
+Role-targeted single-bit faults on the probe (120 samples, 3240 injections, 4-bit block-128 operating point,
+no-fault controls exactly zero):
+
+| Corrupted token role | Task failures | Prediction changed |
+|---|---|---|
+| answer-bearing tokens | **0 / 960** | 0.31% |
+| same-type distractor tokens | 0 / 720 | 0.69% |
+| filler tokens | 0 / 960 | 0.73% |
+| quantization metadata | **6 / 480 (1.25%)** | 2.08% |
+
+- **Every task-level failure came from a float16 exponent bit of a scale or zero point.** No single-bit code
+  fault changed an answer, in any role. Metadata is also the only stratum whose prediction-change rate beats
+  filler (odds ratio 2.90 vs filler, p = 0.036).
+- **Q49 cannot be answered in this regime:** with zero failures in all three code strata there is nothing to
+  compare. The target-vs-filler odds ratio is undefined, and on the more sensitive prediction-change measure the
+  answer tokens are, if anything, *less* fragile than filler (OR 0.43, p = 0.34) — consistent with no role
+  effect at single-bit strength, not with the hypothesis.
+- **Consequence:** the fault unit for the role question becomes a burst — 16 bits inside one token's head, which
+  is what a corrupted memory word looks like — run at both the safe (4-bit) and fragile (2-bit) operating points.
+- **A sampling bug was found and fixed:** the 120-sample subset was taken with a fixed stride, and because the
+  generator emits a group's three depths consecutively, every selected sample had depth 0.1. Subsets are now
+  drawn with a seeded random sample. The single-bit numbers above therefore describe depth 0.1 only.
+
 ## D18 — Q48 answered: the two sensitivities are *anti*-correlated and point at opposite ends of the network (2026-09-19)
 
 Both maps at (layer, part), same storage scheme (2-bit stress for quantization sensitivity, single-bit faults at
