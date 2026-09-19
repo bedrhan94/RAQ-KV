@@ -60,6 +60,31 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D21 — Q49 resolved: the role effect exists, but only above a corruption scale (2026-09-19)
+
+Same probe, same roles, corruption enlarged to the token's **entire row in one layer** (all 8 KV heads,
+2048 bits at 2-bit precision), 120 samples, 2071 bursts, no-fault controls exactly zero.
+
+| Corrupted role | Failure rate | Bits flipped |
+|---|---|---|
+| answer-bearing token, whole row | **2.14%** (14/654) | 2048 |
+| same-type distractor token, whole row | 0.46% | 2048 |
+| filler token, whole row | 0.31% | 2048 |
+| quantization metadata | **3.21%** | **1** |
+
+- **Target vs filler: OR 7.13 (p = 0.004); target vs content-matched distractor: OR 4.75 (p = 0.036).** The
+  pre-registered Q49 criterion (OR > 1, CI excluding 1) is **met at this scale**.
+- **Scale decides.** The same roles showed OR 1.00 when the burst was one memory word (16 bits, 1/224 of the
+  token) and nothing at all for single bits (D19, D20). Semantic role only becomes visible once a token's
+  representation in a layer is actually destroyed.
+- **Depth reverses between regimes.** Row corruption of the answer token costs the answer only in late layers
+  (21-27: 5.4%, 14-20: 2.9%, layers 0-13: 0.0%), whereas single-bit damage to WikiText continuation concentrated
+  in *early* layers (D18). Different task, metric and fault size — the honest statement is that the depth profile
+  is regime-dependent, and a protection policy cannot assume one profile transfers to the other.
+- **Per bit, metadata still wins by a wide margin:** one flipped scale bit fails 3.21% of the time, more than
+  2048 flipped bits inside the answer token's row (2.14%). Roughly three orders of magnitude more damage per
+  protected bit — the clearest allocation signal the project has produced so far.
+
 ## D20 — Q49: the corrupted token's role does not matter; what it *governs* does (2026-09-19)
 
 Bursts of 16 bits inside one token's (layer, head) slot — one corrupted memory word — on 150 probe samples at
