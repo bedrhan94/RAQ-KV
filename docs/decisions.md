@@ -60,6 +60,38 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D18 — Q48 answered: the two sensitivities are *anti*-correlated and point at opposite ends of the network (2026-09-19)
+
+Both maps at (layer, part), same storage scheme (2-bit stress for quantization sensitivity, single-bit faults at
+the 4-bit operating point), 56 cells: quantization profile 40 chunks × 56 regions, fault campaign 40 chunks ×
+4800 injections (no-fault controls exactly zero).
+
+| Correlation | ρ |
+|---|---|
+| quantization sensitivity ↔ fault damage | **−0.377** [95% CI −0.588, −0.128] |
+| … partialling out mean \|KV\| | **−0.282** |
+| within keys only / within values only | −0.271 (p=0.16) / −0.461 (p=0.014) |
+| replication on the 8-bit campaign | −0.388, partial −0.277 |
+
+**Against the pre-registered rule** (partial ρ ≥ 0.6 → one shared signal; ≤ 0.3 → separate signals): the result
+falls in the *separate signals* branch, and is in fact mildly negative. Quantization-guided protection would
+allocate ECC to the wrong regions.
+
+Where each signal lives:
+
+| Rank | Most quantization-sensitive | Most fault-sensitive |
+|---|---|---|
+| 1-5 | layers 26, 20, 22 (keys), 19 (values), 9 (values) | layers 1, 0, 1, 0, 2 (values and keys) |
+
+- Fault damage concentrates in the **earliest layers** and where mean \|KV\| is *small*
+  (ρ(fault damage, mean \|KV\|) = −0.385), while quantization sensitivity sits in **late-layer keys** and grows
+  with magnitude (+0.311). A single corrupted early-layer entry feeds every later layer, whereas whole-region
+  quantization error matters most where the representation is read out — that reading is a hypothesis; the
+  depth profile itself is the measurement.
+- Consequence for M5: **allocate precision and protection from different maps.** A single "importance" score
+  cannot serve both, which is the joint-allocation problem this project set out to test — now with evidence that
+  it is a real problem rather than an assumed one.
+
 ## D17 — Fault pilot: quantization metadata is the vulnerable part, and there is no inert bit (2026-09-19)
 
 Pilot: 8 chunks × 122 single-bit injections at the safe operating point (4-bit block-128 keys, 4-bit per-token
@@ -79,7 +111,15 @@ values), plus 2 no-fault controls per chunk.
     stored bits at this operating point, so protecting it is cheap, and it carries the entire damage tail.
 - **Code bits are nearly flat in significance:** worst-token damage 0.261 (MSB) vs 0.253 (LSB), and keys ≈ values
   (0.256 vs 0.265). At 4 bits every code step is large relative to the value distribution, so the classical
-  MSB/LSB hierarchy barely appears. This should be re-checked at 8 bits, where steps are 16× finer.
+  MSB/LSB hierarchy barely appears.
+- **Confirmed at 8 bits (full campaigns, 4880 + 2840 injections):** damage is strongly *sublinear* in the size of
+  the perturbation. From LSB to MSB the stored value changes by 8× (4-bit) and 128× (8-bit), but worst-token
+  damage changes only 1.03× and 1.30×, and changed-token counts 1.10× and 1.52×. What bit position really moves
+  is the *probability of any effect at all*: the share of injections that change nothing goes 28.1% → 5.6% across
+  the 8-bit positions (8.2% → 4.1% at 4 bits).
+  - Consequence: **MSB-only protection, the classic selective-ECC move, buys much less than its bit savings
+    suggest** for KV caches. Metadata protection is the high-value target instead (2.85× code damage at 4 bits,
+    1.97× at 8 bits, while metadata is ~6% of stored bits).
 - **Metric choice:** a single bit perturbs a few positions strongly rather than all positions slightly, so the
   campaign reports the **worst scored token** (`delta_nll_max`) and the count of changed predictions; the mean
   over 512 tokens is near zero for every stratum and hides the effect.
