@@ -112,14 +112,21 @@ def generate_plan(qkv: QuantizedKV, seed: int, n_uniform: int, n_msb: int = 0, n
 
 
 def generate_bursts_in_tokens(
-    qkv: QuantizedKV, seed: int, tokens: list[int], stratum: str, n: int, burst_bits: int
+    qkv: QuantizedKV, seed: int, tokens: list[int], stratum: str, n: int, burst_bits: int,
+    scope: str = "head",
 ) -> list[list[FaultSite]]:
-    """``n`` bursts of ``burst_bits`` flips, each burst confined to one (layer, part, token, head).
+    """``n`` bursts of ``burst_bits`` flips, each burst confined to one token.
 
-    A burst models what a memory error actually looks like: the stored bits of one token's head sit together, so
-    a corrupted word damages several of them at once. Single-bit faults at a usable operating point turned out to
-    be harmless at the task level (D19), which is why the token-role question needs this unit.
+    A burst models what a memory error actually looks like: the stored bits of one token sit together, so a
+    corrupted word damages several at once. Single-bit faults at a usable operating point turned out to be
+    harmless at the task level (D19), which is why the token-role question needs this unit.
+
+    ``scope="head"`` keeps a burst inside one (layer, part, token, head) slot — one memory word. ``scope=
+    "layer_token"`` spreads it over every head of that token in one layer, i.e. the token's whole row, which is
+    the strongest single-layer corruption of one token and the strictest test of a null role effect.
     """
+    if scope not in ("head", "layer_token"):
+        raise ValueError(f"unknown burst scope {scope!r}")
     rng = random.Random(seed)
     parts = _quantized_parts(qkv)
     if not parts or not tokens:
@@ -131,11 +138,15 @@ def generate_bursts_in_tokens(
         token = tokens[rng.randrange(len(tokens))]
         if token >= n_tokens:
             continue
-        b, head = rng.randrange(batch), rng.randrange(heads)
-        picks = rng.sample([(c, bit) for c in range(channels) for bit in range(qt.bits)],
-                           k=min(burst_bits, channels * qt.bits))
+        b = rng.randrange(batch)
+        if scope == "head":
+            head = rng.randrange(heads)
+            positions = [(head, c, bit) for c in range(channels) for bit in range(qt.bits)]
+        else:
+            positions = [(h, c, bit) for h in range(heads) for c in range(channels) for bit in range(qt.bits)]
+        picks = rng.sample(positions, k=min(burst_bits, len(positions)))
         bursts.append([FaultSite(layer, part, "code", (b, head, token, channel), bit, stratum)
-                       for channel, bit in picks])
+                       for head, channel, bit in picks])
     return bursts
 
 

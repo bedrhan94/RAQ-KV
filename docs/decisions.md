@@ -60,6 +60,31 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D20 — Q49: the corrupted token's role does not matter; what it *governs* does (2026-09-19)
+
+Bursts of 16 bits inside one token's (layer, head) slot — one corrupted memory word — on 150 probe samples at
+both operating points, 4050 bursts each, no-fault controls exactly zero.
+
+| Role of the corrupted token | 4-bit point | 2-bit point |
+|---|---|---|
+| answer-bearing tokens | 0 / 1176 | 0.37% (4/1072) |
+| same-type distractor tokens | 0 / 882 | 0.25% |
+| filler tokens | 0 / 1176 | 0.37% (4/1072) |
+| quantization metadata | **1.36%** | **2.24%** |
+
+- **Target vs filler: odds ratio 1.00 (p = 1).** Identical failure rates. Against the pre-registered Q49 rule
+  (OR > 1 with a CI excluding 1) the hypothesis is **not supported**; on the more sensitive prediction-change
+  measure the answer tokens are also indistinguishable from filler.
+- **Metadata vs filler: OR 6.11 (p = 0.0007) at 2 bits and infinite at 4 bits** (all failures, none in filler).
+- Depth and fact type show no role structure either; failures at 2 bits concentrate slightly at depth 0.9 and on
+  `number` facts, in every role equally.
+- **The emerging rule is not semantic but structural:** damage follows *how much data a bit governs* — a scale
+  covers a whole group, an early-layer entry feeds every later layer — not how meaningful the token is to the
+  task. That contradicts this project's initial framing, in which semantic importance was expected to predict
+  fault vulnerability, and it is the finding M5's allocator must be built on.
+- Scope: a burst hits one (layer, head) slot, i.e. 1/224 of that token's cache. The stricter test — the token's
+  entire row in one layer, 2048 bits — is `m2_fault_qa_row`.
+
 ## D19 — Single-bit faults are harmless at the task level; only metadata isn't (2026-09-19)
 
 Role-targeted single-bit faults on the probe (120 samples, 3240 injections, 4-bit block-128 operating point,

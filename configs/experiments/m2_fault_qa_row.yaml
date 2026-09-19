@@ -1,0 +1,22 @@
+# Strictest test of the null role effect: corrupt the token's entire row in one layer (all KV heads, 2048 bits
+# at 2-bit precision) instead of a single memory word. If destroying the answer token's cache in a whole layer
+# still does not cost the answer, the model's retrieval is redundant across layers and the role hypothesis is
+# refuted rather than merely unsupported.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m2_fault_qa_row
+quantization:
+  keys: {bits: 2, axis: group_token, group_size: 32}
+  values: {bits: 2, axis: per_token}
+task:
+  kind: fault_qa
+  n_samples: 120
+  burst_bits: 2048
+  burst_scope: layer_token
+  n_target: 6
+  n_distractor: 4
+  n_filler: 6
+  n_metadata: 2
+  n_control: 1
+seed: 0

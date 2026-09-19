@@ -558,7 +558,7 @@ class FaultQA:
                             ("filler", self.task.n_filler)):
             if burst_bits > 1:
                 bursts += generate_bursts_in_tokens(qkv, derive_seed(seed, role), roles[role], role, count,
-                                                    burst_bits)
+                                                    burst_bits, self.task.burst_scope or "head")
             else:
                 bursts += [[s] for s in generate_plan_in_tokens(qkv, derive_seed(seed, role), roles[role], role,
                                                                 count)]
