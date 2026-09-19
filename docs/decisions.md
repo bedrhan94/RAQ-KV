@@ -697,3 +697,57 @@ objection is that easy short contexts carry it. They do not: at the longest cont
 **half** its answers and both protected arms lose none. It also reproduces the calibration curve's shape from an
 independent axis — varying flips through context length rather than through the error rate — which is a stronger
 form of the same measurement than either alone.
+## D29 — The range guard, measured end to end: what it catches, where it breaks, and how it fails (2026-09-20)
+
+Arm H protects the quantization metadata with two stored float16 bounds per region and no error-correcting code
+at all: **+0.075% of storage** (3584 bits against 596 Mbit). Three measurements describe it completely.
+
+### 1. It catches exactly the bits the mechanism predicts
+
+A float16 scale has 16 bits. Three of them — 13 (x0.004), 14 (x65536) and 15 (sign) — push the value outside the
+range the clean tensor occupied; the other thirteen move it by at most 4x and stay inside. So a range check should
+catch **3/16 = 18.75%** of metadata flips and be blind to the rest.
+
+Measured, on trials where the guard's own bounds were not hit: **20.1%** at BER 1e-5 and **20%** at 1e-6. The
+prediction and the measurement agree at both rates, which is what makes this a mechanism rather than a
+correlation.
+
+### 2. It is enough at 1e-6 and not at 1e-5 — the engineering boundary
+
+| | BER 1e-6 | BER 1e-5 |
+|---|---|---|
+| flips per trial | 524 | 5240 |
+| metadata flips per trial | 31.7 | 315.5 |
+| caught by the guard | 20% | 20% |
+| **task failure, arm H** | **0.00%** (0/472) | **5.93%** (28/472) |
+
+The ~13 of 16 metadata bits the guard cannot see are individually mild, so at 31.7 metadata flips per trial they
+cost nothing measurable; at 315 per trial they accumulate to 5.9%. **Below roughly 1e-6 the free check is
+sufficient; above it, correction earns its bits.** Arm H still removes most of the damage even where it is no
+longer sufficient — an unprotected cache at 1e-5 would be near-saturated, against arm H's 5.9%.
+
+### 3. Its failure mode is its own bounds, and the failure is false positives
+
+Because the bounds are themselves stored bits exposed to the fault model, a flip can land on one. Over the 1e-5
+run, 24 of 472 trials had a bound flip, and in those trials the guard flagged **1733 values against 277 real
+metadata flips — a 625% "catch" rate.** A corrupted bound narrows the range, so the guard clamps hundreds of
+perfectly valid scales. That is the defect worth naming: *a plausibility check whose notion of plausibility is
+corrupted attacks the data it defends.*
+
+At this scale the false positives were not measurably harmful — task failure was 4.17% in bound-flip trials
+against 6.03% in the rest, i.e. if anything lower, with 24 trials and no significance either way. Clamping a
+valid scale to a bound near the edge of its real distribution is a small perturbation; the damage that does get
+through comes from the mantissa flips the guard cannot see. But "not harmful at the rates measured" is the claim,
+not "harmless".
+
+**This is why the bounds had to be exposed.** With the guard invulnerable, as arm H was first run, the
+false-positive mode is invisible by construction and the arm reports a coverage it would not have in a real
+memory. The exposure cost nothing in the headline — 0/480 either way — and bought the only honest account of how
+the mechanism fails.
+
+### Consequence for the recommendation
+
+The deployable configuration is a range check, not a code, **at rates around 1e-6 and below**, with two caveats
+stated rather than buried: the bounds need their own integrity (the ordered-and-finite self-check is free and
+caught one case; a checksum over 3584 bits would cost nothing and close the rest), and the sufficiency is
+rate-dependent in a way a single-rate table would hide.
