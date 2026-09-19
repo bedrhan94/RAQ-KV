@@ -34,15 +34,20 @@ from scipy import stats
 from raq_kv.utils.io import read_json, read_jsonl
 from raq_kv.utils.paths import resolve_output_root
 
-ARM_ORDER = ["m3_arm_a_unprot", "m3_arm_g_meta_only", "m3_arm_b_uniform", "m3_arm_c_precision",
-             "m3_arm_d_late19", "m3_arm_e_early19"]
+ARM_ORDER = ["m3_arm_a_unprot", "m3_arm_h_range_guard", "m3_arm_g_meta_only", "m3_arm_b_uniform",
+             "m3_arm_c_precision", "m3_arm_d_late19", "m3_arm_e_early19"]
+# Only these were built to hold the same number of bits. A, G and H are cost references at 4.26, 4.36 and 4.26
+# bits per value; including them in the equality check would report a spread that was designed in on purpose.
+ISO_BUDGET_ARMS = {"m3_arm_b_uniform", "m3_arm_c_precision", "m3_arm_d_late19", "m3_arm_e_early19"}
 # The first three pairs were pre-registered before any arm ran. The last two involve arm G, which was added
 # after arms A-E landed, and are labelled as such wherever they are reported: they are a cost-benefit follow-up,
 # not part of the frozen equal-budget test.
 PREREGISTERED = [("m3_arm_b_uniform", "m3_arm_c_precision"), ("m3_arm_d_late19", "m3_arm_e_early19"),
                  ("m3_arm_a_unprot", "m3_arm_b_uniform"),
-                 ("m3_arm_a_unprot", "m3_arm_g_meta_only"), ("m3_arm_g_meta_only", "m3_arm_b_uniform")]
-POST_HOC = {("m3_arm_a_unprot", "m3_arm_g_meta_only"), ("m3_arm_g_meta_only", "m3_arm_b_uniform")}
+                 ("m3_arm_a_unprot", "m3_arm_g_meta_only"), ("m3_arm_g_meta_only", "m3_arm_b_uniform"),
+                 ("m3_arm_a_unprot", "m3_arm_h_range_guard"), ("m3_arm_h_range_guard", "m3_arm_g_meta_only")]
+POST_HOC = {("m3_arm_a_unprot", "m3_arm_g_meta_only"), ("m3_arm_g_meta_only", "m3_arm_b_uniform"),
+            ("m3_arm_a_unprot", "m3_arm_h_range_guard"), ("m3_arm_h_range_guard", "m3_arm_g_meta_only")}
 
 
 def load_arms(raw_root: Path, names: list[str]) -> pd.DataFrame:
@@ -103,7 +108,7 @@ def iso_budget_measured(df: pd.DataFrame, tolerance: float) -> tuple[bool, pd.Da
                                     bits_sd=("avg_kv_bits", "std"),
                                     stored_bits=("stored_bits", "mean"),
                                     flips=("n_flips_per_trial", "mean")).reset_index()
-    iso_arms = [a for a in per_arm["arm"] if a != "m3_arm_a_unprot"]
+    iso_arms = [a for a in per_arm["arm"] if a in ISO_BUDGET_ARMS]
     subset = per_arm[per_arm["arm"].isin(iso_arms)]
     if subset.empty:
         return True, per_arm
@@ -283,7 +288,7 @@ def main() -> int:
     iso_ok, budgets = iso_budget_measured(df, args.tolerance)
     print("\nMeasured storage per arm (from each run's own bit budget)")
     print(_fmt(budgets))
-    print(f"  iso-budget (excluding the cost-reference arm A): {'confirmed' if iso_ok else 'NOT CONFIRMED'} "
+    print(f"  iso-budget over the equal-budget arms only (B/C/D/E): {'confirmed' if iso_ok else 'NOT CONFIRMED'} "
           f"at tolerance {args.tolerance * 100:.1f}%")
 
     summary = arm_summary(df)
