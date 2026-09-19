@@ -30,6 +30,7 @@ from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, sco
 from raq_kv.evaluation.scoring import SCORERS
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
+from raq_kv.quantization.apply import QuantReport, quantize_snapshot
 
 
 class Task(Protocol):
@@ -39,10 +40,24 @@ class Task(Protocol):
     def run_unit(self, unit_key: str) -> dict[str, Any]: ...
 
 
-def kv_record_fields(lm: LoadedModel, snapshot: KVSnapshot, original_tokens: int) -> dict[str, Any]:
-    """Token/retention and KV memory fields shared by all cache-reading tasks."""
-    budget = full_precision_kv_budget(lm.geometry, snapshot.seq_len)
-    return {
+def transform_snapshot(snapshot: KVSnapshot, cfg: ExperimentConfig) -> tuple[KVSnapshot, QuantReport | None]:
+    """The single place where the cache is modified between the two phases (M1: quantization; M2+: faults, ECC)."""
+    if cfg.quantization is None:
+        return snapshot, None
+    return quantize_snapshot(snapshot, cfg.quantization)
+
+
+def kv_record_fields(
+    lm: LoadedModel, snapshot: KVSnapshot, original_tokens: int, report: QuantReport | None = None
+) -> dict[str, Any]:
+    """Token/retention and KV memory fields shared by all cache-reading tasks.
+
+    Memory comes from the bit budget: with fake quantization the stored tensors stay bf16, so
+    ``kv_bytes_actual`` (what the simulation holds) and ``kv_bytes_analytic`` (what a real system would hold)
+    diverge on purpose - see decisions D6.
+    """
+    budget = report.budget if report is not None else full_precision_kv_budget(lm.geometry, snapshot.seq_len)
+    fields = {
         "tokens_original": original_tokens,
         "tokens_retained": snapshot.seq_len,
         "tokens_pruned": original_tokens - snapshot.seq_len,
@@ -50,8 +65,11 @@ def kv_record_fields(lm: LoadedModel, snapshot: KVSnapshot, original_tokens: int
         "kv_bytes_actual": snapshot.nbytes,
         "kv_bytes_analytic": budget.total_bytes,
         "kv_budget": budget.to_dict(),
-        "avg_kv_bits": float(lm.geometry.dtype_bits),
+        "avg_kv_bits": budget.total_bits / max(1, snapshot.seq_len * lm.geometry.kv_values_per_token),
     }
+    if report is not None:
+        fields["quantization"] = report.stats
+    return fields
 
 
 class CachePPL:
@@ -86,7 +104,7 @@ class CachePPL:
         snapshot = prefill(model, chunk.context_ids.to(dev).unsqueeze(0))
         mem1 = cuda_memory(dev)
 
-        # M0: identity transform. M1+ inserts quantize/encode/inject/decode/prune here.
+        snapshot, report = transform_snapshot(snapshot, self.cfg)
         result = score_through_cache(
             model,
             snapshot,
@@ -97,7 +115,7 @@ class CachePPL:
 
         record: dict[str, Any] = {
             "sample_id": unit_key,
-            **kv_record_fields(self.lm, snapshot, chunk.prefix_len),
+            **kv_record_fields(self.lm, snapshot, chunk.prefix_len, report),
             **nll_stats(result.token_nll),
             "prefill_cuda_allocated_delta_bytes": allocator_delta(mem0, mem1)["cuda_allocated_delta_bytes"],
             "unit_cuda_peak_over_start_bytes": allocator_delta(mem0, mem2)["cuda_peak_over_start_bytes"],
@@ -230,7 +248,7 @@ class QAGenerate:
         snapshot = prefill(model, ids[:, : s.cache_len])
         mem1 = cuda_memory(dev)
 
-        # M0: identity transform. M1+ inserts quantize/encode/inject/decode/prune here.
+        snapshot, report = transform_snapshot(snapshot, self.cfg)
         gen = greedy_decode(model, query_ids, s.max_new_tokens, snapshot=snapshot,
                             eos_token_ids=set(self.lm.eos_token_ids))
         prediction = tok.decode(gen.tokens, skip_special_tokens=True)
@@ -238,7 +256,7 @@ class QAGenerate:
         record: dict[str, Any] = {
             "sample_id": unit_key,
             "meta": s.meta,
-            **kv_record_fields(self.lm, snapshot, s.cache_len),
+            **kv_record_fields(self.lm, snapshot, s.cache_len, report),
             "query_tokens": int(query_ids.shape[1]),
             "prediction": prediction,
             "generated_tokens": len(gen.tokens),

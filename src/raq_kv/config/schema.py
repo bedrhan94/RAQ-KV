@@ -124,6 +124,32 @@ _TASK_DATASETS: dict[str, tuple[str, ...]] = {
 }
 
 
+class QuantSpec(StrictModel):
+    """Uniform integer quantization of one KV part (keys or values)."""
+
+    bits: Literal[2, 3, 4, 8] = 4
+    axis: Literal["per_tensor", "per_head", "per_channel", "per_token", "group_channel"] = "per_token"
+    group_size: int = Field(default=64, gt=0)
+    symmetric: bool = False
+
+
+class QuantizationConfig(StrictModel):
+    """Keys and values are configured separately (KIVI: per-channel keys, per-token values).
+
+    ``None`` for a part leaves it in full precision; ``residual_window`` keeps the most recent tokens unquantized.
+    """
+
+    keys: QuantSpec | None = None
+    values: QuantSpec | None = None
+    residual_window: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _check(self) -> QuantizationConfig:
+        if self.keys is None and self.values is None:
+            raise ValueError("quantization section with neither keys nor values; omit the section instead")
+        return self
+
+
 class OutputConfig(StrictModel):
     root: str = "outputs"
 
@@ -135,6 +161,7 @@ class ExperimentConfig(StrictModel):
     model: ModelConfig
     dataset: Dataset
     task: Task
+    quantization: QuantizationConfig | None = None
     output: OutputConfig = Field(default_factory=OutputConfig)
     notes: str = ""
 
@@ -149,5 +176,10 @@ class ExperimentConfig(StrictModel):
         return self
 
     def identity_dict(self) -> dict[str, Any]:
-        """Fields that define *what* is measured. Output location and free-text notes are excluded."""
-        return self.model_dump(mode="json", exclude={"output", "notes"})
+        """Fields that define *what* is measured. Output location and free-text notes are excluded.
+
+        ``exclude_none`` keeps a config's identity stable when a later milestone adds an optional section: a run
+        without quantization serializes exactly as it did before that section existed, so experiment ids (and the
+        raw results already stored under them) stay valid.
+        """
+        return self.model_dump(mode="json", exclude={"output", "notes"}, exclude_none=True)

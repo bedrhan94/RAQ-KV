@@ -1,0 +1,27 @@
+# M1 sweep: KV precision and granularity vs cache-conditioned perplexity (WikiText-2, 40 chunks).
+# Claim supported: quantization-quality curve and the granularity choice used from here on; input to Q48.
+# The first variant (null) is the passthrough control and must reproduce the M0 golden perplexity exactly.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m1_kv_quant_ppl
+task:
+  kind: cache_ppl
+  store_token_nll: true
+seed: 0
+sweep:
+  quantization:
+    - null
+    - {keys: {bits: 8, axis: per_token}, values: {bits: 8, axis: per_token}}
+    - {keys: {bits: 8, axis: per_channel}, values: {bits: 8, axis: per_token}}
+    - {keys: {bits: 4, axis: per_token}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: per_channel}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: per_token, symmetric: true}, values: {bits: 4, axis: per_token, symmetric: true}}
+    - {keys: {bits: 4, axis: group_channel, group_size: 64}, values: {bits: 4, axis: group_channel, group_size: 64}}
+    - {keys: {bits: 4, axis: group_channel, group_size: 32}, values: {bits: 4, axis: group_channel, group_size: 32}}
+    - {keys: {bits: 3, axis: group_channel, group_size: 32}, values: {bits: 3, axis: group_channel, group_size: 32}}
+    - {keys: {bits: 2, axis: per_token}, values: {bits: 2, axis: per_token}}
+    - {keys: {bits: 2, axis: per_channel}, values: {bits: 2, axis: per_token}}
+    - {keys: {bits: 2, axis: group_channel, group_size: 32}, values: {bits: 2, axis: group_channel, group_size: 32}}
+    - {keys: {bits: 2, axis: group_channel, group_size: 32}, values: {bits: 2, axis: group_channel, group_size: 32},
+       residual_window: 32}

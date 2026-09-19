@@ -15,6 +15,24 @@ from typing import Any
 from raq_kv.config.schema import ExperimentConfig
 
 _DTYPE_SHORT = {"bfloat16": "bf16", "float16": "fp16", "float32": "fp32"}
+_AXIS_SHORT = {"per_tensor": "T", "per_head": "H", "per_channel": "C", "per_token": "t", "group_channel": "g"}
+
+
+def _quant_token(cfg: ExperimentConfig) -> str:
+    """Compact description of the KV precision, e.g. ``k4C-v4t`` or ``k2g32-v2t-r32``; dtype when unquantized."""
+    q = cfg.quantization
+    if q is None:
+        return _DTYPE_SHORT[cfg.model.dtype]
+    parts = []
+    for name, spec in (("k", q.keys), ("v", q.values)):
+        if spec is None:
+            parts.append(f"{name}{_DTYPE_SHORT[cfg.model.dtype]}")
+        else:
+            axis = _AXIS_SHORT[spec.axis] + (str(spec.group_size) if spec.axis == "group_channel" else "")
+            parts.append(f"{name}{spec.bits}{axis}{'s' if spec.symmetric else ''}")
+    if q.residual_window:
+        parts.append(f"r{q.residual_window}")
+    return "-".join(parts)
 
 
 def canonical_json(obj: Any) -> str:
@@ -45,7 +63,7 @@ def slug(cfg: ExperimentConfig) -> str:
         cfg.model.short_name,
         f"{cfg.dataset.name}{version}",
         cfg.task.kind,
-        _DTYPE_SHORT[cfg.model.dtype],
+        _quant_token(cfg),
         "noecc",
         "nofault",
         "p0",
