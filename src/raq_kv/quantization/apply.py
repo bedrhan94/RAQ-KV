@@ -16,8 +16,8 @@ import torch
 from raq_kv.budget.bit_accounting import BitBudget
 from raq_kv.config.schema import QuantizationConfig, QuantSpec  # noqa: TC001  (runtime use in signatures)
 from raq_kv.kv.snapshot import KVSnapshot
-from raq_kv.quantization.base import error_stats
-from raq_kv.quantization.uniform import quantize_dequantize
+from raq_kv.quantization.base import QuantizedTensor, error_stats
+from raq_kv.quantization.uniform import dequantize, quantize, quantize_dequantize
 
 
 @dataclass
@@ -27,6 +27,38 @@ class QuantReport:
 
     def to_dict(self) -> dict[str, Any]:
         return {"kv_budget": self.budget.to_dict(), "quantization": self.stats}
+
+
+@dataclass
+class QuantizedKV:
+    """A snapshot held in its stored form: integer codes plus scales, per layer and part.
+
+    This is what a real system keeps in memory and therefore what M2 corrupts; ``to_snapshot`` performs the
+    dequantization the model consumes. An entry is a plain tensor when that part is left in full precision.
+    """
+
+    keys: list[QuantizedTensor | torch.Tensor]
+    values: list[QuantizedTensor | torch.Tensor]
+    positions: torch.Tensor
+    next_position: int
+    report: QuantReport
+
+    @property
+    def num_layers(self) -> int:
+        return len(self.keys)
+
+    def part(self, layer: int, part: str) -> QuantizedTensor | torch.Tensor:
+        if part not in ("keys", "values"):
+            raise ValueError(f"part must be 'keys' or 'values', got {part!r}")
+        return (self.keys if part == "keys" else self.values)[layer]
+
+    def to_snapshot(self) -> KVSnapshot:
+        return KVSnapshot(
+            keys=[t if isinstance(t, torch.Tensor) else dequantize(t) for t in self.keys],
+            values=[t if isinstance(t, torch.Tensor) else dequantize(t) for t in self.values],
+            positions=self.positions,
+            next_position=self.next_position,
+        )
 
 
 def _quantize_part(x: torch.Tensor, spec: QuantSpec | None, keep_last: int) -> tuple[torch.Tensor, int, int, dict]:
@@ -70,8 +102,49 @@ def quantize_region(
                       next_position=snapshot.next_position), stats
 
 
+def _quantize_part_codes(
+    x: torch.Tensor, spec: QuantSpec | None
+) -> tuple[QuantizedTensor | torch.Tensor, int, int, dict[str, Any]]:
+    if spec is None:
+        bits = torch.finfo(x.dtype).bits
+        return x, x.numel() * bits, 0, {"bits": bits, "quantized_tokens": 0}
+    qt = quantize(x, spec.bits, spec.axis, spec.group_size, spec.symmetric)
+    stats = {**qt.describe(), **error_stats(x, dequantize(qt)), "quantized_tokens": x.shape[-2]}
+    return qt, qt.data_bits, qt.metadata_bits, stats
+
+
+def quantize_to_codes(snapshot: KVSnapshot, cfg: QuantizationConfig) -> QuantizedKV:
+    """Quantize a snapshot and keep the codes — the stored form that fault injection corrupts.
+
+    Not compatible with ``residual_window``: a residual window mixes two storage formats in one tensor, which the
+    fault address space does not model yet.
+    """
+    if cfg.residual_window:
+        raise NotImplementedError("code-level storage does not support a residual window yet")
+    keys: list[QuantizedTensor | torch.Tensor] = []
+    values: list[QuantizedTensor | torch.Tensor] = []
+    data_bits = meta_bits = 0
+    key_stats: list[dict[str, Any]] = []
+    value_stats: list[dict[str, Any]] = []
+    for k, v in zip(snapshot.keys, snapshot.values, strict=True):
+        kq, kd, km, ks = _quantize_part_codes(k, cfg.keys)
+        vq, vd, vm, vs = _quantize_part_codes(v, cfg.values)
+        keys.append(kq)
+        values.append(vq)
+        data_bits += kd + vd
+        meta_bits += km + vm
+        key_stats.append(ks)
+        value_stats.append(vs)
+    report = _build_report(cfg, snapshot.seq_len, data_bits, meta_bits, key_stats, value_stats)
+    return QuantizedKV(keys=keys, values=values, positions=snapshot.positions,
+                       next_position=snapshot.next_position, report=report)
+
+
 def quantize_snapshot(snapshot: KVSnapshot, cfg: QuantizationConfig) -> tuple[KVSnapshot, QuantReport]:
     """Return a fake-quantized copy of the snapshot plus its exact bit budget and per-layer error statistics."""
+    if not cfg.residual_window:
+        qkv = quantize_to_codes(snapshot, cfg)
+        return qkv.to_snapshot(), qkv.report
     keys, values = [], []
     data_bits = meta_bits = 0
     key_stats: list[dict[str, Any]] = []
@@ -85,13 +158,21 @@ def quantize_snapshot(snapshot: KVSnapshot, cfg: QuantizationConfig) -> tuple[KV
         meta_bits += km + vm
         key_stats.append(ks)
         value_stats.append(vs)
+    report = _build_report(cfg, snapshot.seq_len, data_bits, meta_bits, key_stats, value_stats)
+    return KVSnapshot(keys=keys, values=values, positions=snapshot.positions,
+                      next_position=snapshot.next_position), report
 
+
+def _build_report(
+    cfg: QuantizationConfig, retained_tokens: int, data_bits: int, meta_bits: int,
+    key_stats: list[dict[str, Any]], value_stats: list[dict[str, Any]],
+) -> QuantReport:
     def _mean(rows: list[dict[str, Any]], field: str) -> float | None:
         vals = [r[field] for r in rows if field in r]
         return sum(vals) / len(vals) if vals else None
 
-    report = QuantReport(
-        budget=BitBudget(kv_data_bits=data_bits, quant_metadata_bits=meta_bits, retained_tokens=snapshot.seq_len),
+    return QuantReport(
+        budget=BitBudget(kv_data_bits=data_bits, quant_metadata_bits=meta_bits, retained_tokens=retained_tokens),
         stats={
             "keys": {"spec": None if cfg.keys is None else cfg.keys.model_dump(),
                      "mse_mean": _mean(key_stats, "mse"), "sqnr_db_mean": _mean(key_stats, "sqnr_db"),
@@ -104,5 +185,3 @@ def quantize_snapshot(snapshot: KVSnapshot, cfg: QuantizationConfig) -> tuple[KV
             "residual_window": cfg.residual_window,
         },
     )
-    return KVSnapshot(keys=keys, values=values, positions=snapshot.positions,
-                      next_position=snapshot.next_position), report

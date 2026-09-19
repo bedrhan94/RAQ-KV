@@ -15,6 +15,7 @@ from raq_kv.budget.bit_accounting import full_precision_kv_budget
 from raq_kv.config.schema import (
     CachePPLTask,
     ExperimentConfig,
+    FaultInjectionTask,
     GSM8KConfig,
     LatencyTask,
     QATask,
@@ -31,9 +32,13 @@ from raq_kv.evaluation.memory import allocator_delta, cuda_memory, reset_peak
 from raq_kv.evaluation.metrics import nll_stats
 from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, score_through_cache, token_char_spans
 from raq_kv.evaluation.scoring import SCORERS
+from raq_kv.experiments.ids import experiment_id
+from raq_kv.faults.injector import injected_snapshot
+from raq_kv.faults.plan import describe_site, generate_plan, save_plan
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
-from raq_kv.quantization.apply import QuantReport, quantize_region, quantize_snapshot
+from raq_kv.quantization.apply import QuantReport, quantize_region, quantize_snapshot, quantize_to_codes
+from raq_kv.utils.paths import resolve_output_root
 from raq_kv.utils.seed import derive_seed
 
 
@@ -388,6 +393,94 @@ class QuantSensitivity:
         }
 
 
+class FaultInjection:
+    """Single-bit fault campaign on the quantized KV cache.
+
+    One unit = one chunk. The chunk is prefilled and quantized once; the fault-free quantized read is the golden
+    reference for that chunk, and every site in the chunk's plan is injected, scored and restored. Pairing is
+    exact (same prefill, same codes, same scored tokens), and the plan is reproducible from the seed so M3 can
+    replay identical faults under each protection scheme.
+    """
+
+    def __init__(self, cfg: ExperimentConfig) -> None:
+        assert isinstance(cfg.task, FaultInjectionTask) and cfg.quantization is not None
+        self.cfg = cfg
+        self.task: FaultInjectionTask = cfg.task
+        self.tokenizer = load_tokenizer(cfg.model)
+        chunks = make_chunks(tokenize_wikitext2(cfg.dataset, self.tokenizer), cfg.dataset)
+        self.chunks = {c.sample_id: c for c in chunks[: self.task.n_chunks or len(chunks)]}
+        self._fingerprint = chunks_fingerprint(list(self.chunks.values()))
+        self.lm: LoadedModel | None = None
+
+    def unit_keys(self) -> list[str]:
+        return list(self.chunks)
+
+    def data_fingerprint(self) -> dict[str, Any]:
+        return {"wikitext2_chunks_sha256": self._fingerprint}
+
+    def setup(self) -> dict[str, Any]:
+        self.lm = load_model(self.cfg.model)
+        return {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict()}
+
+    def run_unit(self, unit_key: str) -> dict[str, Any]:
+        assert self.lm is not None and self.cfg.quantization is not None
+        chunk = self.chunks[unit_key]
+        model, dev = self.lm.model, self.lm.device
+        inputs = chunk.read_input_ids.to(dev).unsqueeze(0)
+        targets = chunk.read_target_ids.to(dev).unsqueeze(0)
+
+        reset_peak(dev)
+        snapshot = prefill(model, chunk.context_ids.to(dev).unsqueeze(0))
+        qkv = quantize_to_codes(snapshot, self.cfg.quantization)
+        base = qkv.to_snapshot()
+        golden = score_through_cache(model, base, inputs, targets)
+        golden_nll = golden.token_nll.double().cpu()
+        golden_argmax = golden.token_argmax.cpu()
+
+        plan = generate_plan(
+            qkv,
+            seed=derive_seed(self.cfg.seed, unit_key, "fault_plan"),
+            n_uniform=self.task.n_uniform, n_msb=self.task.n_msb,
+            n_metadata=self.task.n_metadata, n_lsb=self.task.n_lsb,
+        )
+        plan_path = (resolve_output_root(self.cfg.output.root) / "fault_plans"
+                     / experiment_id(self.cfg) / f"{unit_key}.jsonl")
+        if not plan_path.exists():
+            save_plan(plan_path, plan, {"exp_id": experiment_id(self.cfg), "unit": unit_key,
+                                        "seed": self.cfg.seed, "n_sites": len(plan)})
+
+        def outcome(result: Any) -> dict[str, Any]:
+            delta = result.token_nll.double().cpu() - golden_nll
+            changed = result.token_argmax.cpu() != golden_argmax
+            return {
+                # A single stored bit perturbs a few positions strongly rather than all of them slightly, so the
+                # maximum per-token change carries the signal and the mean mostly dilutes it (D17).
+                "delta_nll_max": float(delta.max()), "delta_nll_abs_max": float(delta.abs().max()),
+                "delta_nll_mean": float(delta.mean()),
+                "tokens_changed": int(changed.sum()), "token_change_rate": float(changed.double().mean()),
+                "any_token_changed": bool(changed.any()),
+            }
+
+        rows = []
+        for _ in range(self.task.n_control):
+            # No fault at all: proves the measurement floor is exactly zero before any effect size is quoted.
+            rows.append({"stratum": "no_fault", "target": "none", "layer": -1, "part": "none", "bit": -1,
+                         **outcome(score_through_cache(model, base, inputs, targets))})
+        for site in plan:
+            with injected_snapshot(qkv, site, base) as (faulty, info):
+                result = score_through_cache(model, faulty, inputs, targets)
+            rows.append({**describe_site(site, qkv), **info, **outcome(result)})
+
+        return {
+            "sample_id": unit_key,
+            **kv_record_fields(self.lm, base, chunk.prefix_len, qkv.report),
+            "golden_nll_mean": float(golden_nll.mean()),
+            "n_scored_tokens": int(golden_nll.numel()),
+            "n_sites": len(plan),
+            "faults": rows,
+        }
+
+
 def build_task(cfg: ExperimentConfig) -> Task:
     if isinstance(cfg.task, CachePPLTask):
         return CachePPL(cfg)
@@ -397,4 +490,6 @@ def build_task(cfg: ExperimentConfig) -> Task:
         return QAGenerate(cfg)
     if isinstance(cfg.task, QuantSensitivityTask):
         return QuantSensitivity(cfg)
+    if isinstance(cfg.task, FaultInjectionTask):
+        return FaultInjection(cfg)
     raise NotImplementedError(f"no task for kind '{cfg.task.kind}'")

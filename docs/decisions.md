@@ -60,6 +60,30 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D17 — Fault pilot: quantization metadata is the vulnerable part, and there is no inert bit (2026-09-19)
+
+Pilot: 8 chunks × 122 single-bit injections at the safe operating point (4-bit block-128 keys, 4-bit per-token
+values), plus 2 no-fault controls per chunk.
+
+- **The measurement floor is exactly zero.** All 16 no-fault controls produced identical logits (0 tokens changed,
+  0.000000 NLL delta), and re-dequantizing an untouched layer also changes nothing. Every observed effect is
+  therefore attributable to the injected bit — unlike M1's region profiling, no statistical floor is needed.
+- **There is no inert bit at 4 bits.** The original plan had a "null" stratum flipping the LSB of a mid-range
+  code, assumed harmless. Measured: one LSB step moves the stored value by 0.168 where the tensor's mean
+  magnitude is 0.316 — about half. The stratum was renamed `lsb_midrange` ("the smallest possible storage
+  error") and the floor is established by no-fault controls instead.
+- **Metadata dominates.** Mean worst-token damage: metadata 0.618 nats vs codes 0.260; the six most damaging
+  injections are all float16 **exponent** bits of a scale or zero point, the worst costing 23.6 nats on one token
+  and changing 237 of 512 predictions. Within metadata, mantissa and sign flips are minor (≈0.000 mean).
+  - Mechanistically unsurprising — one scale covers a whole group — but decision-relevant: metadata is ~6% of the
+    stored bits at this operating point, so protecting it is cheap, and it carries the entire damage tail.
+- **Code bits are nearly flat in significance:** worst-token damage 0.261 (MSB) vs 0.253 (LSB), and keys ≈ values
+  (0.256 vs 0.265). At 4 bits every code step is large relative to the value distribution, so the classical
+  MSB/LSB hierarchy barely appears. This should be re-checked at 8 bits, where steps are 16× finer.
+- **Metric choice:** a single bit perturbs a few positions strongly rather than all positions slightly, so the
+  campaign reports the **worst scored token** (`delta_nll_max`) and the count of changed predictions; the mean
+  over 512 tokens is near zero for every stratum and hides the effect.
+
 ## D16 — Perplexity badly understates task damage; "2-bit is usable" is withdrawn (2026-09-19)
 
 Operating points measured on the probe (720 samples) and GSM8K (200), paired per sample against the bf16 golden

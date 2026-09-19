@@ -1,0 +1,19 @@
+# M2 pilot: single-bit faults in the stored KV codes at the safe operating point (4-bit block-128, lossless on
+# the probe per D16). Small enough to check the machinery and size the full campaign.
+# Claim supported: C2 / H1 fault side, and the null stratum that makes the effect sizes interpretable.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m2_fault_pilot
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: fault_injection
+  n_chunks: 8
+  n_uniform: 60
+  n_msb: 20
+  n_metadata: 20
+  n_lsb: 20
+  n_control: 2
+seed: 0

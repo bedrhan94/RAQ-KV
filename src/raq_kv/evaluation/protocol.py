@@ -54,11 +54,13 @@ def prefill(model: nn.Module, context_ids: torch.Tensor) -> KVSnapshot:
 class ScoreResult:
     token_nll: torch.Tensor  # [n], natural log, in the requested log-prob dtype
     token_margin: torch.Tensor  # float32 [n]: logit(target) - max logit over all other tokens (< 0 => argmax flips)
+    token_argmax: torch.Tensor  # int64 [n]: the model's own prediction at each scored position
     logprobs: torch.Tensor | None  # [n, vocab] when requested (for KL against golden)
 
     def slice(self, start: int) -> ScoreResult:
         return ScoreResult(
-            self.token_nll[start:], self.token_margin[start:], None if self.logprobs is None else self.logprobs[start:]
+            self.token_nll[start:], self.token_margin[start:], self.token_argmax[start:],
+            None if self.logprobs is None else self.logprobs[start:],
         )
 
 
@@ -97,7 +99,8 @@ def score_through_cache(
     targets = target_ids[0]
     logprobs = torch.log_softmax(logits.to(logprob_dtype), dim=-1)
     token_nll = -logprobs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
-    return ScoreResult(token_nll, target_margins(logits, targets), logprobs if return_logprobs else None)
+    return ScoreResult(token_nll, target_margins(logits, targets), logits.argmax(dim=-1),
+                       logprobs if return_logprobs else None)
 
 
 @torch.no_grad()

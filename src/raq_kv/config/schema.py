@@ -137,13 +137,35 @@ class QuantSensitivityTask(StrictModel):
     null_regions: int | None = Field(default=None, ge=0, description="Regions sampled per chunk for the null run")
 
 
-Task = Annotated[CachePPLTask | LatencyTask | QATask | QuantSensitivityTask, Field(discriminator="kind")]
+class FaultInjectionTask(StrictModel):
+    """Single-bit faults in the stored KV representation, replayed from a per-chunk plan.
+
+    Strata: ``uniform`` (any bit of any code), ``msb`` (the most significant code bit), ``metadata`` (a float16
+    scale or zero point) and ``lsb_midrange`` (the LSB of a mid-range code — the *smallest possible* storage
+    error, which at 4 bits is still half the tensor's mean magnitude, see D17). ``n_control`` no-fault scorings
+    per chunk establish the measurement floor, which is exactly zero because the pipeline is deterministic.
+    Requires a quantization section, because faults land in codes, not in bf16 tensors.
+    """
+
+    kind: Literal["fault_injection"] = "fault_injection"
+    n_chunks: int | None = None
+    n_uniform: int = Field(default=60, ge=0)
+    n_msb: int = Field(default=20, ge=0)
+    n_metadata: int = Field(default=20, ge=0)
+    n_lsb: int = Field(default=20, ge=0)
+    n_control: int = Field(default=2, ge=0, description="No-fault scorings; must produce exactly zero deltas")
+
+
+Task = Annotated[
+    CachePPLTask | LatencyTask | QATask | QuantSensitivityTask | FaultInjectionTask, Field(discriminator="kind")
+]
 
 _TASK_DATASETS: dict[str, tuple[str, ...]] = {
     "cache_ppl": ("wikitext2",),
     "latency": ("wikitext2",),
     "qa_generate": ("raq_probe", "gsm8k"),
     "quant_sensitivity": ("wikitext2",),
+    "fault_injection": ("wikitext2",),
 }
 
 
@@ -192,6 +214,11 @@ class ExperimentConfig(StrictModel):
     def _check_lengths(self) -> ExperimentConfig:
         if self.dataset.name not in _TASK_DATASETS[self.task.kind]:
             raise ValueError(f"task '{self.task.kind}' does not support dataset '{self.dataset.name}'")
+        if isinstance(self.task, FaultInjectionTask):
+            if self.quantization is None:
+                raise ValueError("fault_injection needs a quantization section: faults land in stored codes")
+            if self.quantization.residual_window:
+                raise ValueError("fault_injection does not support a residual window yet")
         if isinstance(self.task, LatencyTask) and isinstance(self.dataset, WikiText2Config):
             corpus_tokens = self.dataset.n_chunks * (self.dataset.prefix_len + self.dataset.continuation_len + 1)
             if max(self.task.prompt_lens) > corpus_tokens:
