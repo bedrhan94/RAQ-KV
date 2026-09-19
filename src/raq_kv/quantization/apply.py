@@ -14,7 +14,7 @@ from typing import Any
 import torch
 
 from raq_kv.budget.bit_accounting import BitBudget
-from raq_kv.config.schema import QuantizationConfig, QuantSpec
+from raq_kv.config.schema import QuantizationConfig, QuantSpec  # noqa: TC001  (runtime use in signatures)
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.quantization.base import error_stats
 from raq_kv.quantization.uniform import quantize_dequantize
@@ -45,6 +45,29 @@ def _quantize_part(x: torch.Tensor, spec: QuantSpec | None, keep_last: int) -> t
     stats = {**qt.describe(), **error_stats(head, deq), "quantized_tokens": head.shape[-2],
              "residual_tokens": keep, "residual_bits": tail_bits}
     return out, qt.data_bits + tail_bits, qt.metadata_bits, stats
+
+
+def quantize_region(
+    snapshot: KVSnapshot, layer: int, part: str, spec: QuantSpec, head: int | None = None
+) -> tuple[KVSnapshot, dict[str, Any]]:
+    """Quantize exactly one region (one layer's keys or values, optionally a single KV head) and leave the rest
+    untouched. Used by the sensitivity profiler; tensors of other layers are shared, not copied."""
+    if part not in ("keys", "values"):
+        raise ValueError(f"part must be 'keys' or 'values', got {part!r}")
+    keys, values = list(snapshot.keys), list(snapshot.values)
+    tensors = keys if part == "keys" else values
+    original = tensors[layer]
+    target = original if head is None else original[:, head : head + 1]
+    deq, qt = quantize_dequantize(target, spec.bits, spec.axis, spec.group_size, spec.symmetric)
+    if head is None:
+        tensors[layer] = deq
+    else:
+        patched = original.clone()
+        patched[:, head : head + 1] = deq
+        tensors[layer] = patched
+    stats = {"layer": layer, "part": part, "head": head, **qt.describe(), **error_stats(target, deq)}
+    return KVSnapshot(keys=keys, values=values, positions=snapshot.positions,
+                      next_position=snapshot.next_position), stats
 
 
 def quantize_snapshot(snapshot: KVSnapshot, cfg: QuantizationConfig) -> tuple[KVSnapshot, QuantReport]:

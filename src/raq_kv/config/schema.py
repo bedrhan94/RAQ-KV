@@ -115,12 +115,24 @@ class QATask(StrictModel):
     score_answer_nll: bool = True
 
 
-Task = Annotated[CachePPLTask | LatencyTask | QATask, Field(discriminator="kind")]
+class QuantSensitivityTask(StrictModel):
+    """Per-region quantization sensitivity: quantize exactly one region to ``spec`` and leave the rest in full
+    precision, measuring the paired per-token NLL increase. Regions are enumerated per chunk, so the golden pass
+    and every region share one prefill."""
+
+    kind: Literal["quant_sensitivity"] = "quant_sensitivity"
+    spec: QuantSpec = Field(default_factory=lambda: QuantSpec(bits=2, axis="per_token"))
+    granularity: Literal["layer_part", "head_part"] = "layer_part"
+    n_chunks: int | None = Field(default=None, description="Chunks to profile; defaults to the dataset's n_chunks")
+
+
+Task = Annotated[CachePPLTask | LatencyTask | QATask | QuantSensitivityTask, Field(discriminator="kind")]
 
 _TASK_DATASETS: dict[str, tuple[str, ...]] = {
     "cache_ppl": ("wikitext2",),
     "latency": ("wikitext2",),
     "qa_generate": ("raq_probe", "gsm8k"),
+    "quant_sensitivity": ("wikitext2",),
 }
 
 

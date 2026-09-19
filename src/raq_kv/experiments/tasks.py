@@ -17,6 +17,7 @@ from raq_kv.config.schema import (
     GSM8KConfig,
     LatencyTask,
     QATask,
+    QuantSensitivityTask,
     RAQProbeConfig,
 )
 from raq_kv.data.gsm8k import build_gsm8k
@@ -30,7 +31,7 @@ from raq_kv.evaluation.protocol import greedy_decode, prefill, score_answer, sco
 from raq_kv.evaluation.scoring import SCORERS
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
-from raq_kv.quantization.apply import QuantReport, quantize_snapshot
+from raq_kv.quantization.apply import QuantReport, quantize_region, quantize_snapshot
 
 
 class Task(Protocol):
@@ -297,6 +298,81 @@ class QAGenerate:
         return record
 
 
+class QuantSensitivity:
+    """Per-region quantization sensitivity on WikiText-2 chunks.
+
+    One unit = one chunk. The chunk is prefilled once; then the golden continuation is scored, and for every region
+    (layer × {keys, values}, optionally × KV head) the same continuation is scored with only that region quantized.
+    Pairing is exact by construction: identical prefill, identical target tokens, same process and kernels.
+    """
+
+    def __init__(self, cfg: ExperimentConfig) -> None:
+        assert isinstance(cfg.task, QuantSensitivityTask)
+        self.cfg = cfg
+        self.task: QuantSensitivityTask = cfg.task
+        self.tokenizer = load_tokenizer(cfg.model)
+        chunks = make_chunks(tokenize_wikitext2(cfg.dataset, self.tokenizer), cfg.dataset)
+        limit = self.task.n_chunks or len(chunks)
+        self.chunks = {c.sample_id: c for c in chunks[:limit]}
+        self._fingerprint = chunks_fingerprint(list(self.chunks.values()))
+        self.lm: LoadedModel | None = None
+
+    def unit_keys(self) -> list[str]:
+        return list(self.chunks)
+
+    def data_fingerprint(self) -> dict[str, Any]:
+        return {"wikitext2_chunks_sha256": self._fingerprint}
+
+    def setup(self) -> dict[str, Any]:
+        self.lm = load_model(self.cfg.model)
+        return {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict(),
+                "n_regions": len(self._regions())}
+
+    def _regions(self) -> list[tuple[int, str, int | None]]:
+        """(layer, part, head) triples; ``head=None`` means the whole part of that layer."""
+        assert self.lm is not None, "setup() must be called first"
+        layers = range(self.lm.geometry.num_layers)
+        parts = ("keys", "values")
+        if self.task.granularity == "layer_part":
+            return [(layer, part, None) for layer in layers for part in parts]
+        return [(layer, part, head) for layer in layers for part in parts
+                for head in range(self.lm.geometry.num_kv_heads)]
+
+    def run_unit(self, unit_key: str) -> dict[str, Any]:
+        assert self.lm is not None, "setup() must be called first"
+        chunk = self.chunks[unit_key]
+        model, dev = self.lm.model, self.lm.device
+        inputs = chunk.read_input_ids.to(dev).unsqueeze(0)
+        targets = chunk.read_target_ids.to(dev).unsqueeze(0)
+
+        reset_peak(dev)
+        snapshot = prefill(model, chunk.context_ids.to(dev).unsqueeze(0))
+        golden = score_through_cache(model, snapshot, inputs, targets).token_nll.double().cpu()
+
+        rows = []
+        for layer, part, head in self._regions():
+            perturbed, stats = quantize_region(snapshot, layer, part, self.task.spec, head)
+            nll = score_through_cache(model, perturbed, inputs, targets).token_nll.double().cpu()
+            delta = nll - golden
+            rows.append({
+                "layer": layer, "part": part, "head": head,
+                "delta_nll_mean": float(delta.mean()), "delta_nll_max": float(delta.max()),
+                "delta_nll_frac_worse": float((delta > 0).double().mean()),
+                "sqnr_db": stats["sqnr_db"], "mse": stats["mse"],
+            })
+            del perturbed, nll
+
+        return {
+            "sample_id": unit_key,
+            **kv_record_fields(self.lm, snapshot, chunk.prefix_len),
+            "golden_nll_mean": float(golden.mean()),
+            "n_scored_tokens": int(golden.numel()),
+            "spec": self.task.spec.model_dump(),
+            "granularity": self.task.granularity,
+            "regions": rows,
+        }
+
+
 def build_task(cfg: ExperimentConfig) -> Task:
     if isinstance(cfg.task, CachePPLTask):
         return CachePPL(cfg)
@@ -304,4 +380,6 @@ def build_task(cfg: ExperimentConfig) -> Task:
         return Latency(cfg)
     if isinstance(cfg.task, QATask):
         return QAGenerate(cfg)
+    if isinstance(cfg.task, QuantSensitivityTask):
+        return QuantSensitivity(cfg)
     raise NotImplementedError(f"no task for kind '{cfg.task.kind}'")
