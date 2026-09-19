@@ -60,6 +60,33 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D16 — Perplexity badly understates task damage; "2-bit is usable" is withdrawn (2026-09-19)
+
+Operating points measured on the probe (720 samples) and GSM8K (200), paired per sample against the bf16 golden
+runs. WikiText perplexity for the same configurations comes from the M1 sweeps.
+
+| Operating point | bits/value | WikiText PPL | PPL increase | Probe accuracy | Accuracy drop | Decode margin Δ | Truncated |
+|---|---|---|---|---|---|---|---|
+| K4b/blk128 · V4b/token | 4.26 | 14.43 | +0.3% | 0.9944 | 0% | −0.03 [−0.18, +0.12] | 0 |
+| K2b/blk32 · V2b/token | 2.63 | 15.47 | +7.5% | 0.867 | −12.8% | −5.58 [−6.00, −5.13] | 1 |
+| K2b/blk512 · V2b/token | 2.17 | 18.58 | +29.1% | 0.285 | **−71.4%** | −11.66 [−12.63, −10.68] | 113 |
+
+GSM8K (cached prefix is only ~62 tokens, so it is expected to be insensitive): 0.825 → 0.800 at 4 bits and 0.735
+at 2-bit block-32, i.e. a −11% relative drop where the probe loses −13%.
+
+- **The project's premise now has its first direct measurement.** A 29% perplexity increase corresponds to a 71%
+  collapse in retrieval accuracy; a 7.5% perplexity increase already costs 13% of accuracy. The relationship is
+  strongly amplifying, so perplexity cannot be used to certify an operating point.
+- **D12's "2-bit is degraded but functional" is withdrawn.** It was based on perplexity alone. At 2 bits the
+  usable configuration is block-32 (0.867 accuracy), and the cheap 2-bit variant (block-512) destroys retrieval
+  while looking merely mediocre on perplexity.
+- **4-bit block-128 is lossless downstream** (identical accuracy, margin CI spans zero, no truncations) at 4.26
+  bits per value — a 3.8× KV reduction. This is the operating point M2 should treat as the "safe" reference.
+- **Truncation tracks damage:** 113 of 720 generations at the worst point ran to the token cap, versus 0 at
+  4 bits. Degraded runs ramble, which is why truncation is reported next to accuracy.
+- Reporting guard added: `report_m1_downstream.py` refuses incomplete runs. A partial 75/720 run (aborted when the
+  operating points changed) had briefly appeared as if it were a complete result.
+
 ## D15 — Causal token-block key scales replace offline per-channel scales (2026-09-19)
 
 `per_channel` computes one scale per (head, channel) over **every token in the context**, so a streaming decoder

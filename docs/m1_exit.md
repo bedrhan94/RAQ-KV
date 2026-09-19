@@ -4,9 +4,11 @@
 `outputs/reports/m1_sensitivity_report.md`; figure: `outputs/figures/m1_quality_vs_bits.png`.
 
 Headline: the *granularity* of key quantization matters more than the bit width (per-token keys: PPL 3227 at
-4 bits; per-channel keys: 14.53). With keys per-channel and values per-token, 8-bit is lossless, 4-bit costs
-+0.14 PPL at 3.9× less KV memory, and 2-bit stays usable (PPL 23.0). Per-region sensitivity at 2-bit deployment
-precision is heterogeneous and stably ranked, but only moderately concentrated (top 10% of regions carry 40%).
+4 bits). Key scales must be per channel **within a token block** — a scheme that is also causal, unlike a
+context-wide per-channel scale, and at 2 bits decisively better at the same budget (D15). Downstream evidence
+(D16) then withdrew the perplexity-based claim that 2-bit is usable: at +29% perplexity the probe loses 71% of
+its accuracy. The safe operating point is **4-bit block-128 (4.26 bits/value), which is lossless on the probe**.
+Per-region sensitivity at 2 bits is heterogeneous and stably ranked, but only moderately concentrated.
 
 Criteria from `00_research_plan.md` §G (M1). M1 closes when every row is ✅ with evidence.
 
@@ -18,7 +20,8 @@ Criteria from `00_research_plan.md` §G (M1). M1 closes when every row is ✅ wi
 | 4 | Effective bits include quantization metadata | ✅ | fp16 scales/zeros counted in `BitBudget.quant_metadata_bits`; e.g. K4/chan+V4/token = 4.14 bits/value, not 4.00 |
 | 5 | Per-region sensitivity profile with a measured noise floor | ✅ | `m1_quant_sensitivity` (40 chunks × 56 regions + 320 nulls): noise band [−0.0048, +0.0038] nats; **24/56 regions differ from the null (Welch, Holm)**, 18 clear the conservative band; top 10% carry 40.2%; split-half stability 0.901; keys 11× values (D13). Head-level map (448 regions): only 37 differ from the null (D14) |
 | 6 | Positive control: the profiler detects heterogeneity when it exists | ✅ | `m1_quant_sensitivity_mismatched` (per-token key stress): top 10% of regions carry 76.6% of damage, split-half Spearman 0.93 (Spearman-Brown 0.96), ANOVA F = 572, keys 0.458 vs values 0.0007 nats |
-| 7 | Defaults for later milestones stated and justified | ✅ | D12: keys per-channel, values per-token; operating points 8-bit (lossless), 4-bit (+0.14 PPL), 2-bit (PPL 23.0) |
+| 7 | Defaults for later milestones stated and justified | ✅ | D15/D16: keys per-channel **within a token block**, values per-token; operating points 4-bit block-128 (lossless downstream), 2-bit block-32 (−12.8% probe accuracy), 2-bit block-512 (unusable: −71%) |
+| 8 | Operating points measured on a downstream task, not only perplexity | ✅ | `m1_downstream_probe` (720 samples × 3 points) and `m1_downstream_gsm8k` (200 × 2): D16's table, including truncation counts and paired decode-margin deltas |
 
 ## Interpretation rules fixed before reading criterion 5
 

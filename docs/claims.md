@@ -12,7 +12,7 @@ changed after looking at the data. Full rationale: `00_research_plan.md` §I.
 | H3 | Joint score beats the best single-signal policy | M5 ablations | Ablation table | Significant at equal budget; every ablation degrades | PROPOSED | planned |
 | Q48 | Corr(QuantSens, FaultSens), raw and partial on KV magnitude | M1 + M2, gate-1 | Scatter + CI | Partial ρ ≥ 0.6 shared signal; ≤ 0.3 separate signals | PROPOSED | QS map ready (56 regions, 40 chunks, stable); awaiting the fault map on the same regions |
 | Q49 | Critical token types have higher task-level SDC than filler at matched position / layer / bit | M2 (RAQ-Probe), M6 | Odds-ratio plot | OR > 1 with CI excluding 1 | PROPOSED | planned |
-| C4 | Token-level metrics under-estimate agent failures | M6 | Metric-disagreement plot | Weak rank correlation between KL damage and task failure | PROPOSED | planned |
+| C4 | Token-level metrics under-estimate agent failures | M6 | Metric-disagreement plot | Weak rank correlation between KL damage and task failure | PROPOSED | **first evidence (D16): +29% perplexity ↔ −71% probe accuracy; +7.5% ↔ −13%.** Measured under quantization, not faults, and on retrieval rather than agent tasks — the agent-level claim still needs M6 |
 
 ## Vehicle notes
 
