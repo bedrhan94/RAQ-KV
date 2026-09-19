@@ -5,7 +5,7 @@ import torch
 
 from raq_kv.config.schema import QuantizationConfig, QuantSpec
 from raq_kv.kv.snapshot import KVSnapshot
-from raq_kv.quantization.apply import quantize_snapshot
+from raq_kv.quantization.apply import quantize_region, quantize_snapshot
 from raq_kv.quantization.base import SCALE_BITS, error_stats
 from raq_kv.quantization.uniform import dequantize, quantize, quantize_dequantize
 
@@ -140,6 +140,32 @@ def test_keys_only_quantization_leaves_values_untouched():
     out, report = quantize_snapshot(snap, QuantizationConfig(keys=QuantSpec(bits=8)))
     assert torch.equal(out.values[0], snap.values[0])
     assert report.stats["values"]["spec"] is None
+
+
+def test_quantize_region_touches_only_its_region():
+    snap = _snapshot(n_layers=3, tokens=12)
+    spec = QuantSpec(bits=2, axis="per_token")
+    out, stats = quantize_region(snap, layer=1, part="keys", spec=spec)
+    assert stats["layer"] == 1 and stats["part"] == "keys" and stats["head"] is None
+    assert not torch.equal(out.keys[1], snap.keys[1])
+    for i in (0, 2):
+        assert out.keys[i] is snap.keys[i]  # other layers are shared, not copied
+    for i in range(3):
+        assert out.values[i] is snap.values[i]
+    assert torch.equal(out.positions, snap.positions) and out.next_position == snap.next_position
+
+
+def test_quantize_region_can_target_a_single_head():
+    snap = _snapshot(n_layers=2, tokens=12)
+    out, stats = quantize_region(snap, layer=0, part="values", spec=QuantSpec(bits=2), head=2)
+    assert stats["head"] == 2
+    changed = [h for h in range(snap.values[0].shape[1]) if not torch.equal(out.values[0][:, h], snap.values[0][:, h])]
+    assert changed == [2]
+
+
+def test_quantize_region_rejects_unknown_part():
+    with pytest.raises(ValueError, match="part must be"):
+        quantize_region(_snapshot(n_layers=1), layer=0, part="queries", spec=QuantSpec(bits=4))
 
 
 def test_empty_quantization_section_is_rejected():

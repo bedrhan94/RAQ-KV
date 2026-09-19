@@ -1,0 +1,15 @@
+# M1 quantization-sensitivity profile: one region at a time (layer x {keys, values}) forced to low precision,
+# everything else full precision. Output: per-region paired NLL increase = the quantization-sensitivity map.
+# Claim supported: C2 / H1 (is sensitivity heterogeneous?) and the QS side of Q48 (QS vs fault sensitivity).
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m1_quant_sensitivity
+task:
+  kind: quant_sensitivity
+  granularity: layer_part
+  n_chunks: 8
+  spec:
+    bits: 2
+    axis: per_token
+seed: 0
