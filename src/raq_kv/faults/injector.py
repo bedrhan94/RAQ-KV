@@ -62,6 +62,54 @@ def injected(qkv: QuantizedKV, site: FaultSite):
         inject(qkv, site)  # flipping the same bit again restores it
 
 
+# Above this many sites the per-site loop, not the tensor work, dominates; measured crossover is a few hundred.
+PER_SITE_LIMIT = 512
+
+
+def _flat_offset(shape: tuple[int, ...], index: tuple[int, ...]) -> int:
+    flat = 0
+    for dim, i in zip(shape, index, strict=True):
+        flat = flat * dim + i
+    return flat
+
+
+def inject_many(qkv: QuantizedKV, sites: list[FaultSite]) -> None:
+    """Flip every site's bit in place with one scatter per region, and nothing per site.
+
+    ``inject`` costs a Python-level tensor op per flip, which is fine for the tens of flips M2 used and is the
+    dominant cost once a plan holds tens of thousands (BER 1e-4 draws ~57k). Same semantics, same result,
+    exactly reversible: calling this twice with the same sites restores the store.
+
+    The sharp edge, and the reason the per-site path is kept as the test oracle: two sites can hit *different
+    bits of the same element*. Advanced-indexing assignment with duplicate indices is last-write-wins, so the
+    masks are OR-ed per element first (OR equals XOR-sum because the bits within an element are distinct) and
+    applied in one XOR.
+    """
+    groups: dict[tuple[int, str, str], list[FaultSite]] = {}
+    for site in sites:
+        if site.target not in ("code", "scale", "zero"):
+            raise ValueError(f"inject_many does not handle {site.target!r} sites; those belong to the codec")
+        groups.setdefault((site.layer, site.part, site.target), []).append(site)
+    for (_layer, _part, target), members in groups.items():
+        _, tensor = _target_tensor(qkv, members[0])
+        shape = tuple(tensor.shape)
+        flat = tensor.reshape(-1)
+        device = flat.device
+        idx = torch.tensor([_flat_offset(shape, s.index) for s in members], dtype=torch.long, device=device)
+        bits = torch.tensor([s.bit for s in members], dtype=torch.long, device=device)
+        if target == "code":
+            masks = (torch.ones_like(bits, dtype=torch.int16) << bits).to(torch.int16)
+            acc = torch.zeros(flat.numel(), dtype=torch.int16, device=device)
+            acc.scatter_reduce_(0, idx, masks, reduce="sum")
+            flat ^= acc.to(torch.uint8)
+        else:
+            view = flat.view(torch.int16)
+            masks = (torch.ones_like(bits, dtype=torch.int32) << bits).to(torch.int32)
+            acc = torch.zeros(view.numel(), dtype=torch.int32, device=device)
+            acc.scatter_reduce_(0, idx, masks, reduce="sum")
+            view ^= acc.to(torch.int16)
+
+
 @contextmanager
 def injected_burst(qkv: QuantizedKV, sites: list[FaultSite], base: KVSnapshot):
     """Inject several faults at once (a burst) and re-dequantize only the affected layer-parts.
@@ -72,7 +120,18 @@ def injected_burst(qkv: QuantizedKV, sites: list[FaultSite], base: KVSnapshot):
     """
     if not sites:
         raise ValueError("empty burst")
-    infos = [inject(qkv, site) for site in sites]
+    fast = len(sites) > PER_SITE_LIMIT
+    if fast:
+        # Per-site bookkeeping costs more than the injection itself at this size, so the relative-change fields
+        # are reported as None rather than as a number that was not measured.
+        inject_many(qkv, sites)
+        info: dict[str, Any] = {"n_flips": len(sites), "max_relative_change": None,
+                                "mean_relative_change": None, "relative_change_measured": False}
+    else:
+        infos = [inject(qkv, site) for site in sites]
+        info = {"n_flips": len(sites), "relative_change_measured": True,
+                "max_relative_change": max(i["relative_change"] for i in infos),
+                "mean_relative_change": sum(i["relative_change"] for i in infos) / len(infos)}
     touched = {(s.layer, s.part) for s in sites}
     saved = {}
     try:
@@ -81,14 +140,15 @@ def injected_burst(qkv: QuantizedKV, sites: list[FaultSite], base: KVSnapshot):
             saved[(layer, part)] = tensors[layer]
             stored = qkv.part(layer, part)
             tensors[layer] = stored if isinstance(stored, torch.Tensor) else dequantize(stored)
-        yield base, {"n_flips": len(sites),
-                     "max_relative_change": max(i["relative_change"] for i in infos),
-                     "mean_relative_change": sum(i["relative_change"] for i in infos) / len(infos)}
+        yield base, info
     finally:
         for (layer, part), tensor in saved.items():
             (base.keys if part == "keys" else base.values)[layer] = tensor
-        for site in sites:
-            inject(qkv, site)  # restore each flipped bit
+        if fast:
+            inject_many(qkv, sites)  # flipping the same bits again restores them
+        else:
+            for site in sites:
+                inject(qkv, site)
 
 
 @contextmanager

@@ -12,6 +12,7 @@ import torch
 from raq_kv.config.schema import QuantizationConfig, QuantSpec
 from raq_kv.ecc.protect import ProtectedKV
 from raq_kv.faults.injector import inject
+from raq_kv.faults.plan import FaultSite
 from raq_kv.faults.storage import (
     flips_for_rate,
     generate_storage_plan,
@@ -147,3 +148,56 @@ def test_scale_region_indices_address_the_scale_tensor():
     site = regions[0].site(regions[0].n_bits - 1, "storage_seu")  # the very last stored bit of the region
     assert site.bit == SCALE_BITS - 1
     assert stored.scales[site.index].numel() == 1
+
+
+@pytest.mark.parametrize("n_flips", [50, 400, 3000])
+def test_vectorised_injection_matches_the_per_site_oracle(n_flips):
+    """The fast path must be indistinguishable from the slow one, including where two flips share an element.
+
+    The per-site loop stays in the codebase precisely to be this oracle: it is obviously correct, and the
+    vectorised path is only trustworthy while it agrees with it bit for bit.
+    """
+    from raq_kv.faults.injector import inject_many
+
+    a, b = _qkv(tokens=24), _qkv(tokens=24)
+    sites = [s for s in generate_storage_plan(a, None, seed=13, n_flips=n_flips) if not s.is_check]
+    for site in sites:
+        inject(a, site)
+    inject_many(b, sites)
+    for layer in range(3):
+        for part in ("keys", "values"):
+            pa, pb = a.part(layer, part), b.part(layer, part)
+            assert torch.equal(pa.codes, pb.codes), f"codes differ at {layer} {part}"
+            # Bit patterns, not values: a flipped exponent bit can make a scale NaN, and NaN != NaN would fail
+            # an equality check on two stores that are in fact identical.
+            assert torch.equal(pa.scales.view(torch.int16), pb.scales.view(torch.int16)), f"scales {layer} {part}"
+            assert torch.equal(pa.zeros.view(torch.int16), pb.zeros.view(torch.int16)), f"zeros {layer} {part}"
+
+    # Two flips on the same element, different bits: the case naive scatter assignment silently loses.
+    shared = [s for s in sites if s.target == "code"][:1]
+    if shared:
+        twin = FaultSite(shared[0].layer, shared[0].part, "code", shared[0].index,
+                         (shared[0].bit + 1) % 4, shared[0].stratum)
+        c, d = _qkv(tokens=24), _qkv(tokens=24)
+        pair = [shared[0], twin]
+        for site in pair:
+            inject(c, site)
+        inject_many(d, pair)
+        assert torch.equal(c.part(pair[0].layer, pair[0].part).codes, d.part(pair[0].layer, pair[0].part).codes)
+
+
+def test_vectorised_injection_is_exactly_reversible():
+    from raq_kv.faults.injector import inject_many
+
+    qkv = _qkv(tokens=24)
+    clean = qkv.to_snapshot()
+    sites = [s for s in generate_storage_plan(qkv, None, seed=2, n_flips=1500) if not s.is_check]
+    inject_many(qkv, sites)
+    assert not torch.equal(clean.keys[0], qkv.to_snapshot().keys[0]) or len(sites) == 0
+    inject_many(qkv, sites)
+    for layer in range(3):
+        for part in ("keys", "values"):
+            restored, original = qkv.part(layer, part), _qkv(tokens=24).part(layer, part)
+            assert torch.equal(restored.codes, original.codes)
+            assert torch.equal(restored.scales.view(torch.int16), original.scales.view(torch.int16))
+            assert torch.equal(restored.zeros.view(torch.int16), original.zeros.view(torch.int16))

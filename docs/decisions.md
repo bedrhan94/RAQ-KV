@@ -517,3 +517,121 @@ the M0 golden corpus perplexity exactly: 14.391535 both).
   every fault lands in its own word.
 - **Process rule:** no edits to tracked source while a campaign is in flight. Documentation and analysis scripts
   are no exception, because the diff hash covers the whole tree.
+## D25 — H2a answered: at equal bits, protecting the quantization metadata is ~100x more cost-effective than uniform data ECC (2026-09-20)
+
+- **Setup.** RAQ-Probe, 60 samples, 8 storage-wide fault draws per sample (480 trials per arm), BER 1e-6 over each
+  arm's declared storage (codes + quantization metadata + its own ECC check bits, D23). No-fault controls exactly
+  zero in every arm. Iso-budget confirmed from the runs' own recorded budgets: spread 0.11% across B/C/D/E.
+  Commit `ea9f711`, arms `m3_arm_*`.
+
+| arm | bits/value | flips/trial | corrected words | task failure | answer changed |
+|---|---|---|---|---|---|
+| A unprotected (cost reference, −12.4%) | 4.2604 | 524 | 0 | **31.78%** (150/472) | 36.23% |
+| B uniform data+metadata SECDED | 4.8581 | 597 | 596.9 | **0.00%** (0/472) | 0.00% |
+| C precision, **no data ECC** | 4.8705 | 599 | 106.4 | **0.64%** (3/472) | 1.69% |
+| D SECDED layers 9–27 | 4.8670 | 598 | 440.3 | **0.00%** (0/464) | 2.50% |
+
+- **The pre-registered discriminator.** Before the arms ran, two accounts of M2's evidence predicted arm C at
+  ~32% (every stored bit equally damaging) or ~0.2% (metadata dominant). Measured: **0.64%**. The metadata account
+  wins, and the mechanism is isolated cleanly: arms A and C leave the *same* number of code flips uncorrected
+  (492.3 vs 492.5 per trial) and differ only in whether the ~32 metadata flips per trial are corrected. Same code
+  damage, 50x different failure rate.
+- **Per-bit damage, properly estimated.** From that contrast: **1.29e-5 failures per code flip, 9.83e-3 per
+  metadata bit — a factor of 762**, and metadata carries **98.0% of the damage while being 6.0% of the flips**.
+  D17/D21 estimated ~3072x from a handful of events; the order of magnitude survives, the point estimate does not,
+  and 762x is now backed by 472 trials per arm with failures spread over **51 distinct samples** (not one fragile
+  case). D17/D21's ratio should be cited as this number from here on.
+- **Cost-effectiveness, the headline.** Metadata SECDED costs 0.236 bits/value in arm C and removes 31.1 points of
+  failure (132 points per bit/value). Adding uniform data ECC costs a further 0.500 bits/value and removes the
+  remaining 0.64 points (1.3 points per bit/value). **~100x difference.** On task failure B vs C is **not
+  significant** (0/472 vs 3/472, Fisher, Holm-corrected p = 0.25); on the stricter `answer_changed` it is
+  (0.00% vs 1.69%, p = 0.0076). So uniform data ECC does buy something real and small, at twice the price.
+- **H2a supported**, with the mechanism named: the protection budget belongs on the metadata. **H2 as originally
+  phrased is supported in a way that changes its meaning** — "adaptive beats uniform" turns out not to be about
+  placing ECC on important *data* regions but about not protecting data at all.
+- **H2b (placement) is not answerable at this rate, and the reason is more interesting than the failure.** Arm D
+  leaves 9 early layers of codes unprotected and still recorded 0/464 failures, because code flips are nearly
+  harmless. The placement of data ECC barely matters *because data ECC barely matters*. The question is only
+  meaningful where data faults dominate, i.e. D21's whole-row regime, which is the pre-registered crossover test
+  and needs the burst fault model rather than uniform SEU.
+- **Arm G (added after seeing this).** Arm C's finer key groups are not what protects it; the metadata SECDED is.
+  So the deployable configuration keeps arm A's quantization and adds metadata SECDED only: **4.3615 bits/value,
+  +2.3% over unprotected, −10.3% under arm B.** If it reproduces C's ~0.64%, the practical claim is *+2.3% storage
+  for a ~50x reduction in fault-induced task failure*. Reported as cost-benefit, never as an equal-budget arm.
+- **Engagement with prior work.** Published fault studies conclude KV caches tolerate error rates below ~1e-3 with
+  minimal perplexity increase. We measure 31.78% of answers broken at **1e-6**, three decades lower. Not a
+  contradiction — a metric artefact of the kind D16 already quantified (+29% perplexity coexisting with −71% probe
+  accuracy). **Caveat: the 1e-3 figure comes from a search summary and the primary source is paywalled and
+  unverified; the instruction-level GPU study we could read explicitly assumes faults do *not* occur in the KV
+  cache. The comparison must not be made in the paper until the rate's definition is read in the original.**
+- **Consequence for M5.** The allocator's protection dimension collapses to something nearly trivial — protect all
+  metadata, it is cheap — which frees the budget for the precision and retention axes. The interesting joint
+  problem is therefore (retention x precision) under a metadata-protection floor, not a three-way trade.
+## D26 — Trials within a sample are not independent: every M3 comparison must be sample-level (2026-09-20)
+
+- **How it surfaced.** Arm D recorded 12 changed answers and arm E 7 (OR 1.73, Fisher p = 0.35 on 464 trials each),
+  which looked like weak support for D18's early-layer sensitivity. Checking *where* those events sat killed it:
+  **D's 12 events came from 3 distinct samples (3, 3 and 6 of that sample's 8 trials), all at context 4096; E's 7
+  came from 2 samples, both at 2048.** A Fisher test on pooled trials treats 464 trials as 464 independent
+  observations; the effective n is the number of fragile *samples*, which is 3 versus 2. The same clustering is in
+  arm C: its 3 task failures were all one sample.
+- **Decision.** The unit of analysis is the **sample**, not the trial. Each arm gets a per-sample failure rate over
+  its 8 draws; arms are compared **paired over the samples every arm answers correctly without faults** (58 of 60
+  here) with a Wilcoxon signed-rank test and a paired bootstrap CI over samples. Pooled-trial Fisher tests are kept
+  only as a descriptive cross-check and are never the basis of a claim.
+- **Corrected results** (58 shared samples, BER 1e-6, 8 draws per sample):
+
+| arm | task failure | answer changed | samples with >= 1 failure |
+|---|---|---|---|
+| A unprotected | 0.3211 | 0.3664 | **50/58** |
+| B uniform data+metadata SECDED | 0.0000 | 0.0000 | 0/58 |
+| C finer groups, **no data ECC** | **0.0000** | 0.0108 | 0/58 |
+| D data ECC layers 9-27 | 0.0000 | 0.0259 | 0/58 |
+| E data ECC layers 0-18 | 0.0000 | 0.0151 | 0/58 |
+
+| paired contrast | task failure | answer changed |
+|---|---|---|
+| A − B | **+0.3211 [+0.2629, +0.3815]**, p = 6.0e-10, 50 discordant | +0.3664 [+0.3082, +0.4267], p = 2.0e-10 |
+| B − C | **identical on all 58 samples**, p = 1 | −0.0108 [−0.0237, −0.0022], p = 0.059, 4 discordant |
+| D − E | **identical on all 58 samples**, p = 1 | +0.0108 [−0.0237, +0.0517], p = 0.68, 5 discordant |
+
+- **What changes.** (a) Arm C's 0.64% task failure came from a sample outside the shared set; on the fair
+  denominator **C equals B exactly**, so uniform data ECC buys *no* measurable task-level benefit for its
+  0.5 bits/value — H2a is supported more cleanly than the pooled analysis suggested. (b) The D-vs-E direction claim
+  is **withdrawn**: the 1.73x was a clustering artefact, and the paired CI spans zero widely. H2b remains
+  unanswered, not weakly supported.
+- **What survives untouched.** The protection effect itself: 32.1 points of task failure removed, 50 of 58 samples
+  affected without protection and 0 with it. No clustering correction can touch an effect of that size.
+- **Consequence.** `scripts/report_m3.py` must compute sample-level paired statistics as its primary output. The
+  trial count still matters for precision *within* a sample, but the degrees of freedom come from samples, so future
+  campaigns buy power by adding **samples**, not draws per sample. The earlier power calculations (which assumed
+  independent trials) overstate the power of every design that adds draws instead of samples — including the 1e-4
+  placement test as sized. Re-size it on samples before running it.
+
+## D27 — The campaign found a bug the tests could not: metadata erasure at higher fault rates (2026-09-20)
+
+- **What happened.** The BER 1e-5 placement run crashed on its third sample with
+  `ValueError: bits must be in 1..8, got 16`. `ProtectedKV._decode_region` built its erasure fill with
+  `codes_to_bits(..., region.value_bits)`, which is correct for 2-8 bit codes and illegal for the 16-bit float16
+  metadata regions. The branch is only reached when a metadata word is **detected-uncorrectable**, i.e. when two
+  flips land in the same 16-bit scale word — expected 2.5e-4 times per trial at 1e-6 and ~100x more at 1e-5. The
+  unit tests covered metadata *correction* and code *erasure*, but not their intersection.
+- **Fix.** `_erasure_fill` now branches on what the region stores: the mid-code for codes, **float16 zero** for
+  metadata. An erased scale collapses its group to the zero point (the group's offset) and an erased zero point
+  centres the group at 0 — visibly neutral rather than a plausible-looking wrong number, which is what an erasure
+  is for. Pinned by two tests, including one asserting the group reads back as its stored offset.
+- **Consequence.** Both 1e-5 runs were retired with `superseded_by` and renamed (2 valid units each, kept). The
+  lesson is not "add a test" but *which* test: the gap was an untested **interaction** between two features that
+  each had good coverage. Rare-branch interactions of this kind are what a rate sweep exposes and a unit test
+  suite does not, so the campaign ladder (calibrate, then climb rates) is also a test strategy.
+- **Related measurement.** Chasing the crash produced the mechanism behind D25's metadata dominance. Flipping each
+  bit of a float16 scale changes it by: mantissa bits 0-9, x1.00 to x1.36; exponent bits 10-12, x0.5 / x4 / x0.06;
+  **bit 13, x0.004; bit 14, x65536**; bit 15 flips the sign. NaN is *not* the mechanism (produced at a rate of
+  0.0009, and only when one value is hit twice, which does not happen at campaign rates). **Metadata is damaging
+  because six of its sixteen bits can rescale an entire quantization group by orders of magnitude**, while a code
+  bit moves one value by at most a few quantization steps.
+- **Open question this raises, to be tested before metadata SECDED is recommended.** If the damage comes from
+  implausible magnitudes, a **range check** on the stored scales — two float16 bounds per region, about 3.5 kbit
+  against 596 Mbit, i.e. free — would catch exactly the bits that matter (13, 14, 15 certainly; 12 partly) without
+  any error-correcting code. Arm H must test it: if a free validity check matches metadata SECDED, the paper's
+  recommendation changes from "protect the metadata with ECC" to "check that the metadata is plausible".

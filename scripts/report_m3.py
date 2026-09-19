@@ -34,9 +34,15 @@ from scipy import stats
 from raq_kv.utils.io import read_json, read_jsonl
 from raq_kv.utils.paths import resolve_output_root
 
-ARM_ORDER = ["m3_arm_a_unprot", "m3_arm_b_uniform", "m3_arm_c_precision", "m3_arm_d_late19", "m3_arm_e_early19"]
+ARM_ORDER = ["m3_arm_a_unprot", "m3_arm_g_meta_only", "m3_arm_b_uniform", "m3_arm_c_precision",
+             "m3_arm_d_late19", "m3_arm_e_early19"]
+# The first three pairs were pre-registered before any arm ran. The last two involve arm G, which was added
+# after arms A-E landed, and are labelled as such wherever they are reported: they are a cost-benefit follow-up,
+# not part of the frozen equal-budget test.
 PREREGISTERED = [("m3_arm_b_uniform", "m3_arm_c_precision"), ("m3_arm_d_late19", "m3_arm_e_early19"),
-                 ("m3_arm_a_unprot", "m3_arm_b_uniform")]
+                 ("m3_arm_a_unprot", "m3_arm_b_uniform"),
+                 ("m3_arm_a_unprot", "m3_arm_g_meta_only"), ("m3_arm_g_meta_only", "m3_arm_b_uniform")]
+POST_HOC = {("m3_arm_a_unprot", "m3_arm_g_meta_only"), ("m3_arm_g_meta_only", "m3_arm_b_uniform")}
 
 
 def load_arms(raw_root: Path, names: list[str]) -> pd.DataFrame:
@@ -162,6 +168,51 @@ def common_samples(df: pd.DataFrame, arms: list[str]) -> set[str]:
     return set.intersection(*sets) if sets else set()
 
 
+def compare_samples(df: pd.DataFrame, metric: str, alpha: float = 0.05) -> pd.DataFrame:
+    """Pre-registered arm pairs, **paired over samples** — the only statistic that respects the clustering.
+
+    Trials within a sample are strongly dependent: in the 1e-6 campaign arm D's 12 changed answers came from 3
+    samples and arm E's 7 from 2 (D26). A test on pooled trials would treat those as 464 independent observations
+    and report a difference that is really "one arm drew one more fragile sample". So each arm gets a per-sample
+    rate over its draws, arms are compared on the samples **every** arm answers correctly without faults, and the
+    p-value comes from a Wilcoxon signed-rank test with a paired bootstrap CI over samples.
+    """
+    faults = df[df["trial"] >= 0]
+    rows = []
+    for ber, sub in faults.groupby("ber"):
+        arms = sorted(set(sub["arm"]))
+        shared = common_samples(sub, arms)
+        if not shared:
+            continue
+        rates = {a: sub[(sub["arm"] == a) & sub["sample_id"].isin(shared)]
+                 .groupby("sample_id")[metric].mean() for a in arms}
+        for a, b in PREREGISTERED:
+            if a not in rates or b not in rates:
+                continue
+            x = rates[a].reindex(sorted(shared)).fillna(0.0).to_numpy(dtype=float)
+            y = rates[b].reindex(sorted(shared)).fillna(0.0).to_numpy(dtype=float)
+            diff = x - y
+            discordant = int((diff != 0).sum())
+            rng = np.random.default_rng(0)
+            boot = [float(np.mean(rng.choice(diff, diff.size, replace=True))) for _ in range(10000)]
+            p = 1.0 if discordant == 0 else float(stats.wilcoxon(x, y).pvalue)
+            rows.append({"ber": f"{ber:.1e}", "metric": metric, "arm_a": a, "arm_b": b,
+                         "prereg": (a, b) not in POST_HOC,
+                         "samples": len(shared), "rate_a": float(x.mean()), "rate_b": float(y.mean()),
+                         "diff": float(diff.mean()), "ci_lo": float(np.quantile(boot, 0.025)),
+                         "ci_hi": float(np.quantile(boot, 0.975)), "discordant": discordant, "p_raw": p})
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows).sort_values("p_raw").reset_index(drop=True)
+    holm, running = [], 0.0
+    for i, p in enumerate(out["p_raw"]):
+        running = max(running, min(1.0, (len(out) - i) * p))
+        holm.append(running)
+    out["p_holm"] = holm
+    out["significant"] = out["p_holm"] < alpha
+    return out
+
+
 def compare(df: pd.DataFrame, metric: str, alpha: float = 0.05, paired: bool = True) -> pd.DataFrame:
     """Pre-registered arm pairs on a binary outcome, per rate, Fisher exact with Holm correction.
 
@@ -242,17 +293,22 @@ def main() -> int:
     tables = {"arm_summary": summary, "budgets": budgets}
     # task_failure first: it is the primary outcome, and the only one comparable across arms whose clean
     # accuracy differs by design.
-    for metric in ("task_failure", "silent_corruption", "answer_changed"):
+    for metric in ("task_failure", "answer_changed", "silent_corruption"):
         if metric not in df:
             continue
-        comparison = compare(df, metric, paired=True)
-        if comparison.empty:
-            continue
-        label = "PRIMARY" if metric == "task_failure" else "secondary"
-        print(f"\n[{label}] Pre-registered comparisons on {metric}, restricted to samples both arms answer "
-              f"correctly without faults (Fisher exact, Holm-corrected)")
-        print(_fmt(comparison))
-        tables[f"compare_{metric}"] = comparison
+        primary = compare_samples(df, metric)
+        if not primary.empty:
+            label = "PRIMARY" if metric == "task_failure" else "secondary"
+            print(f"\n[{label}] {metric}, paired over the samples every arm answers correctly without faults "
+                  f"(Wilcoxon signed-rank, bootstrap CI over samples, Holm-corrected)")
+            print(_fmt(primary))
+            tables[f"compare_{metric}"] = primary
+        pooled = compare(df, metric, paired=True)
+        if not pooled.empty and metric == "task_failure":
+            # Descriptive only: trials within a sample are not independent, so this overstates significance.
+            print(f"\n[descriptive, NOT a basis for any claim] pooled-trial Fisher on {metric}")
+            print(_fmt(pooled))
+            tables[f"pooled_{metric}"] = pooled
 
     if not iso_ok or not controls_ok:
         print("\nREPORT VOID for equal-budget claims: "

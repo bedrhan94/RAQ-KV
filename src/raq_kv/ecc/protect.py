@@ -106,6 +106,25 @@ class ProtectedKV:
     def ecc_bits(self) -> int:
         return sum(region.ecc_bits for region in self.codes.values())
 
+    @staticmethod
+    def _erasure_fill(region: RegionCode) -> torch.Tensor:
+        """The bit pattern an erased word is replaced with, one repeat unit wide.
+
+        Codes get the mid-code, which is the least-wrong integer when the real one is unknown. **Metadata is
+        float16, not an 8-bit code**, so it gets float16 zero: an erased scale collapses its group to the zero
+        point (the group's offset) and an erased zero point centres the group at 0. Both are visibly neutral
+        rather than a plausible-looking wrong number, which is the point of an erasure.
+
+        This path was unreachable until metadata DUEs started occurring at higher fault rates: 16 is not a legal
+        code width, so the previous code raised instead of erasing (found by the BER 1e-5 campaign, D27).
+        """
+        if region.value_bits == 16:
+            return float16_to_bits(torch.zeros(1, dtype=torch.float16)).reshape(-1)
+        if region.value_bits > 8:
+            raise ValueError(f"no erasure value defined for {region.value_bits}-bit stored values")
+        mid = (1 << (region.value_bits - 1)) - 1
+        return codes_to_bits(torch.full((1,), mid, dtype=torch.uint8), region.value_bits).reshape(-1)
+
     def _decode_region(self, key: tuple[int, str, str], stream: torch.Tensor, stats: ProtectionStats) -> torch.Tensor:
         region = self.codes.get(key)
         if region is None:
@@ -114,11 +133,10 @@ class ProtectedKV:
         result = make_codec(region.codec_name, region.word_bits).decode(words, region.check)
         data = result.data
         if bool(result.uncorrectable.any()):
-            # An erasure, not a guess: the words the code flagged are replaced by the mid-code, which is the
-            # value that minimises the damage without pretending the data survived.
+            # An erasure, not a guess: the words the code flagged are replaced by a neutral value, so the read
+            # does not pretend the data survived. What "neutral" means depends on what the region stores.
             if self.due_policy == "erasure_mid":
-                mid = (1 << (region.value_bits - 1)) - 1 if region.value_bits <= 8 else 0
-                fill = codes_to_bits(torch.full((1,), mid, dtype=torch.uint8), region.value_bits).reshape(-1)
+                fill = self._erasure_fill(region)
                 repeat = (region.word_bits + fill.numel() - 1) // fill.numel()
                 data = data.clone()
                 data[result.uncorrectable] = fill.repeat(repeat)[: region.word_bits].to(data.device)
@@ -181,12 +199,25 @@ class ProtectedKV:
         point is that the decoder sits between the corrupted bits and the model. Sites aimed at check bits are
         applied to this object's own check tensors, so an arm is exposed on all of the storage it declares.
         """
-        from raq_kv.faults.injector import inject  # local import keeps ecc independent of the fault package
+        # Local imports keep the ecc package independent of the fault package.
+        from raq_kv.faults.injector import PER_SITE_LIMIT, inject, inject_many
 
-        def apply(site: Any) -> dict[str, Any]:
-            return self.inject_check(site) if site.is_check else inject(self.qkv, site)
+        check_sites = [s for s in sites if s.is_check]
+        store_sites = [s for s in sites if not s.is_check]
+        fast = len(store_sites) > PER_SITE_LIMIT
 
-        infos = [apply(site) for site in sites]
+        def apply() -> dict[str, Any]:
+            """Flip everything once; returns the per-site summary when it is cheap enough to measure."""
+            for site in check_sites:
+                self.inject_check(site)
+            if fast:
+                inject_many(self.qkv, store_sites)
+                return {"max_relative_change": None, "relative_change_measured": False}
+            infos = [inject(self.qkv, s) for s in store_sites]
+            return {"max_relative_change": max((i["relative_change"] for i in infos), default=0.0),
+                    "relative_change_measured": True}
+
+        summary = apply()
         touched = {(s.layer, s.part) for s in sites}
         saved: dict[tuple[int, str], torch.Tensor] = {}
         stats = ProtectionStats()
@@ -195,13 +226,11 @@ class ProtectedKV:
                 tensors = base.keys if part == "keys" else base.values
                 saved[(layer, part)] = tensors[layer]
                 tensors[layer] = self.read_part(layer, part, stats)
-            yield base, {"n_flips": len(sites), **stats.to_dict(),
-                         "max_relative_change": max(i["relative_change"] for i in infos)}
+            yield base, {"n_flips": len(sites), **stats.to_dict(), **summary}
         finally:
             for (layer, part), tensor in saved.items():
                 (base.keys if part == "keys" else base.values)[layer] = tensor
-            for site in sites:
-                apply(site)  # flipping the same bit again restores it, check bits included
+            apply()  # flipping the same bits again restores them, check bits included
 
     def read_or_raise(self) -> KVSnapshot:
         """Fault-free read: nothing may be corrected or flagged, so a non-zero count is a bug, not a result."""

@@ -105,3 +105,36 @@ def test_double_fault_in_one_word_becomes_a_reported_erasure():
     assert stats.uncorrectable == 1 and stats.corrected == 0
     assert stats.regions == {"keys_code": 1}
     assert not torch.equal(read.keys[0], qkv.to_snapshot().keys[0]), "the erasure replaces the damaged word"
+
+
+def test_metadata_erasure_does_not_treat_float16_as_a_code():
+    """A double fault in a metadata word must erase, not raise.
+
+    This path stayed unreachable until the fault rate rose enough for two flips to land in one 16-bit scale word
+    (D27): `codes_to_bits` rejects a 16-bit width, so the erasure raised `ValueError` mid-campaign instead of
+    producing a neutral value. The fill for float16 metadata is float16 zero, not a mid-code.
+    """
+    qkv = _qkv()
+    guard = ProtectedKV(qkv, metadata_codec="secded", metadata_word_bits=16, due_policy="erasure_mid")
+    # Two flips inside the same 16-bit scale word: the same element, two different bits.
+    inject(qkv, FaultSite(0, "values", "scale", (0, 1, 3, 0), 2, "metadata"))
+    inject(qkv, FaultSite(0, "values", "scale", (0, 1, 3, 0), 9, "metadata"))
+    read, stats = guard.read()
+    assert stats.uncorrectable == 1 and stats.corrected == 0
+    assert stats.regions == {"values_scale": 1}
+    assert torch.isfinite(read.values[0]).all(), "an erased scale must not produce inf/nan"
+
+
+def test_metadata_erasure_collapses_the_group_to_its_zero_point():
+    """The erased scale is float16 zero, so the group reads back as its stored offset rather than as noise."""
+    qkv = _qkv()
+    stored = qkv.part(0, "values")
+    guard = ProtectedKV(qkv, metadata_codec="secded", metadata_word_bits=16, due_policy="erasure_mid")
+    idx = (0, 1, 3, 0)
+    inject(qkv, FaultSite(0, "values", "scale", idx, 1, "metadata"))
+    inject(qkv, FaultSite(0, "values", "scale", idx, 11, "metadata"))
+    read, stats = guard.read()
+    assert stats.uncorrectable == 1
+    expected = stored.zeros[idx].to(torch.float32) if stored.zeros is not None else torch.zeros(())
+    got = read.values[0][0, idx[1], idx[2], :]
+    assert torch.allclose(got, expected.expand_as(got).to(got.dtype), atol=1e-3)
