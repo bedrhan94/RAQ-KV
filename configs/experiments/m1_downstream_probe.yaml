@@ -10,8 +10,10 @@ task:
   kind: qa_generate
   score_answer_nll: true
 seed: 0
+# Operating points are the causal (token-block) family: at equal bits it ties per-channel at 4 bits and beats it
+# decisively at 2 bits (D15), and unlike per-channel it can be produced by a streaming decoder.
 sweep:
   quantization:
-    - {keys: {bits: 8, axis: per_channel}, values: {bits: 8, axis: per_token}}
-    - {keys: {bits: 4, axis: per_channel}, values: {bits: 4, axis: per_token}}
-    - {keys: {bits: 2, axis: per_channel}, values: {bits: 2, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 32}, values: {bits: 2, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 512}, values: {bits: 2, axis: per_token}}

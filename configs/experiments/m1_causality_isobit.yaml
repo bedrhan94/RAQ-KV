@@ -1,0 +1,19 @@
+# Iso-bit version of the causality comparison. Token blocks store more scales than a single per-channel scale,
+# so the first comparison gave the causal scheme ~12% more bits. Large blocks bring the metadata back down:
+# metadata per value = 2 x 16 bits / block, so block 256 -> +0.125 bits and block 512 -> +0.0625 bits, which
+# matches per_channel's +0.135 bits (one scale pair per channel over a 1536-token context).
+# Claim supported: whether causal token-block scales beat offline per-channel scales at the SAME bit budget.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m1_causality_isobit
+task:
+  kind: cache_ppl
+  store_token_nll: true
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 4, axis: group_token, group_size: 256}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 512}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 256}, values: {bits: 2, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 512}, values: {bits: 2, axis: per_token}}

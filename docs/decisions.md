@@ -60,6 +60,33 @@ Each entry: context, decision, evidence, consequences. Newest last.
 - A crash-truncated JSONL line is kept on disk and followed by a marker record on resume (raw data is never edited).
 - GPU state is read with `nvidia-smi`, so provenance collection never creates a CUDA context on a busy GPU.
 
+## D15 — Causal token-block key scales replace offline per-channel scales (2026-09-19)
+
+`per_channel` computes one scale per (head, channel) over **every token in the context**, so a streaming decoder
+cannot produce it; it is a prefill-time scheme. `group_token` closes a block of tokens at a time and is causal
+(asserted by `test_group_token_is_causal_and_per_channel_is_not`). The question is what causality costs.
+
+At matched budget (40 WikiText-2 chunks, values 2-bit/4-bit per-token in both arms):
+
+| Budget | Offline per-channel | Causal block-512 | Paired difference (offline − causal) |
+|---|---|---|---|
+| ~4.15 bits/value | PPL 14.5301 | PPL 14.4991 | +0.0021 nats [−0.0020, +0.0063] — **tie** |
+| ~2.15 bits/value | PPL 23.0484 | PPL 18.5788 | **+0.2156 nats [+0.1871, +0.2447]**, offline worse on 40/40 chunks |
+
+- **Causality is not a cost here; at low precision it is a gain.** A context-wide scale must span a channel's full
+  dynamic range across all positions, while a block scale adapts to local magnitude.
+- Smaller blocks buy more quality for more metadata: at 2 bits, block 512 / 256 / 128 / 32 give PPL 18.58 / 17.31 /
+  16.56 / 15.47 at 2.156 / 2.188 / 2.250 / 2.625 effective bits. The token-block family is the Pareto frontier;
+  offline per-channel sits below it.
+- **Revises D12's recommendation.** The rule is not "keys per channel" but "key scales must be per channel *within
+  a token block*"; a single per-channel scale over the whole context is both non-causal and (at 2 bits) worse.
+  D12's other findings stand: per-token key scales are catastrophic, and grouping *channels* within a token does
+  not fix the outlier structure.
+- **Operating points from here on** (all causal): 4-bit block-128 (4.25 bits, ΔNLL 0.0025, CI includes 0),
+  2-bit block-32 (2.625 bits, ΔNLL 0.072), 2-bit block-512 (2.156 bits, ΔNLL 0.255).
+- Open: the sensitivity profile (D13/D14) was measured with the offline per-channel stress. Its keys-vs-values and
+  layer structure should be re-checked under a block scheme before M5 relies on it.
+
 ## D14 — Q48 is computed at layer×part; head level stays exploratory (2026-09-19)
 
 Head-level profile (448 regions = 28 layers × 8 KV heads × {keys, values}, 40 chunks, 640 null measurements):
@@ -141,6 +168,9 @@ the M0 golden corpus perplexity exactly: 14.391535 both).
 - **Defaults from here on:** keys per-channel, values per-token. 8-bit is lossless (CI includes 0), 4-bit costs
   +0.14 PPL at 3.9× less KV memory, 2-bit is degraded but functional (PPL 23.0) — the interesting operating point
   for M5's mixed-precision allocation.
+  - **Superseded by D15 (2026-09-19):** key scales are per channel *within a token block*, not over the whole
+    context. The 2-bit number above (PPL 23.0) belongs to the offline scheme; the causal block scheme reaches
+    15.47–18.58 at the same or slightly higher budget.
 - Symmetric 4-bit per-token (PPL 18.9) beats asymmetric per-token (3227) but both are far worse than per-channel,
   so symmetry is a second-order choice compared with the axis.
 

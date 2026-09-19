@@ -11,5 +11,5 @@ task:
 seed: 0
 sweep:
   quantization:
-    - {keys: {bits: 4, axis: per_channel}, values: {bits: 4, axis: per_token}}
-    - {keys: {bits: 2, axis: per_channel}, values: {bits: 2, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 32}, values: {bits: 2, axis: per_token}}

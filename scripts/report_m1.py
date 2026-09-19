@@ -29,8 +29,9 @@ def _variant_label(cfg: dict[str, Any]) -> str:
     def part(spec: dict[str, Any] | None) -> str:
         if spec is None:
             return "fp"
-        axis = {"per_tensor": "tensor", "per_head": "head", "per_channel": "chan", "per_token": "token",
-                "group_channel": f"g{spec['group_size']}"}[spec["axis"]]
+        axis = {"per_tensor": "tensor", "per_head": "head", "per_channel": "chan (offline)", "per_token": "token",
+                "group_channel": f"chan-g{spec['group_size']}",
+                "group_token": f"tokblock-{spec['group_size']}"}[spec["axis"]]
         return f"{spec['bits']}b/{axis}{'/sym' if spec['symmetric'] else ''}"
     label = f"K {part(q['keys'])} · V {part(q['values'])}"
     return label + (f" · resid {q['residual_window']}" if q.get("residual_window") else "")
