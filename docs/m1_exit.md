@@ -30,6 +30,15 @@ Criteria from `00_research_plan.md` §G (M1). M1 closes when every row is ✅ wi
 
 ## Handover to M2
 
+- **Shared granularity for Q48.** The correlation between quantization sensitivity and fault sensitivity can only
+  be computed where both maps exist. The layer×part map (56 cells) is measured; a head×part map (448 cells) is
+  being measured to see whether head-level quantization sensitivity is resolvable at all — a single head is 1/8 of
+  a part, so its damage may fall inside the null band. If it does, Q48 runs at layer×part and that limitation is
+  stated; the fault side can still be analysed at head and bit granularity on its own.
+- **The fault campaign needs its own null condition**, and it is not either of the existing ones: D10 measures
+  cache-geometry change in bf16 and D13's band measures lossless re-quantization. Neither says what a bit flip
+  that lands somewhere inert does. A fraction of injections must therefore target bits expected to be harmless
+  (e.g. the LSB of a small-magnitude code) and be reported next to the real injections.
 - Fault injection targets the same regions the profiler scores, so the sensitivity map and the fault map are
   directly comparable (Q48) — same granularity, same chunks, same golden.
 - Effects below the bf16 noise floor (D10) or the profiler's null band cannot be attributed to a fault.

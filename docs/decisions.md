@@ -84,8 +84,11 @@ Profile: one region (layer × keys/values) at a time forced to 2 bits with the d
 - **K/V asymmetry is the robust part:** keys dominate under both granularities (11× and 640×). Allocation should
   split by part first and by layer second.
 - **Some regions clear the band in the negative direction** (min −0.0211 vs band −0.0048): quantizing them
-  slightly *improves* NLL. This is a regularization-like fluke, not a physical gain, and it is a reminder that
-  per-region deltas at this scale need the null band to be interpretable at all.
+  slightly *improves* NLL. Named, so M2 can check them rather than rediscover them: **layer 15 values
+  (−0.0211 ± 0.0033), layer 19 keys (−0.0158 ± 0.0054), layer 15 keys (−0.0104 ± 0.0055)** — layer 15 appears on
+  both parts. Treated as a regularization-like fluke for now; if the *same* regions come out protective under
+  fault injection, "damage" as a metric needs rethinking.
+- The 18 regions above the band are 13 keys and 5 values, spread over layers 4-27 with no monotone depth trend.
 - The mismatched-granularity profile stays in the record as a **positive control**: it shows the profiler detects
   heterogeneity when it is present, which is what makes the modest deployment-precision numbers meaningful.
 

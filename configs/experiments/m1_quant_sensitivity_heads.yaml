@@ -1,0 +1,21 @@
+# Head-level quantization sensitivity: 28 layers x 8 KV heads x {keys, values} = 448 regions.
+# Purpose: decide the granularity at which Q48 (QS vs fault sensitivity) can be computed. A single head is 1/8 of
+# a part, so its damage may fall inside the null band - that outcome is itself the answer, provided the band is
+# measured in the same run.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: m1_quant_sensitivity_heads
+task:
+  kind: quant_sensitivity
+  granularity: head_part
+  n_chunks: 40
+  key_spec:
+    bits: 2
+    axis: per_channel
+  value_spec:
+    bits: 2
+    axis: per_token
+  null_bits: 8
+  null_regions: 16
+seed: 0
