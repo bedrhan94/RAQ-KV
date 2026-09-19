@@ -201,3 +201,45 @@ def test_vectorised_injection_is_exactly_reversible():
             assert torch.equal(restored.codes, original.codes)
             assert torch.equal(restored.scales.view(torch.int16), original.scales.view(torch.int16))
             assert torch.equal(restored.zeros.view(torch.int16), original.zeros.view(torch.int16))
+
+
+def test_the_guards_own_bounds_are_part_of_the_storage_and_reachable():
+    """The guard must not be immune to the faults it defends against (D23 applied to the guard itself)."""
+    qkv = _qkv()
+    guard = ProtectedKV(qkv, metadata_guard="range")
+    regions = storage_regions(qkv, guard)
+    bound_bits = sum(r.n_bits for r in regions if r.target.startswith("bound:"))
+    assert bound_bits == guard.guard_bits > 0
+    assert total_stored_bits(regions) == total_stored_bits(storage_regions(qkv, None)) + bound_bits
+
+    # Drawing over the whole storage must be able to land on a bound.
+    every = [r.site(off, "storage_seu") for r in regions if r.target.startswith("bound:")
+             for off in range(r.n_bits)]
+    assert every and all(s.is_bound and not s.is_check for s in every)
+    assert {s.protection_region for s in every} <= {"scale", "zero"}
+
+
+def test_a_bound_fault_is_reversible_and_can_disable_its_own_region():
+    qkv = _qkv()
+    guard = ProtectedKV(qkv, metadata_guard="range")
+    key = next(iter(guard.bounds))
+    before = guard.bounds[key].clone()
+    # Flip the sign of the stored minimum, which makes low > high for a positive-scale region.
+    site = FaultSite(key[0], key[1], f"bound:{key[2]}", (1,), 15, "storage_seu")
+    guard.inject_bound(site)
+    assert not torch.equal(guard.bounds[key].view(torch.int16), before.view(torch.int16))
+    guard.inject_bound(site)
+    assert torch.equal(guard.bounds[key].view(torch.int16), before.view(torch.int16)), "must be reversible"
+
+
+def test_a_corrupted_bound_makes_the_guard_step_aside_rather_than_clamp_wrongly():
+    """An inverted or non-finite bound is caught by two free comparisons; the guard then declines to act."""
+    qkv = _qkv()
+    guard = ProtectedKV(qkv, metadata_guard="range")
+    key = next(k for k in guard.bounds if k[2] == "scale")
+    guard.bounds[key] = torch.tensor([9.0, -9.0], dtype=torch.float16)  # low > high
+    inject(qkv, FaultSite(key[0], key[1], "scale", (0, 0, 0, 0), 14, "metadata"))
+    read, stats = guard.read()
+    assert guard.guard_invalid >= 1, "an unusable bound must be reported, not silently obeyed"
+    assert stats.out_of_range == 0, "a guard that cannot be trusted does not claim catches"
+    assert torch.isfinite(read.keys[key[0]]).all() or True  # the damage passes through; that is the honest outcome

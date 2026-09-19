@@ -12,6 +12,7 @@ Three outcomes are counted separately, because conflating them is how reliabilit
 
 from __future__ import annotations
 
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -80,7 +81,10 @@ class ProtectedKV:
         self.metadata_guard = metadata_guard
         self.codes: dict[tuple[int, str, str], RegionCode] = {}
         # Plausibility bounds, recorded from the clean tensor exactly as a real system would at quantization time.
-        self.bounds: dict[tuple[int, str, str], tuple[float, float]] = {}
+        # Stored as a float16 tensor, not a Python pair, because these bits are storage like any other and the
+        # fault model must be able to land on them (D23's principle applied to the guard itself).
+        self.bounds: dict[tuple[int, str, str], torch.Tensor] = {}
+        self.guard_invalid = 0  # regions whose own bounds a fault made unusable
         for layer in range(qkv.num_layers):
             for part in ("keys", "values"):
                 stored = qkv.part(layer, part)
@@ -95,8 +99,8 @@ class ProtectedKV:
                         self.codes[(layer, part, target)] = self._encode_float16(
                             tensor, metadata_codec, metadata_word_bits)
                     if metadata_guard == "range":
-                        self.bounds[(layer, part, target)] = (
-                            float(tensor.min().to(torch.float32)), float(tensor.max().to(torch.float32)))
+                        self.bounds[(layer, part, target)] = torch.stack(
+                            [tensor.min(), tensor.max()]).to(torch.float16)
 
     @staticmethod
     def _encode_codes(stored: QuantizedTensor, codec_name: str, word_bits: int) -> RegionCode:
@@ -131,7 +135,13 @@ class ProtectedKV:
         can absorb. It cannot see a flip that leaves the value inside the observed range, which is most mantissa
         bits — and those are the flips that move a scale by at most 36% (D27).
         """
-        low, high = self.bounds[key]
+        low, high = (float(v) for v in self.bounds[key].to(torch.float32))
+        # The bounds are stored bits too, so a fault can reach them. Two comparisons the guard can make about
+        # itself for nothing -- ordered and finite -- catch a corrupted bound; when they fail the guard cannot be
+        # trusted for this region and steps aside rather than clamping against a wrong limit.
+        if not (low <= high) or not (math.isfinite(low) and math.isfinite(high)):
+            self.guard_invalid += 1
+            return tensor
         bad = (tensor < low) | (tensor > high) | ~torch.isfinite(tensor)
         n_bad = int(bad.sum())
         if not n_bad:
@@ -215,13 +225,30 @@ class ProtectedKV:
                                        stored.orig_dtype)
         return dequantize(repaired_tensor)
 
+    def inject_bound(self, site: Any) -> dict[str, Any]:
+        """Flip one bit of a stored plausibility bound, reversibly.
+
+        A corrupted bound is the guard's own single point of failure: inflate a region's stored maximum and the
+        guard stops catching explosions there for the rest of the read. Cheap as the bounds are, they are part of
+        what the arm stores, so they are part of what faults can reach.
+        """
+        key = (site.layer, site.part, site.protection_region)
+        bound = self.bounds.get(key)
+        if bound is None:
+            raise ValueError(f"no bounds stored for {key}; this site cannot exist in this arm")
+        view = bound.view(torch.int16)
+        element = site.index[0]
+        before = float(bound[element])
+        view[element] ^= torch.tensor(1 << site.bit if site.bit < 15 else -32768, dtype=torch.int16)
+        return {"stored_before": before, "stored_after": float(bound[element]), "relative_change": 1.0}
+
     def inject_check(self, site: Any) -> dict[str, Any]:
         """Flip one check bit in place, reversibly.
 
         A corrupted check bit is a real failure mode, not a technicality: the codec then computes a syndrome for
         an error that never happened and "repairs" intact data, which is a miscorrection.
         """
-        key = (site.layer, site.part, site.check_region)
+        key = (site.layer, site.part, site.protection_region)
         region = self.codes.get(key)
         if region is None:
             raise ValueError(f"no check bits stored for {key}; this site cannot exist in this arm")
@@ -242,13 +269,16 @@ class ProtectedKV:
         from raq_kv.faults.injector import PER_SITE_LIMIT, inject, inject_many
 
         check_sites = [s for s in sites if s.is_check]
-        store_sites = [s for s in sites if not s.is_check]
+        bound_sites = [s for s in sites if s.is_bound]
+        store_sites = [s for s in sites if not (s.is_check or s.is_bound)]
         fast = len(store_sites) > PER_SITE_LIMIT
 
         def apply() -> dict[str, Any]:
             """Flip everything once; returns the per-site summary when it is cheap enough to measure."""
             for site in check_sites:
                 self.inject_check(site)
+            for site in bound_sites:
+                self.inject_bound(site)
             if fast:
                 inject_many(self.qkv, store_sites)
                 return {"max_relative_change": None, "relative_change_measured": False}
@@ -260,12 +290,14 @@ class ProtectedKV:
         touched = {(s.layer, s.part) for s in sites}
         saved: dict[tuple[int, str], torch.Tensor] = {}
         stats = ProtectionStats()
+        self.guard_invalid = 0
         try:
             for layer, part in touched:
                 tensors = base.keys if part == "keys" else base.values
                 saved[(layer, part)] = tensors[layer]
                 tensors[layer] = self.read_part(layer, part, stats)
-            yield base, {"n_flips": len(sites), **stats.to_dict(), **summary}
+            yield base, {"n_flips": len(sites), **stats.to_dict(), **summary,
+                         "guard_invalid_regions": self.guard_invalid}
         finally:
             for (layer, part), tensor in saved.items():
                 (base.keys if part == "keys" else base.values)[layer] = tensor

@@ -34,9 +34,11 @@ from raq_kv.quantization.apply import QuantizedKV
 from raq_kv.quantization.base import QuantizedTensor
 from raq_kv.utils.io import JsonlAppender, read_jsonl
 
-Target = Literal["code", "scale", "zero", "check:code", "check:scale", "check:zero"]
+Target = Literal["code", "scale", "zero", "check:code", "check:scale", "check:zero",
+                 "bound:scale", "bound:zero"]
 
 CHECK_PREFIX = "check:"
+BOUND_PREFIX = "bound:"
 
 
 @dataclass(frozen=True)
@@ -53,11 +55,21 @@ class FaultSite:
         return self.target.startswith(CHECK_PREFIX)
 
     @property
+    def is_bound(self) -> bool:
+        return self.target.startswith(BOUND_PREFIX)
+
+    @property
+    def protection_region(self) -> str:
+        """For a site in the protection layer, the region it guards (``code`` / ``scale`` / ``zero``)."""
+        for prefix in (CHECK_PREFIX, BOUND_PREFIX):
+            if self.target.startswith(prefix):
+                return self.target[len(prefix):]
+        raise ValueError(f"{self.target!r} is not a protection-layer site")
+
+    # Kept as the old name so existing call sites and stored plans keep working.
+    @property
     def check_region(self) -> str:
-        """For a check site, the region whose check bits it hits (``code`` / ``scale`` / ``zero``)."""
-        if not self.is_check:
-            raise ValueError(f"{self.target!r} is not a check-bit site")
-        return self.target[len(CHECK_PREFIX):]
+        return self.protection_region
 
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "index": list(self.index)}

@@ -1,0 +1,28 @@
+# M3 arm g at BER 1e-5 -- where does a free check stop matching a code?
+#
+# At 1e-6 the range guard (arm H, +0.075% storage) and metadata SECDED (arm G, +2.3%) both reached zero task
+# failures, so that rate cannot separate them. It should not: the guard catches the ~19% of metadata flips that
+# leave the clean range (float16 bits 13, 14, 15) and is blind to the rest, and at 1e-6 the ~26 undetected flips
+# per trial are evidently harmless. Ten times the rate puts ~260 undetected flips per trial, including ~60 in
+# exponent bits 10-12 (x0.5, x4, x0.06), which is where a check that only bounds magnitudes should start to lose
+# to a code that repairs everything.
+#
+# The number this run produces is the engineering boundary: below the crossover rate use the free check, above it
+# pay for ECC. Reporting one rate and calling it settled would hide exactly that boundary.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m3_arm_g_meta_only_ber1e5
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_codec: secded
+  metadata_word_bits: 16
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-5
+  n_trials: 8
+  n_control: 1
+seed: 0

@@ -1,0 +1,22 @@
+# RAQ-Probe v0, restricted to the 4096-token condition: 6 types x 1 length x 10 groups x 3 depths = 180 samples.
+#
+# Why a separate dataset config (2026-09-20): the M3 campaign found that fault damage is concentrated entirely in
+# the longest contexts, because cache length sets the flip count. In arm D at BER 1e-5 every one of the 14 changed
+# answers fell in the 2800-4200 token band and the three shorter bands recorded none. A placement test drawn
+# uniformly over lengths therefore spends three quarters of its trials where nothing can happen. Restricting to
+# 4096 puts every trial where the signal is, which is how the H2b comparison gets the events it needs -- and it is
+# a stated condition, not a filter applied after seeing outcomes.
+dataset:
+  name: raq_probe
+  version: v0
+  generator_seed: 0
+  fact_types: [number, id, date, entity, constraint, tool_arg]
+  context_lengths: [4096]
+  depths: [0.1, 0.5, 0.9]
+  groups_per_cell: 10
+  n_distractors: 2
+  filler_hf_id: Salesforce/wikitext
+  filler_subset: wikitext-2-raw-v1
+  filler_split: train
+  filler_revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  max_new_tokens: 64

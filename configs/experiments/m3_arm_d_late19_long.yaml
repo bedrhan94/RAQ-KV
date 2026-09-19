@@ -1,0 +1,35 @@
+# M3 arm d_late19 -- the placement test (H2b), sized on where the events actually are.
+#
+# Arms D and E are bit-identical and carry the same amount of SECDED on different layers:
+# D protects layers 9-27, leaving the nine EARLY layers exposed; E protects 0-18, leaving the nine LATE ones.
+# Everything else is held fixed, so this isolates whether the fault-sensitivity map predicts where protection
+# belongs.
+#
+# Sizing (D26, D28): trials within a sample are not independent, so power comes from samples; and all damage sits
+# in the longest contexts. 180 samples x 8 draws at 4096 tokens gives ~1440 trials per arm with an answer-changed
+# rate near 9%, i.e. ~130 events -- against 14 in the mixed-length run, which could not separate anything.
+#
+# Pre-registered directions, from the project's own conflicting evidence: D18 (single-bit faults hurt early
+# layers) predicts E beats D in this uniform-SEU regime; D21 (whole-row bursts hurt late layers) predicts the
+# opposite sign in the burst regime. Both holding would be a crossover finding: where protection belongs depends
+# on the fault's spatial scale, so no single static map suffices.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0_long.yaml
+name: m3_arm_d_late19_long
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 64}
+  values: {bits: 4, axis: per_token}
+protection:
+  data_codec: secded
+  data_word_bits: 64
+  data_layers: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
+  metadata_codec: secded
+  metadata_word_bits: 16
+task:
+  kind: protection_arm
+  n_samples: null
+  ber: 1.0e-5
+  n_trials: 8
+  n_control: 1
+seed: 0

@@ -70,6 +70,11 @@ def storage_regions(qkv: QuantizedKV, guard: ProtectedKV | None = None) -> list[
                 continue
             regions.append(Region(layer, part, f"check:{target}", check.numel(),
                                   (int(check.shape[0]),), int(check.shape[1])))
+        for (layer, part, target), bound in guard.bounds.items():
+            # Two float16 limits. Tiny, and included for exactly the reason the check bits are: protection that
+            # faults cannot reach is protection measured with an advantage no memory grants it.
+            regions.append(Region(layer, part, f"bound:{target}", bound.numel() * SCALE_BITS,
+                                  (int(bound.numel()),), SCALE_BITS))
     return regions
 
 
