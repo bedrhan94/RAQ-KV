@@ -1,8 +1,10 @@
-# M3 rate calibration -- the unprotected arm alone, four decades of bit error rate.
+# M3 rate calibration -- the unprotected arm alone, five bit error rates spanning the response.
 # Purpose (D23): choose the operating rates of the main campaign from measurement instead of guessing. At D21's
 # 4% base damage rate, halving it needs ~1113 trials per arm; at a 35-50% base rate, 58-99. So the campaign is
 # run at rates where the comparison has power, and the rate is reported as the experimental condition it is.
-# Small and cheap by design: 20 samples x 4 trials x 4 rates = 320 decodes, enough to locate the decade.
+# Rates chosen after the retired pilot (D24) located the response: 1e-7 changed 5.0% of answers and 1e-6 changed
+# 37.5%, so the sweep brackets that interval instead of spending time on a saturated 1e-4 point. 5 rates x 20
+# samples x (4 trials + 1 control) = 500 decodes.
 include:
   - models/qwen3_1p7b.yaml
   - datasets/raq_probe_v0.yaml
@@ -17,5 +19,5 @@ task:
   n_trials: 4
   n_control: 1
 sweep:
-  task.ber: [1.0e-7, 1.0e-6, 1.0e-5, 1.0e-4]
+  task.ber: [3.0e-8, 1.0e-7, 3.0e-7, 1.0e-6, 3.0e-6]
 seed: 0
