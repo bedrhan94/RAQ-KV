@@ -77,13 +77,18 @@ Same probe, same roles, corruption enlarged to the token's **entire row in one l
 - **Scale decides.** The same roles showed OR 1.00 when the burst was one memory word (16 bits, 1/224 of the
   token) and nothing at all for single bits (D19, D20). Semantic role only becomes visible once a token's
   representation in a layer is actually destroyed.
-- **Depth reverses between regimes.** Row corruption of the answer token costs the answer only in late layers
-  (21-27: 5.4%, 14-20: 2.9%, layers 0-13: 0.0%), whereas single-bit damage to WikiText continuation concentrated
-  in *early* layers (D18). Different task, metric and fault size — the honest statement is that the depth profile
-  is regime-dependent, and a protection policy cannot assume one profile transfers to the other.
-- **Per bit, metadata still wins by a wide margin:** one flipped scale bit fails 3.21% of the time, more than
-  2048 flipped bits inside the answer token's row (2.14%). Roughly three orders of magnitude more damage per
-  protected bit — the clearest allocation signal the project has produced so far.
+- **Depth reverses between regimes, and the split is significant:** destroying the answer token's row costs the
+  answer in late layers only — **14/338 failures in layers 14-27 vs 0/316 in layers 0-13, Fisher p = 1.2e-4**
+  (14 events in total; the zero in early layers carries the test). Single-bit damage to WikiText continuation
+  concentrated in *early* layers instead (D18). Different task, metric and fault size — the depth profile is
+  regime-dependent and a protection policy cannot assume one transfers to the other.
+- **Per bit, metadata wins by ~3000×:** one flipped scale bit fails **7/218 = 3.21%** [95% CI 1.30-6.50%] of
+  answers, while **14/654 = 2.14%** [1.18-3.57%] fail when 2048 bits inside the answer token's row are flipped —
+  a per-bit ratio of 3072×. The event counts are small, so the ratio's order of magnitude is the claim, not its
+  third digit.
+- **Conditioning caveat:** rates are computed on samples the model answers correctly *at that operating point*.
+  At 2-bit block-32 only 109 of 120 samples qualify (vs 147/150 at 4 bits), so the role comparison runs on the
+  easier subset, and the 2-bit point is probably too degraded to be M5's primary vehicle.
 
 ## D20 — Q49: the corrupted token's role does not matter; what it *governs* does (2026-09-19)
 
