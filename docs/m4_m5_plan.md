@@ -65,11 +65,21 @@ combinations. That non-commensurability is itself a paper-worthy correction of t
 **`importance/`** — one interface, several scorers, and an oracle that is not a method:
 
 * `recency` — keep the last k tokens. The trivial baseline most published methods must beat.
-* `attention_mass` — attention received during prefill, summed over heads and layers. Needs attention weights, so
-  it needs a second pass under eager attention (D5: `sdpa` returns none). That cost is measured and reported.
+* `window_attention` — attention paid to each cached token by the **last W context tokens**, summed over heads
+  and layers. Full prefill attention is infeasible (28 × 16 × 4096² in bf16 is ~15 GB); an observation window is
+  both affordable (~235 MB at W = 64) and what SnapKV and H2O actually do, so this matches the literature rather
+  than inventing a variant. Needs eager attention (D5: `sdpa` returns none), which changes `attn_implementation`
+  and therefore the experiment identity — **M4 arms generate their own golden baseline** rather than referencing
+  an M0–M3 sdpa run.
 * `key_norm` / `value_norm` — cheap magnitude proxies.
-* `oracle_span` — the probe's own span labels. **An upper bound, not a method.** If the oracle does not beat
-  recency, the task cannot support a retention claim and M4 stops rather than producing a table.
+* `oracle_keep_target` — the probe's own span labels, keeping the answer-bearing tokens. **An upper bound, not a
+  method.** It is also nearly uninformative on its own: the probe is answerable from the target tokens by
+  construction, so a ceiling here proves the construction, not a scorer's headroom.
+* `oracle_drop_target` — the same labels used in reverse: keep everything *except* the answer-bearing tokens.
+  **This is the informative oracle.** It asks whether the model recovers the fact from elsewhere in the context,
+  which is the D19–D21 redundancy question and the one whose answer is genuinely unknown. If accuracy survives
+  dropping the target tokens, no importance scorer can be evaluated on this probe at all, because the thing it
+  is supposed to find is not load-bearing — and M4 would have to change vehicle before producing any table.
 
 **`compression/`** — apply a retention mask to a `KVSnapshot`, with two properties that must hold:
 
@@ -80,15 +90,19 @@ combinations. That non-commensurability is itself a paper-worthy correction of t
    Every comparison uses total bits and bits per *original* token; `BitBudget` already keeps `retained_tokens`
    separate for exactly this reason.
 
-**The M4 experiment.** Start at the published optimum (many tokens, 4-bit) rather than re-deriving it. Retention
-∈ {100, 75, 50, 25}% × scorer ∈ {recency, attention_mass, key_norm, oracle_span}, on the probe, reporting task
+**The M4 experiment, sized from a pilot.** Retention accuracy is a higher-variance endpoint than task failure
+was, and the probe sits at 0.983 clean accuracy, so a 25% arm could land anywhere between ceiling and floor.
+**Run one pilot at the most aggressive retention first, read the rate, then size the grid** — the rule D31 was
+written to enforce, after a power calculation built on a handful of events went wrong twice. Then: retention
+∈ {100, 75, 50, 25}% × scorer ∈ {recency, window_attention, key_norm, both oracles}, on the probe, reporting task
 accuracy, answer margin, and the fraction of *answer-bearing* tokens each scorer actually kept. That last column
 is the diagnostic: a scorer that holds accuracy while discarding the answer tokens has found redundancy, which
 would echo D19–D21 and is a finding in its own right.
 
-**Then the question that is ours:** repeat the frontier under faults. If the token-precision optimum shifts once
-reliability is priced — and it should, because more tokens at lower precision means more metadata — that is the
-result the compression literature is missing.
+**Then the question that is ours:** repeat the frontier under faults. The reliability tax is set by precision
+alone and is flat in retention (see the correction above), so the prediction is specific: the *precision* half of
+the published optimum should move once reliability is priced, and the *retention* half should not. That is a
+sharper test than "the optimum shifts", and it can fail in a way that is informative either way.
 
 ## M5 — joint allocation
 
