@@ -32,8 +32,9 @@ class ScoreContext:
     snapshot: KVSnapshot
     context_ids: torch.Tensor | None = None  # [1, cache_len]: the cached tokens themselves
     model: nn.Module | None = None  # for scorers that need a forward pass
-    target_tokens: tuple[int, ...] = ()  # ORACLE ONLY: cached indices holding the answer
+    target_tokens: tuple[int, ...] = ()  # ORACLE ONLY: cached indices holding the answer value
     distractor_tokens: tuple[int, ...] = ()  # ORACLE ONLY
+    sentence_tokens: tuple[int, ...] = ()  # ORACLE ONLY: the whole sentence the answer sits in
 
 
 class Scorer(Protocol):
@@ -155,6 +156,29 @@ class OracleKeepTarget:
         return s
 
 
+class OracleKeepSentence:
+    """Keep the whole sentence the answer sits in, not just its value tokens.
+
+    Measured motivation, not a hunch: an oracle that retained **100%** of the answer-value tokens still failed
+    77% of shallow and 86% of middle-depth questions at 25% retention, while the same tokens dropped failed 98%.
+    The value tokens are necessary and not sufficient, so the unit of retention is under test here — if keeping
+    the sentence rescues those questions, importance is a property of spans rather than of tokens, and every
+    token-level scorer inherits a ceiling it cannot cross.
+    """
+
+    name = "oracle_keep_sentence"
+    needs_model = False
+    is_oracle = True
+
+    def score(self, ctx: ScoreContext) -> torch.Tensor:
+        n = ctx.snapshot.seq_len
+        s = torch.arange(n, dtype=torch.float32) / max(n, 1)
+        idx = torch.tensor([i for i in ctx.sentence_tokens if i < n], dtype=torch.long)
+        if idx.numel():
+            s[idx] += 10.0
+        return s
+
+
 class OracleDropTarget:
     """The informative oracle: keep everything *except* the answer-bearing tokens.
 
@@ -180,7 +204,8 @@ def build_scorer(name: str, window: int = 64) -> Scorer:
     if name == "window_attention":
         return WindowAttention(window)
     table: dict[str, Scorer] = {
-        s.name: s for s in (Recency(), KeyNorm(), ValueNorm(), OracleKeepTarget(), OracleDropTarget())
+        s.name: s for s in (Recency(), KeyNorm(), ValueNorm(), OracleKeepTarget(),
+                            OracleKeepSentence(), OracleDropTarget())
     }
     if name not in table:
         raise ValueError(f"unknown scorer {name!r}; have {sorted(table) + ['window_attention']}")

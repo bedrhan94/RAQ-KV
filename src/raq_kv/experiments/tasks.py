@@ -777,13 +777,14 @@ class Retention:
 
     @staticmethod
     def _role_tokens(sample: PromptSample, cache_len: int) -> dict[str, tuple[int, ...]]:
-        target, distractor = [], []
+        target, distractor, sentence = [], [], []
         for span in sample.spans:
-            if span.label != "fact_value":
-                continue
-            bucket = target if span.role == "target" else distractor
-            bucket.extend(range(span.token_start, min(span.token_end, cache_len)))
-        return {"target": tuple(target), "distractor": tuple(distractor)}
+            span_tokens = range(span.token_start, min(span.token_end, cache_len))
+            if span.label == "fact_value":
+                (target if span.role == "target" else distractor).extend(span_tokens)
+            elif span.label == "fact_sentence" and span.role == "target":
+                sentence.extend(span_tokens)
+        return {"target": tuple(target), "distractor": tuple(distractor), "sentence": tuple(sentence)}
 
     def run_unit(self, unit_key: str) -> dict[str, Any]:
         assert self.lm is not None and self.cfg.compression is not None
@@ -802,7 +803,8 @@ class Retention:
         roles = self._role_tokens(sample, sample.cache_len)
         scores = self.scorer.score(ScoreContext(
             snapshot=snapshot, context_ids=context_ids, model=model,
-            target_tokens=roles["target"], distractor_tokens=roles["distractor"]))
+            target_tokens=roles["target"], distractor_tokens=roles["distractor"],
+            sentence_tokens=roles["sentence"]))
         plan = select_keep(scores, self.cfg.compression.ratio, self.cfg.compression.protect_recent,
                            self.cfg.compression.protect_initial)
         pruned = apply_retention(snapshot, plan)
@@ -824,6 +826,8 @@ class Retention:
             "task_failure": bool(golden_score["correct"] and not score["correct"]),
             "kept_fraction_target": plan.kept_fraction_of(roles["target"]),
             "kept_fraction_distractor": plan.kept_fraction_of(roles["distractor"]),
+            "kept_fraction_sentence": plan.kept_fraction_of(roles["sentence"]),
+            "n_sentence_tokens": len(roles["sentence"]),
             "n_target_tokens": len(roles["target"]),
             "gen_margin_min_all": min(gen.margins) if gen.margins else None,
             **{f"pruned_{k}": v for k, v in score.items()},

@@ -1,0 +1,21 @@
+# M4 — is the unit of retention the token or the span?
+#
+# Measured motivation. At 25% retention an oracle that kept 100% of the answer-VALUE tokens still failed 77% of
+# shallow and 86% of middle-depth questions, while dropping those same tokens failed 98%. So the value tokens
+# are necessary and not sufficient, and the obvious candidate for what else is needed is the sentence they sit
+# in — the probe labels it, so it can be tested directly rather than argued about.
+#
+# If keeping the sentence rescues those questions, importance is a property of spans, and every token-level
+# scorer in the literature inherits a ceiling it cannot cross on this kind of task. If it does not, something
+# larger than the sentence is load-bearing and the next candidate is the document structure itself.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4_gate_keep_sentence
+compression:
+  scorer: oracle_keep_sentence
+  ratio: 0.25
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

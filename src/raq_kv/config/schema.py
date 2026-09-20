@@ -288,7 +288,7 @@ class CompressionConfig(StrictModel):
     """
 
     scorer: Literal["recency", "key_norm", "value_norm", "window_attention",
-                    "oracle_keep_target", "oracle_drop_target"] = "recency"
+                    "oracle_keep_target", "oracle_keep_sentence", "oracle_drop_target"] = "recency"
     ratio: float = Field(default=1.0, gt=0.0, le=1.0, description="Share of original cached tokens kept")
     protect_recent: int = Field(default=0, ge=0, description="Most recent tokens always kept")
     # Position 0 is an attention sink: dropping it alone fails every answer on this probe (D32). Protecting an

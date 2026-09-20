@@ -74,7 +74,8 @@ def _protection_token(cfg: ExperimentConfig) -> str:
 
 
 _SCORER_SHORT = {"recency": "rec", "key_norm": "kn", "value_norm": "vn", "window_attention": "wa",
-                 "oracle_keep_target": "oK", "oracle_drop_target": "oD"}
+                 "oracle_keep_target": "oK", "oracle_drop_target": "oD",
+                 "oracle_keep_sentence": "oS"}
 
 
 def _pruning_token(cfg: ExperimentConfig) -> str:
