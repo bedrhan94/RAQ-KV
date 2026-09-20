@@ -7,16 +7,17 @@
 # redundancy question, whose answer is genuinely unknown — whole-row corruption of the answer token cost only
 # 2.14% of answers (D21), which is not obviously consistent with the token being necessary.
 #
-# The mirror arm (m4_gate_keep_target) drops everything EXCEPT the answer tokens. It is expected to be near
-# ceiling by construction; it is here because a ceiling it fails to reach would mean the pruning path itself is
-# broken, and that must be excluded before any retention number is believed.
+# The mirror arm keeps the answer tokens and fills the rest of a realistic 25% budget by recency. Run at 5%
+# first, it failed 117/117 - but so did everything, because neither arm protected the attention sink, and
+# dropping token 0 alone fails every answer (D32). With the sink pinned and a budget that does not destroy
+# the document outright, this arm is the ceiling that any scorer at 25% is measured against.
 include:
   - models/qwen3_1p7b.yaml
   - datasets/raq_probe_v0.yaml
 name: m4_gate_keep_target
 compression:
   scorer: oracle_keep_target
-  ratio: 0.05
+  ratio: 0.25
 task:
   kind: retention
   n_samples: 120
