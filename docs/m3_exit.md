@@ -1,9 +1,9 @@
 # M3 exit checklist — error protection
 
-**Status: OPEN**, last updated 2026-09-20 02:50. Reports: `scripts/report_m3.py`; figure:
+**Status: M3 CLOSED on 2026-09-20.** Reports: `scripts/report_m3.py`; figure:
 `outputs/figures/m3_protection.png`.
 
-Headline, with one row still open: **the whole measured benefit of error protection on a 4-bit KV cache
+Headline: **the whole measured benefit of error protection on a 4-bit KV cache
 is obtained by a plausibility check on the quantization metadata.** At a bit error rate of 1e-6 over stored
 representation, an unprotected cache loses **31.8%** of its answers; a range check costing **+0.075%** of storage,
 metadata SECDED costing **+2.3%**, and uniform SECDED over everything costing **+14.0%** all reach **0.0%**. The
@@ -22,7 +22,7 @@ Criteria (M3, from `docs/m3_plan.md` as revised by D22/D23). M3 closes when ever
 | 6 | The operating rate is chosen by measurement, not assumption | ✅ | Calibration sweep on the unprotected arm, 5 rates: task failure 1.25% / 3.75% / 12.5% / 33.75% / 67.5% at 3e-8 / 1e-7 / 3e-7 / 1e-6 / 3e-6, controls exactly zero at every rate. Damage is linear in flip count over two decades (13–16 flips per 1% of answers), i.e. failures are independent single-flip events |
 | 7 | Claims use a statistic that respects the data's clustering | ✅ | D26: trials within a sample are strongly dependent, so every claim is a per-sample rate paired over the samples **every** arm answers correctly without faults (58–59 of 60), Wilcoxon + bootstrap CI; pooled-trial Fisher is printed as descriptive only |
 | 8 | The mechanism is measured, not inferred | ✅ | D25/D27: metadata carries **98%** of the damage at **6%** of the flips; per bit it is **315×** more damaging than codes (clean one-variable contrast A vs G). The reason is magnitude explosion, not NaN: a float16 scale's bit 14 multiplies it by 65536, bit 13 divides it by 250, bit 15 flips its sign, and the guard catches **19%** of metadata flips — the 3 of 16 bits the mechanism predicts |
-| 9 | H2b (placement) answered or honestly declared unanswerable | ⚠️ | At 1e-6 **and** at 1e-5 arms D and E are identical on task failure (0 failures each). On the answer-changed proxy the direction favours D18 at both rates (2.59% vs 1.51% at 1e-6; 3.02% vs 1.29% at 1e-5, and 9.21% vs 2.63% restricted to long contexts) but neither is significant — 5 and 3 discordant samples. A replicated direction on a proxy is weak evidence, not an answer. **Open:** the properly sized test, 180 samples of the 4096-token condition where all the events are, is running |
+| 9 | H2b (placement) answered or honestly declared unanswerable | ✅ | **Answered for task outcomes and declared unresolved on the proxy (D31).** The sized test (180 samples of the 4096-token condition at 1e-5, 177 paired) records **0 task failures of 1416 trials in both arms**: protecting 19 of 28 layers is sufficient regardless of which 19, so placement does not affect task outcomes. The proxy gives +0.0113 [+0.0007, +0.0247], p = 0.074, 7 discordant — the pre-registered rule needed p < 0.05 *and* a CI excluding zero, and is not met. The direction has replicated 4/4 (1.7×–3.5×) and in 6 of 7 discordant samples, reported as a consistent direction below significance. The live form of the question belongs to the burst regime (D21's opposite sign) and moves to M5 |
 | 10 | Negative and null results reported as such | ✅ | Uniform data ECC buys nothing measurable at the task level for 0.5 bits/value (B ≡ C on all 58 samples); the plan's original decisive pair was arithmetically impossible (D22); the D-vs-E direction was withdrawn; the unverified "1e-3 tolerance" comparison with prior work was struck rather than used |
 
 ## What M3 changes for M5
@@ -32,12 +32,19 @@ and stop. That frees the joint allocator to spend its budget on the two axes tha
 other at scale — retention and precision — under a metadata-protection floor, rather than treating protection as a
 third competing axis as the brief's §6 assumed.
 
-## Open before closing
+## Carried forward, not blocking closure
 
-1. Land the long-context placement test (row 9). If D and E remain indistinguishable there, H2b is answered in
-   the negative for the uniform-SEU regime and moves to the burst regime, which is its designed home.
-2. Measure where the free guard stops matching the code (arms H and G at 1e-5 and above): the crossover rate is
-   the engineering boundary, and reporting only 1e-6 would hide it. Running.
-3. Export ECC golden vectors for later RTL (plan §39).
-4. A second model family before any claim is called general. Llama-3.2-3B has identical KV geometry (D1), so a
-   family effect can be separated from a geometry effect.
+1. **ECC golden vectors for later RTL** (plan §39) — an artefact, not a measurement.
+2. **A second model family before any claim is called general.** Llama-3.2-3B has identical KV geometry (D1), so
+   a family effect separates from a geometry effect. Every number here is Qwen3-1.7B and says so.
+3. **H2b in the burst regime.** D18 (single-bit, early layers) and D21 (whole-row, late layers) predict opposite
+   placements; if both hold it is a crossover, and the allocator must take the fault model as an input. Needs the
+   burst fault model, not more samples of uniform SEU.
+4. **The absolute error rate is a condition, not a claim.** Everything here is stated at a rate over declared
+   storage; mapping those rates onto a real memory technology is outside what this project measured.
+
+## What M3 hands to M5
+
+The protection axis is not a dimension to search. Read the deployment's error rate, take the range check below
+~1e-6 and metadata SECDED above it, never buy uniform data ECC, and spend the entire remaining budget on
+retention and precision — the two axes that actually trade against each other (D22, `docs/m4_m5_plan.md`).
