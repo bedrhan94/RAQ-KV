@@ -86,13 +86,11 @@ def select_keep(scores: torch.Tensor, ratio: float, protect_recent: int = 0,
         mask[n - tail :] = False
     forced = torch.cat([torch.arange(head), torch.arange(n - tail, n) if tail else torch.empty(0, dtype=torch.long)])
 
-    remaining = budget - head - tail
+    picked = torch.empty(0, dtype=torch.long)
+    remaining = min(budget - head - tail, int(mask.sum()))
     if remaining > 0:
         candidates = torch.nonzero(mask, as_tuple=False).squeeze(-1)
-        remaining = min(remaining, int(candidates.numel()))
-        picked = candidates[torch.topk(scores[candidates].to(torch.float32), remaining).indices]             if remaining > 0 else torch.empty(0, dtype=torch.long)
-    else:
-        picked = torch.empty(0, dtype=torch.long)
+        picked = candidates[torch.topk(scores[candidates].to(torch.float32), remaining).indices]
 
     # Sorted, because select_tokens requires strictly increasing indices and top-k returns score order.
     keep = torch.cat([picked, forced.to(torch.long)]).to(torch.long).unique(sorted=True)
