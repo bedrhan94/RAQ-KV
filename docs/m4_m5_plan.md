@@ -17,10 +17,29 @@ Needle-in-a-Haystack and RULER, and finds more tokens at lower precision wins, m
 An earlier draft of this plan called that pairing untested; it was wrong and the claim is withdrawn (see
 `docs/literature.md`). **Their optimum is M4's starting point, not M4's question.**
 
-**The question they leave open is ours.** Their recommendation drives systems toward low precision with many
-tokens, which is exactly the regime where quantization metadata grows to 6–13% of stored bits — and by our
-measurements metadata is where essentially all fault damage lives. Nobody has priced the reliability axis of the
-token-precision frontier. That is the contribution.
+**The question they leave open is ours, stated precisely.** Their recommendation drives systems toward lower
+precision, and lower precision is what raises the metadata share — the regime where, by our measurements,
+essentially all fault damage lives. Nobody has priced the reliability axis of that frontier. That is the
+contribution.
+
+> **Correction, computed before any M4 run (2026-09-20).** An earlier draft said "many tokens at low precision"
+> pushes systems into the metadata-dominant regime. **Retention has no effect on the metadata share at all** —
+> it is 5.9% at 100%, 75%, 50% and 25% retention, exactly invariant, because codes and groups both scale
+> linearly with token count. Only the precision knobs move it:
+>
+> | knob | metadata share of stored bits (T = 4096) |
+> |---|---|
+> | 8-bit, g128 | 3.03% |
+> | 4-bit, g128 | 5.88% |
+> | 2-bit, g128 | 11.11% |
+> | 4-bit, g64 | 8.57% |
+> | 4-bit, g32 | 13.51% |
+> | 4-bit, g16 | 21.95% |
+>
+> This *sharpens* the framing rather than weakening it: the reliability tax is a pure function of (bits, group
+> size) and is **independent of how many tokens are kept**, which means M5 can set the protection floor from the
+> precision choice alone, before retention is decided. The half of the earlier sentence that named token count
+> was wrong and is deleted.
 
 ## The structural fact M5 is built on
 
