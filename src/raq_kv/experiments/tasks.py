@@ -835,14 +835,19 @@ class Retention:
             plan = select_keep(scores, c.ratio, c.protect_recent, c.protect_initial)
         pruned = apply_retention(snapshot, plan)
 
-        gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=pruned, eos_token_ids=eos)
+        # Prune first, then quantize: that is the order a system that compresses before storing would use, and
+        # it is the order the budget assumes - quantizing first would build groups over tokens about to be
+        # discarded, and group_token groups span tokens, so the two orders do not give the same metadata.
+        stored, report = transform_snapshot(pruned, self.cfg)
+
+        gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=stored, eos_token_ids=eos)
         text = tok.decode(gen.tokens, skip_special_tokens=True)
         score = SCORERS[sample.scorer](text, sample.reference)
 
         return {
             "sample_id": unit_key,
             "meta": sample.meta,
-            **kv_record_fields(self.lm, pruned, sample.cache_len),
+            **kv_record_fields(self.lm, stored, sample.cache_len, report),
             **plan.to_dict(),
             "scorer": self.scorer.name,
             "unit": c.unit or "token",

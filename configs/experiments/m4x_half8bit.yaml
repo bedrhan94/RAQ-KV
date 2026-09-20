@@ -1,0 +1,30 @@
+# M4 x M1 — the token-precision trade, with a retention method that actually works.
+#
+# "More Tokens, Lower Precision" (arXiv 2412.12706) compares 1x tokens at 16 bits, 2x at 8 and 4x at 4 at equal
+# memory and finds more tokens at lower precision wins. Their retention is not a strong query-aware method; ours
+# is (D36: query-aware attention at span granularity loses 2.6% of answers at 25% retention, against recency's
+# 69.2%). So the trade is worth re-running: a method that keeps the RIGHT tokens changes what fewer tokens costs.
+#
+# This arm: half the tokens at 8 bits = 4.132 bits per ORIGINAL token. The three arms span 4.000 to 4.257, a 6.4% spread, and
+# the CHEAPEST is the fewest-token one — so a win for fewer tokens is a win despite a bit handicap, not because
+# of an advantage. Retention is applied before quantization, which is the order a system compressing before
+# storage would use and the order the budget assumes.
+#
+# The third arm of the family - a quarter of the tokens at bf16, 4.000 bits per original token - is the already
+# measured m4_qa_span. It is not duplicated under an m4x_ name because the config name enters the experiment
+# identity, so a rename would be a second identical run rather than a reference to the first.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4x_half8bit
+compression:
+  scorer: query_attention
+  ratio: 0.5
+  unit: span
+quantization:
+  keys: {bits: 8, axis: group_token, group_size: 128}
+  values: {bits: 8, axis: per_token}
+task:
+  kind: retention
+  n_samples: 120
+seed: 0
