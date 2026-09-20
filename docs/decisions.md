@@ -983,11 +983,15 @@ Paired over the 117 shared samples:
   which is most of what it gave the oracle. It costs nothing but a punctuation pass.
 - **At token granularity both "smart" scorers lose to keeping the tail.** `window_attention` is 16 points
   *worse* than recency and `key_norm` is 27 points worse. Token-level importance scoring is not merely weak
-  here; it is actively harmful relative to the trivial baseline.
+  here; it is actively harmful relative to the trivial baseline. *(Scoped by D36: this holds for
+  **query-agnostic** scoring only. A query-aware scorer at the same token granularity beats recency by 41
+  points, so the separating factor is query-awareness, not token-level scoring as such.)*
 - **The problem decomposes cleanly, and the two halves have different prospects.** The unit is worth ~20 points
   and is free. Locating the fact is worth the remaining ~47 points and is unsolved: `kept_target` is 0.42 for
-  the best real scorer against 1.00 for the oracle. Improving the *score* is the hard half; changing the *unit*
-  is the free half that the literature does not vary.
+  the best query-agnostic scorer against 1.00 for the oracle. Improving the *score* is the hard half; changing
+  the *unit* is the free half that the literature does not vary. *(D36 solved the hard half for the case where
+  the query is known — a query-aware scorer reaches kept_target 1.00 — at the cost of no longer working on a
+  prefix cache shared across queries.)*
 - **A fairness caveat that changes the reading, and the arm that settles it.** `window_attention` here is
   **query-agnostic**, while SnapKV and H2O place their observation window at the end of a prompt that contains
   the question — their scorer is effectively query-aware. Reporting only the agnostic variant as
@@ -997,3 +1001,47 @@ Paired over the 117 shared samples:
   they cannot be computed at prefill time and a prefix cache shared across queries cannot use them — which
   `window_attention` can. Until it lands, the "token-level scoring loses to recency" statement is established
   for the query-agnostic case only.
+
+## D36 — Query-awareness dominates, the unit compounds with it, and my "oracle" was not a ceiling (2026-09-20)
+
+The fairness arm from D35 landed and reversed two of that entry's readings. Same 25% budget, 117 samples.
+
+| arm | kept_target | task failure |
+|---|---|---|
+| **`query_attention` @ span** | 1.000 | **0.0256** |
+| `oracle_keep_sentence` | 1.000 | 0.1538 |
+| **`query_attention` @ token** | 0.867 | 0.2821 |
+| `oracle_keep_target` | 1.000 | 0.5641 |
+| `window_attention` @ span | 0.419 | 0.6239 |
+| `recency` | 0.316 | 0.6923 |
+| `window_attention` @ token | 0.203 | 0.8547 |
+
+| contrast | difference | p | discordant |
+|---|---|---|---|
+| query-awareness at token granularity (`wa` to `qa`) | **+0.5726 [+0.4701, +0.6752]** | 1.0e-14 | 75 |
+| the unit, for the query-aware scorer (`qa` token to span) | **+0.2564 [+0.1795, +0.3333]** | 4.3e-08 | 30 |
+| the full deployable stack against recency | **+0.6667 [+0.5812, +0.7521]** | 1.0e-18 | 78 |
+| `oracle_keep_sentence` to `query_attention` @ span | **+0.1282 [+0.0684, +0.1966]** | 1.1e-04 | 15 |
+
+- **Retraction 1: `oracle_keep_sentence` is not a ceiling, and D34/D35 should not have called it one.** A real
+  method beats it by 13 points. The reason is plain in hindsight: that arm keeps the fact's sentence and fills
+  the *rest* of its budget by recency, so it spends a fifth of the cache on the tail regardless of relevance.
+  An oracle is an upper bound only for the policy class it represents; this one is "the ground-truth-sentence
+  policy", not "the best possible use of 25%". Every use of the word ceiling for it is withdrawn.
+- **Retraction 2: "token-level importance scoring is actively harmful" holds only for query-agnostic scoring.**
+  D35 measured `window_attention` losing to recency by 16 points and generalised too far. `query_attention` at
+  the same token granularity *beats* recency by 41 points. The correct statement is that **query-awareness,
+  not the score family, is what separates a useful token scorer from a harmful one** — and it is worth 57
+  points, the largest single effect measured in M4.
+- **What survives, strengthened.** The unit effect is real for every scorer tried and compounds with
+  query-awareness: +23 points for `window_attention`, +18 for `key_norm`, **+26 for `query_attention`**, whose
+  span arm reaches 0.0256 — a 96% cut in cached tokens costing 2.6% of answers.
+- **The cost that makes this a trade rather than a free win.** `query_attention` cannot be computed at prefill
+  time: its scores depend on the query, so a prefix cache shared across queries cannot use it, while
+  `window_attention` can. M5 therefore has two regimes — **query known at compression time**, where query-aware
+  span retention is extremely strong, and **shared prefix caches**, where the best available is
+  `window_attention` @ span at 0.624 and the gap to 0.026 is the open problem.
+- **Method note.** This is the seventh finding in the project withdrawn or re-scoped after a control, and the
+  control existed only because reporting a query-agnostic scorer as "attention-based importance" would have
+  compared the literature against a weaker version of itself. Without that arm, M4 would have concluded
+  "attention-based importance loses to recency".
