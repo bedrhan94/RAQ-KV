@@ -9,6 +9,10 @@ What a scorer is allowed to see matters as much as what it computes, so it is pa
 * ``recency`` and the norm scorers see only the cache. Deployable as-is.
 * ``window_attention`` additionally runs the last few context tokens through the model. Still deployable — it
   needs no knowledge of the query — but it costs a forward pass and eager attention (D5).
+* ``query_attention`` runs the **query** against the cache. That is what SnapKV and H2O effectively do, since
+  their observation window sits at the end of a prompt that contains the question, so leaving it out would
+  compare the literature against a weaker version of itself. Its cost is real: the scores depend on the query,
+  so they cannot be computed at prefill time and a shared prefix cache cannot use them.
 * the **oracles** see the probe's ground-truth spans. They are not methods and are never reported as one; they
   exist to bound what any scorer could achieve, and the more useful of the two is the *inverse* oracle.
 """
@@ -32,6 +36,7 @@ class ScoreContext:
     snapshot: KVSnapshot
     context_ids: torch.Tensor | None = None  # [1, cache_len]: the cached tokens themselves
     model: nn.Module | None = None  # for scorers that need a forward pass
+    query_ids: torch.Tensor | None = None  # QUERY-AWARE ONLY: not available at prefill time
     target_tokens: tuple[int, ...] = ()  # ORACLE ONLY: cached indices holding the answer value
     distractor_tokens: tuple[int, ...] = ()  # ORACLE ONLY
     sentence_tokens: tuple[int, ...] = ()  # ORACLE ONLY: the whole sentence the answer sits in
@@ -136,6 +141,50 @@ class WindowAttention:
         return (scores / len(out.attentions)).cpu()
 
 
+class QueryAttention:
+    """Attention paid to each cached token **by the query**, summed over heads and layers.
+
+    Why this exists separately from :class:`WindowAttention`: SnapKV and H2O put their observation window at the
+    end of the *prompt*, and in their setting the question sits there — so their scorer is effectively
+    query-aware, while `window_attention` as built here is query-agnostic (the probe keeps its query outside the
+    cache). Reporting only the query-agnostic variant and calling it "attention-based importance" would compare
+    the literature against a weaker version of itself, which is the baseline failure the review protocol treats
+    as a red line.
+
+    It is not free, and the cost is a real one rather than a technicality: the scores depend on the query, so
+    they cannot be computed at prefill time and a prefix cache shared across queries cannot use them. It is the
+    right *upper bound* for attention-based methods, and it is labelled as needing the query.
+    """
+
+    name = "query_attention"
+    needs_model = True
+    is_oracle = False
+    needs_query = True
+
+    def score(self, ctx: ScoreContext) -> torch.Tensor:
+        if ctx.model is None or ctx.query_ids is None:
+            raise ValueError("query_attention needs the model and the query ids")
+        n = ctx.snapshot.seq_len
+        q = int(ctx.query_ids.shape[1])
+        if q == 0:
+            return torch.zeros(n, dtype=torch.float32)
+        device = ctx.query_ids.device
+        out = ctx.model(
+            input_ids=ctx.query_ids,
+            past_key_values=ctx.snapshot.to_cache(),
+            position_ids=torch.arange(n, n + q, device=device, dtype=torch.long).unsqueeze(0),
+            use_cache=True,
+            output_attentions=True,
+            logits_to_keep=1,
+        )
+        if not out.attentions or out.attentions[0] is None:
+            raise RuntimeError("no attention weights returned; the model must use eager attention (D5)")
+        scores = torch.zeros(n, dtype=torch.float32, device=device)
+        for layer_attn in out.attentions:
+            scores += layer_attn.to(torch.float32).sum(dim=(0, 1, 2))[:n]
+        return (scores / len(out.attentions)).cpu()
+
+
 class OracleKeepTarget:
     """Ground truth: the answer-bearing tokens rank highest. An upper bound, and a weak one.
 
@@ -229,6 +278,8 @@ class OracleDropTarget:
 def build_scorer(name: str, window: int = 64) -> Scorer:
     if name == "window_attention":
         return WindowAttention(window)
+    if name == "query_attention":
+        return QueryAttention()
     table: dict[str, Scorer] = {
         s.name: s for s in (Recency(), KeyNorm(), ValueNorm(), OracleKeepTarget(),
                             OracleKeepSentence(), OracleKeepRandomSpan(), OracleDropTarget())

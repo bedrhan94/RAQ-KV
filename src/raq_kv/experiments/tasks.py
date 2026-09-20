@@ -822,7 +822,7 @@ class Retention:
         roles = self._role_tokens(sample, sample.cache_len)
         control = self._control_span(sample, sample.cache_len, roles["sentence"])
         scores = self.scorer.score(ScoreContext(
-            snapshot=snapshot, context_ids=context_ids, model=model,
+            snapshot=snapshot, context_ids=context_ids, model=model, query_ids=query_ids,
             target_tokens=roles["target"], distractor_tokens=roles["distractor"],
             sentence_tokens=roles["sentence"], control_span_tokens=control))
         c = self.cfg.compression

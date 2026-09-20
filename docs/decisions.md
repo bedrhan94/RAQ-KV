@@ -952,3 +952,48 @@ interpretable without *their own* local context, not merely without some context
   oracles rather than deployable scorers. What is established is a *ceiling comparison* between two units, not
   that any practical span scorer achieves it. A real span-level method still has to be built and beaten against
   KIVI's own optimum (`docs/literature.md`).
+
+## D35 — The unit transfers to real scorers; locating the fact does not (2026-09-20)
+
+D34 established the span result with oracles. This is the deployable version: punctuation segmentation from the
+tokenizer's own pieces, no ground truth, same 25% budget, 117 samples, sink protected.
+
+| arm | kept_target | task failure |
+|---|---|---|
+| `oracle_keep_sentence` (ceiling) | 1.000 | **0.154** |
+| `oracle_keep_target` | 1.000 | 0.564 |
+| `oracle_keep_random_span` | 1.000 | 0.581 |
+| **`window_attention` @ span** | 0.419 | **0.624** |
+| `recency` (trivial baseline) | 0.316 | 0.692 |
+| `key_norm` @ span | 0.248 | 0.778 |
+| **`window_attention` @ token** | 0.203 | 0.855 |
+| `key_norm` @ token | 0.216 | 0.957 |
+
+Paired over the 117 shared samples:
+
+| contrast | difference | p | discordant |
+|---|---|---|---|
+| `window_attention` token → span | **+0.2308 [+0.1624, +0.3077]** | 2.0e-07 | 27 |
+| `key_norm` token → span | **+0.1795 [+0.1111, +0.2479]** | 4.6e-06 | 21 |
+| `recency` → `window_attention` @ span | +0.0684 [+0.0256, +0.1197] | 0.0047 | 8 |
+| `window_attention` @ span → oracle | **+0.4701 [+0.3761, +0.5556]** | 1.2e-13 | 55 |
+| `recency` → `window_attention` @ **token** | **−0.1624 [−0.2479, −0.0769]** | 0.00064 | 31 |
+
+- **The unit effect is not an artefact of oracles.** Span expansion improves both real scorers by 18–23 points,
+  which is most of what it gave the oracle. It costs nothing but a punctuation pass.
+- **At token granularity both "smart" scorers lose to keeping the tail.** `window_attention` is 16 points
+  *worse* than recency and `key_norm` is 27 points worse. Token-level importance scoring is not merely weak
+  here; it is actively harmful relative to the trivial baseline.
+- **The problem decomposes cleanly, and the two halves have different prospects.** The unit is worth ~20 points
+  and is free. Locating the fact is worth the remaining ~47 points and is unsolved: `kept_target` is 0.42 for
+  the best real scorer against 1.00 for the oracle. Improving the *score* is the hard half; changing the *unit*
+  is the free half that the literature does not vary.
+- **A fairness caveat that changes the reading, and the arm that settles it.** `window_attention` here is
+  **query-agnostic**, while SnapKV and H2O place their observation window at the end of a prompt that contains
+  the question — their scorer is effectively query-aware. Reporting only the agnostic variant as
+  "attention-based importance" would compare the literature against a weaker version of itself, which is the
+  baseline failure the review protocol treats as a red line. `query_attention` (running) scores cached tokens
+  by the attention the **query** pays them. Its cost is real and stated: the scores depend on the query, so
+  they cannot be computed at prefill time and a prefix cache shared across queries cannot use them — which
+  `window_attention` can. Until it lands, the "token-level scoring loses to recency" statement is established
+  for the query-agnostic case only.

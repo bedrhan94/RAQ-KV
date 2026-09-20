@@ -287,7 +287,7 @@ class CompressionConfig(StrictModel):
     unconditionally, as KIVI, H2O and SnapKV all do, so a scorer is not judged on whether it rediscovers recency.
     """
 
-    scorer: Literal["recency", "key_norm", "value_norm", "window_attention",
+    scorer: Literal["recency", "key_norm", "value_norm", "window_attention", "query_attention",
                     "oracle_keep_target", "oracle_keep_sentence", "oracle_keep_random_span",
                     "oracle_drop_target"] = "recency"
     ratio: float = Field(default=1.0, gt=0.0, le=1.0, description="Share of original cached tokens kept")

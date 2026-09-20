@@ -1,0 +1,24 @@
+# M4 — query-aware attention at span granularity.
+#
+# Why this arm exists: window_attention as built here is query-AGNOSTIC, but SnapKV and H2O place their
+# observation window at the end of a prompt that contains the question, so their scorer is effectively
+# query-aware. Reporting only the agnostic variant and calling it "attention-based importance" would compare
+# the literature against a weaker version of itself. This is the fair upper bound for attention methods.
+#
+# Its cost is real and is stated rather than hidden: the scores depend on the query, so they cannot be computed
+# at prefill time and a prefix cache shared across queries cannot use them. Where window_attention can.
+#
+# Reference points at the same 25% budget: recency 0.692, window_attention token 0.855 / span 0.624,
+# key_norm token 0.957 / span 0.778, and the sentence oracle 0.154.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4_qa_span
+compression:
+  scorer: query_attention
+  ratio: 0.25
+  unit: span
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

@@ -73,7 +73,8 @@ def _protection_token(cfg: ExperimentConfig) -> str:
     return "-".join(parts) or "noecc"
 
 
-_SCORER_SHORT = {"recency": "rec", "key_norm": "kn", "value_norm": "vn", "window_attention": "wa",
+_SCORER_SHORT = {"recency": "rec", "key_norm": "kn", "value_norm": "vn",
+                 "window_attention": "wa", "query_attention": "qa",
                  "oracle_keep_target": "oK", "oracle_drop_target": "oD",
                  "oracle_keep_sentence": "oS", "oracle_keep_random_span": "oR"}
 
