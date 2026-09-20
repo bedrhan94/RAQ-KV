@@ -803,7 +803,8 @@ class Retention:
         scores = self.scorer.score(ScoreContext(
             snapshot=snapshot, context_ids=context_ids, model=model,
             target_tokens=roles["target"], distractor_tokens=roles["distractor"]))
-        plan = select_keep(scores, self.cfg.compression.ratio, self.cfg.compression.protect_recent)
+        plan = select_keep(scores, self.cfg.compression.ratio, self.cfg.compression.protect_recent,
+                           self.cfg.compression.protect_initial)
         pruned = apply_retention(snapshot, plan)
 
         gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=pruned, eos_token_ids=eos)

@@ -291,6 +291,10 @@ class CompressionConfig(StrictModel):
                     "oracle_keep_target", "oracle_drop_target"] = "recency"
     ratio: float = Field(default=1.0, gt=0.0, le=1.0, description="Share of original cached tokens kept")
     protect_recent: int = Field(default=0, ge=0, description="Most recent tokens always kept")
+    # Position 0 is an attention sink: dropping it alone fails every answer on this probe (D32). Protecting an
+    # initial block is what StreamingLLM and every practical method do, so it is the default rather than a flag
+    # each config must remember.
+    protect_initial: int = Field(default=4, ge=0, description="Initial tokens always kept (attention sink)")
     window: int = Field(default=64, gt=0, description="Observation window for window_attention")
 
 

@@ -1,0 +1,21 @@
+# M4 pilot — read the rate before sizing the grid (the rule D31 exists to enforce).
+#
+# The most aggressive retention with the trivial baseline. Its job is not to answer anything: it is to measure
+# how variable the endpoint is, so the grid that follows is sized from a rate rather than from a guess. Two
+# power calculations in M3 were built on effect sizes estimated from a handful of events and both were wrong.
+#
+# The probe has a structural signal that makes this informative anyway. Target facts sit at nominal depths 0.1,
+# 0.5 and 0.9, so recency at 25% should keep the deep targets and discard the shallow ones — accuracy broken out
+# by depth is therefore a built-in check that the pruning is doing what it claims, and the depth spread is what
+# any scorer has to beat.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4_pilot_recency25
+compression:
+  scorer: recency
+  ratio: 0.25
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

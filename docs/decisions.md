@@ -823,3 +823,40 @@ in *which* nine are left exposed — D the early layers 0–8, E the late layers
   than a proxy: D21's whole-row bursts, where late layers carried all 14 failures and early layers none. That is
   the opposite sign to D18's, so a crossover remains the live hypothesis — but it needs the burst fault model,
   not more samples of uniform SEU. Deferred to M5 with the fault model as an allocator input, not re-run here.
+
+## D32 — The attention sink is one token, and it is worth every answer (2026-09-20)
+
+- **How it surfaced.** The first M4 gate ran two arms: drop only the answer-bearing tokens (99% retained), and
+  keep only them (5% retained). Both failed **~100%** of answers. The second was built as a sanity control and
+  should have been near ceiling, so its failure said the pruning path was broken, not that targets matter.
+- **A one-minute diagnostic separated the causes**, on 12 probe samples at 512 tokens, each condition against
+  the same golden:
+
+  | dropped | task failures |
+  |---|---|
+  | nothing (control) | **0/12** |
+  | ten middle filler tokens | **1/12 = 8.3%** |
+  | **token 0 alone** | **12/12 = 100%** |
+  | tokens 0–3 | 12/12 = 100% |
+  | the answer-bearing tokens | **12/12 = 100%** |
+
+- **Position 0 is an attention sink.** Dropping that one token out of ~1000 fails every answer. This is the
+  StreamingLLM phenomenon and every practical retention method keeps an initial block for it; our design did
+  not, so *both* gate arms dropped the sink in most samples and measured it instead of what they were built to
+  measure. Both runs were retired with `superseded_by` and rerun-marked; no records deleted.
+- **The target tokens are load-bearing too**, which the confounded gate could not establish: 12/12 against
+  8.3% for the same number of filler tokens. So the probe *can* carry retention research, and the gate's
+  conclusion survives — but only because the diagnostic separated it from the sink, not because the gate showed
+  it.
+- **Decision.** `select_keep` protects an initial block by default (`protect_initial=4`), alongside the recent
+  tail it already protected. A default that silently changes results is normally bad practice; here the
+  alternative is that every future config must remember a rule whose violation costs 100% of the outcome, and
+  the default is tested rather than assumed.
+- **The finding that outlives the bug.** Combined with D21 this resolves the M2 redundancy puzzle. Destroying
+  the answer token's entire row **in one layer** cost 2.14% of answers; **removing the same token from the
+  cache** costs 100%. The information lives in that token and nowhere else, but it is replicated across the 28
+  layers' representations of it, so losing one layer's copy is survivable and losing the token is not.
+- **Consequence for M5.** The two axes have different granularity, and it is now measured rather than assumed:
+  **retention is all-or-nothing across layers** — there is no such thing as keeping a token in some layers —
+  while protection *can* be layer-selective and, per D31, does not even need to be. An allocator that treats
+  both as per-(layer, token) decisions is modelling a choice that does not exist on one of the axes.

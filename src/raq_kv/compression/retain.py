@@ -28,6 +28,7 @@ class RetentionPlan:
     keep: torch.Tensor  # int64, strictly increasing
     original_tokens: int
     protected_recent: int
+    protected_initial: int = 0
 
     @property
     def retained(self) -> int:
@@ -50,15 +51,25 @@ class RetentionPlan:
 
     def to_dict(self) -> dict[str, Any]:
         return {"tokens_original": self.original_tokens, "tokens_retained": self.retained,
-                "retention_ratio": self.ratio, "protected_recent": self.protected_recent}
+                "retention_ratio": self.ratio, "protected_recent": self.protected_recent,
+                "protected_initial": self.protected_initial}
 
 
-def select_keep(scores: torch.Tensor, ratio: float, protect_recent: int = 0) -> RetentionPlan:
-    """Keep the highest-scoring ``ratio`` of tokens, always keeping the last ``protect_recent``.
+def select_keep(scores: torch.Tensor, ratio: float, protect_recent: int = 0,
+                protect_initial: int = 4) -> RetentionPlan:
+    """Keep the highest-scoring ``ratio`` of tokens, always keeping the first ``protect_initial`` and the last
+    ``protect_recent``.
 
-    The recent tail is protected explicitly rather than left to the scorer. Every published method does this —
-    KIVI keeps a 128-token residual window, H2O and SnapKV keep a recent block — and without it a scorer is
-    partly judged on whether it happens to rediscover recency, which is not the question.
+    **The initial tokens are protected by default, and the default is not conservatism.** Position 0 is an
+    attention sink: measured on this probe, dropping token 0 *alone* — one token of about a thousand — fails
+    12 of 12 answers, while dropping ten middle filler tokens fails 1 of 12. A retention study that does not
+    pin the sink measures the sink instead of its scorer, which is exactly what the first M4 gate did before
+    this argument existed. StreamingLLM reports the same phenomenon and every practical method keeps an initial
+    block for it.
+
+    The recent tail is protected for a different reason: every published method keeps one (KIVI a 128-token
+    residual window, H2O and SnapKV a recent block), so without it a scorer is partly judged on whether it
+    happens to rediscover recency, which is not the question being asked.
     """
     if not 0.0 < ratio <= 1.0:
         raise ValueError(f"ratio must be in (0, 1], got {ratio}")
@@ -66,22 +77,26 @@ def select_keep(scores: torch.Tensor, ratio: float, protect_recent: int = 0) -> 
     if scores.ndim != 1:
         raise ValueError("scores must be 1-D, one per cached token")
     budget = max(1, min(n, round(n * ratio)))
-    protect = min(protect_recent, n, budget)
-    forced = torch.arange(n - protect, n) if protect else torch.empty(0, dtype=torch.long)
+    head = min(protect_initial, n, budget)
+    tail = min(protect_recent, max(0, n - head), max(0, budget - head))
+    mask = torch.ones(n, dtype=torch.bool)
+    if head:
+        mask[:head] = False
+    if tail:
+        mask[n - tail :] = False
+    forced = torch.cat([torch.arange(head), torch.arange(n - tail, n) if tail else torch.empty(0, dtype=torch.long)])
 
-    remaining = budget - protect
+    remaining = budget - head - tail
     if remaining > 0:
-        mask = torch.ones(n, dtype=torch.bool)
-        if protect:
-            mask[n - protect :] = False
         candidates = torch.nonzero(mask, as_tuple=False).squeeze(-1)
-        picked = candidates[torch.topk(scores[candidates].to(torch.float32), remaining).indices]
+        remaining = min(remaining, int(candidates.numel()))
+        picked = candidates[torch.topk(scores[candidates].to(torch.float32), remaining).indices]             if remaining > 0 else torch.empty(0, dtype=torch.long)
     else:
         picked = torch.empty(0, dtype=torch.long)
 
     # Sorted, because select_tokens requires strictly increasing indices and top-k returns score order.
-    keep = torch.cat([picked, forced]).to(torch.long).sort().values
-    return RetentionPlan(keep=keep, original_tokens=n, protected_recent=protect)
+    keep = torch.cat([picked, forced.to(torch.long)]).to(torch.long).unique(sorted=True)
+    return RetentionPlan(keep=keep, original_tokens=n, protected_recent=tail, protected_initial=head)
 
 
 def apply_retention(snapshot: KVSnapshot, plan: RetentionPlan) -> KVSnapshot:
