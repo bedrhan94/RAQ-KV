@@ -13,6 +13,7 @@ from typing import Any, Protocol
 import torch
 
 from raq_kv.budget.bit_accounting import full_precision_kv_budget
+from raq_kv.compression.retain import apply_retention, select_keep
 from raq_kv.config.schema import (
     CachePPLTask,
     ExperimentConfig,
@@ -25,6 +26,7 @@ from raq_kv.config.schema import (
     QuantSensitivityTask,
     QuantSpec,
     RAQProbeConfig,
+    RetentionTask,
 )
 from raq_kv.data.gsm8k import build_gsm8k
 from raq_kv.data.prompts import PromptSample, char_span_to_tokens, samples_fingerprint
@@ -52,6 +54,7 @@ from raq_kv.faults.storage import (
     storage_regions,
     total_stored_bits,
 )
+from raq_kv.importance.scorers import ScoreContext, build_scorer
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.loader import LoadedModel, load_model, load_tokenizer
 from raq_kv.quantization.apply import QuantReport, quantize_region, quantize_snapshot, quantize_to_codes
@@ -730,6 +733,102 @@ def _storage_shares(regions: list[Any]) -> dict[str, int]:
     return shares
 
 
+class Retention:
+    """Token retention on the probe: how much of the cache can go, and does the choice of *which* tokens matter?
+
+    Per sample the context is prefilled once. The golden answer is generated from the unpruned cache in the same
+    run — the eager attention that ``window_attention`` needs changes the experiment identity, so no earlier
+    golden applies — then the scorer ranks the cached tokens, the plan keeps its share, and the answer is
+    regenerated from the pruned cache.
+
+    The diagnostic that makes the table readable is ``kept_fraction_target``: a scorer that holds accuracy while
+    discarding the answer-bearing tokens has not found importance, it has found that the model does not need
+    them. That is a different and more interesting result, and it is the D19-D21 redundancy question.
+    """
+
+    def __init__(self, cfg: ExperimentConfig) -> None:
+        assert isinstance(cfg.task, RetentionTask) and cfg.compression is not None
+        self.cfg = cfg
+        self.task: RetentionTask = cfg.task
+        self.compression = cfg.compression
+        self.tokenizer = load_tokenizer(cfg.model)
+        samples = build_raq_probe(cfg.dataset, self.tokenizer, dict(cfg.model.chat_template_kwargs))
+        if self.task.n_samples is not None and self.task.n_samples < len(samples):
+            picked = random.Random(derive_seed(cfg.seed, "probe_subset")).sample(samples, self.task.n_samples)
+            samples = sorted(picked, key=lambda s: s.sample_id)
+        self.samples = {s.sample_id: s for s in samples}
+        self._fingerprint = samples_fingerprint(samples)
+        self.scorer = build_scorer(self.compression.scorer, self.compression.window)
+        self.lm: LoadedModel | None = None
+
+    def unit_keys(self) -> list[str]:
+        return list(self.samples)
+
+    def data_fingerprint(self) -> dict[str, Any]:
+        return {"raq_probe_samples_sha256": self._fingerprint, "n_samples": len(self.samples)}
+
+    def setup(self) -> dict[str, Any]:
+        self.lm = load_model(self.cfg.model)
+        if self.scorer.needs_model and self.cfg.model.attn_implementation != "eager":
+            raise ValueError(f"scorer '{self.scorer.name}' needs attention weights, so the model must use eager "
+                             f"attention (D5); this config asks for '{self.cfg.model.attn_implementation}'")
+        return {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict(),
+                "scorer": self.scorer.name, "scorer_is_oracle": self.scorer.is_oracle}
+
+    @staticmethod
+    def _role_tokens(sample: PromptSample, cache_len: int) -> dict[str, tuple[int, ...]]:
+        target, distractor = [], []
+        for span in sample.spans:
+            if span.label != "fact_value":
+                continue
+            bucket = target if span.role == "target" else distractor
+            bucket.extend(range(span.token_start, min(span.token_end, cache_len)))
+        return {"target": tuple(target), "distractor": tuple(distractor)}
+
+    def run_unit(self, unit_key: str) -> dict[str, Any]:
+        assert self.lm is not None and self.cfg.compression is not None
+        sample = self.samples[unit_key]
+        model, dev, tok = self.lm.model, self.lm.device, self.lm.tokenizer
+        ids = sample.prompt_ids.to(dev).unsqueeze(0)
+        context_ids, query_ids = ids[:, : sample.cache_len], ids[:, sample.cache_len :]
+        eos = set(self.lm.eos_token_ids)
+
+        reset_peak(dev)
+        snapshot = prefill(model, context_ids)
+        golden_gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=snapshot, eos_token_ids=eos)
+        golden_text = tok.decode(golden_gen.tokens, skip_special_tokens=True)
+        golden_score = SCORERS[sample.scorer](golden_text, sample.reference)
+
+        roles = self._role_tokens(sample, sample.cache_len)
+        scores = self.scorer.score(ScoreContext(
+            snapshot=snapshot, context_ids=context_ids, model=model,
+            target_tokens=roles["target"], distractor_tokens=roles["distractor"]))
+        plan = select_keep(scores, self.cfg.compression.ratio, self.cfg.compression.protect_recent)
+        pruned = apply_retention(snapshot, plan)
+
+        gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=pruned, eos_token_ids=eos)
+        text = tok.decode(gen.tokens, skip_special_tokens=True)
+        score = SCORERS[sample.scorer](text, sample.reference)
+
+        return {
+            "sample_id": unit_key,
+            "meta": sample.meta,
+            **kv_record_fields(self.lm, pruned, sample.cache_len),
+            **plan.to_dict(),
+            "scorer": self.scorer.name,
+            "golden_correct": bool(golden_score["correct"]),
+            "golden_prediction": golden_text,
+            "prediction": text,
+            "answer_changed": text != golden_text,
+            "task_failure": bool(golden_score["correct"] and not score["correct"]),
+            "kept_fraction_target": plan.kept_fraction_of(roles["target"]),
+            "kept_fraction_distractor": plan.kept_fraction_of(roles["distractor"]),
+            "n_target_tokens": len(roles["target"]),
+            "gen_margin_min_all": min(gen.margins) if gen.margins else None,
+            **{f"pruned_{k}": v for k, v in score.items()},
+        }
+
+
 def build_task(cfg: ExperimentConfig) -> Task:
     if isinstance(cfg.task, CachePPLTask):
         return CachePPL(cfg)
@@ -745,4 +844,6 @@ def build_task(cfg: ExperimentConfig) -> Task:
         return FaultQA(cfg)
     if isinstance(cfg.task, ProtectionArmTask):
         return ProtectionArm(cfg)
+    if isinstance(cfg.task, RetentionTask):
+        return Retention(cfg)
     raise NotImplementedError(f"no task for kind '{cfg.task.kind}'")

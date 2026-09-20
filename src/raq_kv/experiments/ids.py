@@ -73,9 +73,23 @@ def _protection_token(cfg: ExperimentConfig) -> str:
     return "-".join(parts) or "noecc"
 
 
+_SCORER_SHORT = {"recency": "rec", "key_norm": "kn", "value_norm": "vn", "window_attention": "wa",
+                 "oracle_keep_target": "oK", "oracle_drop_target": "oD"}
+
+
+def _pruning_token(cfg: ExperimentConfig) -> str:
+    """e.g. ``p0`` (nothing pruned), ``p50rec`` (half kept by recency), ``p25wa+r32`` (with a protected tail)."""
+    c = cfg.compression
+    if c is None or c.ratio >= 1.0:
+        return "p0"
+    tail = f"+r{c.protect_recent}" if c.protect_recent else ""
+    return f"p{round(c.ratio * 100)}{_SCORER_SHORT[c.scorer]}{tail}"
+
+
 def slug(cfg: ExperimentConfig) -> str:
-    # M0 configs have no quantization / ECC / fault / pruning sections: they are full precision, unprotected,
-    # fault-free and unpruned by construction. Later schema versions derive these tokens from their sections.
+    # M0 configs have no quantization / ECC / fault / compression sections: they are full precision,
+    # unprotected, fault-free and unpruned by construction, and each token below reproduces the literal the
+    # slug used before its section existed, so earlier experiment ids stay valid.
     device = cfg.model.device.split(":")[0]
     version = getattr(cfg.dataset, "version", "")
     parts = [
@@ -85,7 +99,7 @@ def slug(cfg: ExperimentConfig) -> str:
         _quant_token(cfg),
         _protection_token(cfg),
         "nofault",
-        "p0",
+        _pruning_token(cfg),
         device,
         f"s{cfg.seed}",
     ]

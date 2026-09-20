@@ -1,0 +1,23 @@
+# M4 gate — can the probe support retention research at all?
+#
+# The cheapest decisive question, run before any scorer is evaluated. This arm drops ONLY the answer-bearing
+# tokens (about 1% of the cache) and keeps everything else. If accuracy survives, the target tokens are not
+# load-bearing: the model recovers the fact from elsewhere in the context, no importance scorer can be
+# evaluated on this probe, and M4 has to change vehicle before producing a single table. That is the D19-D21
+# redundancy question, whose answer is genuinely unknown — whole-row corruption of the answer token cost only
+# 2.14% of answers (D21), which is not obviously consistent with the token being necessary.
+#
+# The mirror arm (m4_gate_keep_target) drops everything EXCEPT the answer tokens. It is expected to be near
+# ceiling by construction; it is here because a ceiling it fails to reach would mean the pruning path itself is
+# broken, and that must be excluded before any retention number is believed.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4_gate_keep_target
+compression:
+  scorer: oracle_keep_target
+  ratio: 0.05
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

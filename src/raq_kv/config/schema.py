@@ -178,6 +178,18 @@ class FaultQATask(StrictModel):
     n_control: int = Field(default=1, ge=0)
 
 
+class RetentionTask(StrictModel):
+    """Token retention on the probe: keep a fraction of the cached tokens, chosen by an importance scorer.
+
+    The golden answer is generated from the *unpruned* cache in the same run, so every arm carries its own
+    reference and nothing is compared across experiments (the eager attention that ``window_attention`` needs
+    changes ``attn_implementation``, and therefore the experiment identity, so an M0-M3 golden would not apply).
+    """
+
+    kind: Literal["retention"] = "retention"
+    n_samples: int | None = Field(default=60, description="Probe samples to use; None means all")
+
+
 class ProtectionArmTask(StrictModel):
     """One M3 arm at one bit error rate: does this arm's way of spending its bits survive faults better?
 
@@ -196,7 +208,7 @@ class ProtectionArmTask(StrictModel):
 
 Task = Annotated[
     CachePPLTask | LatencyTask | QATask | QuantSensitivityTask | FaultInjectionTask | FaultQATask
-    | ProtectionArmTask,
+    | ProtectionArmTask | RetentionTask,
     Field(discriminator="kind"),
 ]
 
@@ -208,6 +220,7 @@ _TASK_DATASETS: dict[str, tuple[str, ...]] = {
     "fault_injection": ("wikitext2",),
     "fault_qa": ("raq_probe",),
     "protection_arm": ("raq_probe",),
+    "retention": ("raq_probe",),
 }
 
 
@@ -266,6 +279,21 @@ class ProtectionConfig(StrictModel):
         return self
 
 
+class CompressionConfig(StrictModel):
+    """Which cached tokens to keep, and who decides (M4).
+
+    ``ratio`` is a fraction of the ORIGINAL cached tokens, never of some already-reduced count: after pruning,
+    bits per retained token improves for free and would flatter every policy. ``protect_recent`` keeps a tail
+    unconditionally, as KIVI, H2O and SnapKV all do, so a scorer is not judged on whether it rediscovers recency.
+    """
+
+    scorer: Literal["recency", "key_norm", "value_norm", "window_attention",
+                    "oracle_keep_target", "oracle_drop_target"] = "recency"
+    ratio: float = Field(default=1.0, gt=0.0, le=1.0, description="Share of original cached tokens kept")
+    protect_recent: int = Field(default=0, ge=0, description="Most recent tokens always kept")
+    window: int = Field(default=64, gt=0, description="Observation window for window_attention")
+
+
 class OutputConfig(StrictModel):
     root: str = "outputs"
 
@@ -279,6 +307,7 @@ class ExperimentConfig(StrictModel):
     task: Task
     quantization: QuantizationConfig | None = None
     protection: ProtectionConfig | None = None
+    compression: CompressionConfig | None = None
     output: OutputConfig = Field(default_factory=OutputConfig)
     notes: str = ""
 
@@ -286,6 +315,8 @@ class ExperimentConfig(StrictModel):
     def _check_lengths(self) -> ExperimentConfig:
         if self.dataset.name not in _TASK_DATASETS[self.task.kind]:
             raise ValueError(f"task '{self.task.kind}' does not support dataset '{self.dataset.name}'")
+        if isinstance(self.task, RetentionTask) and self.compression is None:
+            raise ValueError("a retention task needs a compression section; without one it is an M0b rerun")
         if isinstance(self.task, FaultInjectionTask | FaultQATask):
             if self.quantization is None:
                 raise ValueError(f"{self.task.kind} needs a quantization section: faults land in stored codes")
