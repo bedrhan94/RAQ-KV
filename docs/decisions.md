@@ -751,3 +751,31 @@ The deployable configuration is a range check, not a code, **at rates around 1e-
 stated rather than buried: the bounds need their own integrity (the ordered-and-finite self-check is free and
 caught one case; a checksum over 3584 bits would cost nothing and close the rest), and the sufficiency is
 rate-dependent in a way a single-rate table would hide.
+
+## D30 — The crossover, measured: where a free check stops matching a code (2026-09-20)
+
+Arm H (two float16 bounds per metadata region, **+0.075%** of storage, no error-correcting code) against arm G
+(metadata SECDED, **+2.3%**), paired over the 59 samples both answer correctly without faults:
+
+| | BER 1e-6 | BER 1e-5 |
+|---|---|---|
+| H, range check | **0.0000** | **0.0593** |
+| G, metadata SECDED | **0.0000** | **0.0000** |
+| H − G, paired | +0.0000 [0.0000, 0.0000], p = 1, **0 discordant samples** | **+0.0593 [+0.0381, +0.0847], p = 1.1e-5, 22 discordant** |
+
+- **At 1e-6 the free check is not merely comparable to the code, it is identical on every sample.** Thirty times
+  the storage buys nothing at this rate.
+- **At 1e-5 the code wins decisively.** The guard sees only the 3 of 16 float16 bits that push a scale out of its
+  clean range (measured coverage 20.1%, D29); the other thirteen are individually mild and, at ten times the
+  rate, accumulate. SECDED corrects all of them — 434 words per trial — and stays at zero.
+- **So the recommendation has a boundary, and the boundary is the result.** Below roughly 1e-6, spend 0.075% on a
+  plausibility check. Above it, spend 2.3% on metadata SECDED. In neither regime is uniform data ECC (14%) worth
+  its bits: arm B matched arm G at 1e-6 and neither differs from it in any measurement so far.
+- **Why this needed two rates.** A single-rate table would have supported "a free check is as good as a code",
+  which is true at 1e-6 and false one decade up. Reporting the rate at which an ordering changes, rather than an
+  ordering, is the form this kind of claim has to take — the same discipline D23 set for the fault model and D26
+  for the statistics.
+
+**Consequence for M5.** The protection axis reduces to a rate-dependent floor with two settings, both cheap. The
+allocator should take the deployment's expected error rate as an input and pick between them, rather than
+searching a protection dimension: there is nothing to search.
