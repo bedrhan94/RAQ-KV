@@ -860,3 +860,33 @@ in *which* nine are left exposed — D the early layers 0–8, E the late layers
   **retention is all-or-nothing across layers** — there is no such thing as keeping a token in some layers —
   while protection *can* be layer-selective and, per D31, does not even need to be. An allocator that treats
   both as per-(layer, token) decisions is modelling a choice that does not exist on one of the axes.
+
+## D33 — The answer tokens are necessary and not sufficient; the unit of retention is under test (2026-09-20)
+
+First real M4 measurement, at 25% retention on 117 probe samples answered correctly without pruning, with the
+attention sink protected (D32). Broken out by the depth at which the probe places its fact, because recency
+keeps deep targets for free and an aggregate would hide the whole comparison:
+
+| arm | shallow | middle | deep | kept_target (shallow/middle/deep) |
+|---|---|---|---|---|
+| recency | 1.000 | 1.000 | 0.027 | 0.00 / 0.00 / 1.00 |
+| oracle_keep_target | **0.773** | **0.861** | 0.027 | 1.00 / 1.00 / 1.00 |
+| oracle_drop_target (99% retained) | 0.977 | 0.972 | 1.000 | ~0.05 |
+
+- **Recency behaves exactly as the probe's construction predicts**, which is the check that the pruning path is
+  doing what it claims: it keeps the deep targets and drops the shallow ones, and its accuracy follows.
+- **The finding is the oracle.** Retaining **100% of the answer-value tokens** still fails **77% of shallow and
+  86% of middle-depth** questions, while dropping those same tokens fails 98%. The value tokens are
+  **necessary and not sufficient** — a pair of statements that a single arm could not have produced.
+- **Consequence: token-level importance may have a low ceiling on retrieval tasks.** If perfect identification
+  of the answer tokens does not rescue accuracy, then no token-level scorer can, and the literature's
+  token-scoring framing inherits that ceiling on this kind of task. That is a claim about the *unit* of
+  importance, not about any particular scorer, and it is testable rather than rhetorical.
+- **Next test, already running:** `oracle_keep_sentence` keeps the whole sentence the fact sits in. If it
+  rescues the shallow and middle questions, importance is a property of spans and token-level scoring is the
+  wrong granularity. If it does not, something larger than the sentence is load-bearing and the next candidate
+  is the document structure itself. Either answer redirects M4; neither leaves it where it was.
+- **Reporting rule adopted here.** Every retention number is broken out by target depth, and
+  `kept_fraction_target` and `kept_fraction_sentence` print next to accuracy always. A scorer that holds
+  accuracy while discarding the answer tokens has found redundancy, not importance (D32), and the only way to
+  see that is to keep the diagnostic beside the outcome.
