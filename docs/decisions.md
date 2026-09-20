@@ -907,12 +907,22 @@ Paired over the 117 shared samples: **+0.4103 [+0.3248, +0.5043], Wilcoxon p = 4
 discordant.** No floor effect, no clustering caveat, no underpowered null — the cleanest comparison in the
 project so far.
 
-**One confound is not yet excluded, and the control is running.** Both oracle arms keep the value tokens and
-hit the same budget, but the span arm spends part of that budget on a contiguous block *at the fact* while the
-token arm spends it on recency-filled tokens elsewhere. So "the value tokens need their local context" and "a
-contiguous block of context anywhere helps" both survive this table. `oracle_keep_random_span` places a
-same-sized contiguous window elsewhere in the document and separates them; until it lands, D34's mechanism
-sentence is one of two live readings, not the established one.
+**The confound is excluded, and it resolves in favour of locality.** Both oracle arms keep the value tokens
+and hit the same budget, but the span arm spends part of that budget on a contiguous block *at the fact* while
+the token arm spends it elsewhere — so "the value tokens need their local context" and "a contiguous block of
+context anywhere helps" both survived the table above. `oracle_keep_random_span` places a same-sized
+contiguous window elsewhere in the document, matched on budget, value tokens, contiguity and width:
+
+| arm at 25%, value tokens fully retained in all three | task failure |
+|---|---|
+| contiguous window **at the fact** (`oracle_keep_sentence`) | **0.1538** |
+| same-sized contiguous window **elsewhere** (`oracle_keep_random_span`) | **0.5812** |
+| no context at all, value tokens only (`oracle_keep_target`) | 0.5641 |
+
+**Contiguity per se buys nothing**: a contiguous block in the wrong place performs like keeping no context at
+all (0.5812 against 0.5641). Paired sentence against random span: **+0.4274 [+0.3333, +0.5214],
+p = 1.5e-12, 50 of 117 discordant.** So the mechanism sentence stands as written — the value tokens are not
+interpretable without *their own* local context, not merely without some context.
 
 - **The sharpest form of the result.** A *perfect* token-level scorer buys **13 points** over the trivial
   recency baseline. Changing the unit of retention to spans buys **54**. The headroom that the KV-compression
