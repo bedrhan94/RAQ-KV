@@ -78,8 +78,10 @@ def arm_table(df: pd.DataFrame) -> pd.DataFrame:
         rows.append({
             "arm": arm, "scorer": sub["scorer"].iloc[0], "ratio": sub["ratio"].iloc[0],
             "samples": len(sub),
-            "kv_bits_per_original_token": float((sub["avg_kv_bits"] * sub["tokens_retained"]
-                                                 / sub["tokens_original"]).mean()),
+            # Named for what it is: the stored bits an ORIGINAL token costs after pruning, at the model dtype.
+            # Once M4 crosses with quantization this must not be mistaken for a retention ratio.
+            "bf16_bits_per_original_token": float((sub["avg_kv_bits"] * sub["tokens_retained"]
+                                                   / sub["tokens_original"]).mean()),
             "retained": float(sub["retention_ratio"].mean()),
             "kept_target": float(sub["kept_fraction_target"].mean()),
             "task_failure": float(sub["task_failure"].mean()),

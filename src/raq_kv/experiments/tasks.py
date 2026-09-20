@@ -786,6 +786,23 @@ class Retention:
                 sentence.extend(span_tokens)
         return {"target": tuple(target), "distractor": tuple(distractor), "sentence": tuple(sentence)}
 
+    def _control_span(self, sample: PromptSample, cache_len: int, sentence: tuple[int, ...]) -> tuple[int, ...]:
+        """A contiguous window the size of the fact's sentence, placed somewhere else in the document.
+
+        Deterministic per sample, and deliberately kept clear of the sentence itself so the control cannot
+        accidentally include the context it is meant to exclude.
+        """
+        width = len(sentence)
+        if width == 0 or cache_len <= width:
+            return ()
+        rng = random.Random(derive_seed(self.cfg.seed, sample.sample_id, "control_span"))
+        lo, hi = (min(sentence), max(sentence)) if sentence else (0, 0)
+        for _ in range(64):
+            start = rng.randrange(0, cache_len - width)
+            if start + width <= lo or start > hi:
+                return tuple(range(start, start + width))
+        return ()
+
     def run_unit(self, unit_key: str) -> dict[str, Any]:
         assert self.lm is not None and self.cfg.compression is not None
         sample = self.samples[unit_key]
@@ -801,10 +818,11 @@ class Retention:
         golden_score = SCORERS[sample.scorer](golden_text, sample.reference)
 
         roles = self._role_tokens(sample, sample.cache_len)
+        control = self._control_span(sample, sample.cache_len, roles["sentence"])
         scores = self.scorer.score(ScoreContext(
             snapshot=snapshot, context_ids=context_ids, model=model,
             target_tokens=roles["target"], distractor_tokens=roles["distractor"],
-            sentence_tokens=roles["sentence"]))
+            sentence_tokens=roles["sentence"], control_span_tokens=control))
         plan = select_keep(scores, self.cfg.compression.ratio, self.cfg.compression.protect_recent,
                            self.cfg.compression.protect_initial)
         pruned = apply_retention(snapshot, plan)
@@ -828,6 +846,8 @@ class Retention:
             "kept_fraction_distractor": plan.kept_fraction_of(roles["distractor"]),
             "kept_fraction_sentence": plan.kept_fraction_of(roles["sentence"]),
             "n_sentence_tokens": len(roles["sentence"]),
+            "kept_fraction_control_span": plan.kept_fraction_of(control),
+            "n_control_span_tokens": len(control),
             "n_target_tokens": len(roles["target"]),
             "gen_margin_min_all": min(gen.margins) if gen.margins else None,
             **{f"pruned_{k}": v for k, v in score.items()},

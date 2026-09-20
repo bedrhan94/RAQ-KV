@@ -907,6 +907,13 @@ Paired over the 117 shared samples: **+0.4103 [+0.3248, +0.5043], Wilcoxon p = 4
 discordant.** No floor effect, no clustering caveat, no underpowered null — the cleanest comparison in the
 project so far.
 
+**One confound is not yet excluded, and the control is running.** Both oracle arms keep the value tokens and
+hit the same budget, but the span arm spends part of that budget on a contiguous block *at the fact* while the
+token arm spends it on recency-filled tokens elsewhere. So "the value tokens need their local context" and "a
+contiguous block of context anywhere helps" both survive this table. `oracle_keep_random_span` places a
+same-sized contiguous window elsewhere in the document and separates them; until it lands, D34's mechanism
+sentence is one of two live readings, not the established one.
+
 - **The sharpest form of the result.** A *perfect* token-level scorer buys **13 points** over the trivial
   recency baseline. Changing the unit of retention to spans buys **54**. The headroom that the KV-compression
   literature is competing over — better token scores — is a quarter of the headroom sitting in the choice of
@@ -915,6 +922,10 @@ project so far.
   the rest of the sentence around them. So the gain is not "the oracle found the answer" — both oracles found
   it — but "the answer's value tokens are not interpretable without their local context". Necessary and not
   sufficient (D33) becomes: *sufficient once the span is intact*.
+- **The deep column carries no information.** All four arms read 0.027 there — the same single sample failing
+  everywhere — because a deep target is kept by *every* arm including recency, by construction of the probe.
+  It is not evidence that the methods agree on deep targets; it is evidence that deep targets were never at
+  risk. Only the shallow and middle bands discriminate.
 - **It is not the whole story either.** 15.4% of questions still fail at span level, so something beyond the
   sentence is load-bearing for those. That residual is the next question, not a rounding error, and the next
   candidate is document structure rather than a bigger window.
@@ -923,7 +934,10 @@ project so far.
   (b) M5's retention decision variable is a **span**, not a token — which, with D32 (retention is all-or-nothing
   across layers), fixes the allocator's decision unit on both axes from measurement rather than convenience.
   (c) The probe labels sentences, so this is measurable here; on a natural corpus the span boundary becomes a
-  modelling choice and that limitation must be stated with the result.
+  modelling choice and that limitation must be stated with the result. **Stated more strongly:** the probe's
+  facts *are* single sentences by construction, so this experiment cannot distinguish "the sentence" from
+  "whatever unit the generator used" — they are the same object. On a natural corpus the load-bearing span
+  might be a paragraph, a table row, or discontiguous, and the finding as phrased would need re-testing.
 - **Scope, stated because it is easy to overclaim.** This is one model, one synthetic retrieval probe, and
   oracles rather than deployable scorers. What is established is a *ceiling comparison* between two units, not
   that any practical span scorer achieves it. A real span-level method still has to be built and beaten against

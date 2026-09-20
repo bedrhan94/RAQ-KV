@@ -1,0 +1,21 @@
+# M4 control — was the span gain about locality, or about contiguity anywhere?
+#
+# Keeping the fact's sentence beat keeping only its value tokens by 41 points at the same budget (D34). Two
+# readings survive that: either the value tokens need THEIR OWN local context, or a contiguous block of context
+# anywhere helps and the fact's neighbourhood is not special.
+#
+# This arm matches the sentence arm on total budget, on value tokens retained, on contiguity and on window
+# size, and differs only in WHERE the window sits — a same-sized contiguous window placed elsewhere in the
+# document, deterministically per sample and kept clear of the sentence itself. If accuracy recovers, the gain
+# was contiguity; if it does not, the gain was the fact's local context and D34's claim stands as written.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4_gate_keep_random_span
+compression:
+  scorer: oracle_keep_random_span
+  ratio: 0.25
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

@@ -35,6 +35,7 @@ class ScoreContext:
     target_tokens: tuple[int, ...] = ()  # ORACLE ONLY: cached indices holding the answer value
     distractor_tokens: tuple[int, ...] = ()  # ORACLE ONLY
     sentence_tokens: tuple[int, ...] = ()  # ORACLE ONLY: the whole sentence the answer sits in
+    control_span_tokens: tuple[int, ...] = ()  # ORACLE ONLY: a same-sized contiguous window somewhere else
 
 
 class Scorer(Protocol):
@@ -179,6 +180,31 @@ class OracleKeepSentence:
         return s
 
 
+class OracleKeepRandomSpan:
+    """The control for the span result: the answer tokens plus a same-sized contiguous window **elsewhere**.
+
+    Keeping the fact's sentence beat keeping only its value tokens by 41 points (D34), but two readings survive
+    that comparison. Either the value tokens need *their own* local context, or a contiguous block of context
+    anywhere helps and the fact's neighbourhood is not special. This arm separates them: it matches the
+    sentence arm on total budget, on value tokens retained, on contiguity and on window size, and differs only
+    in **where** the window sits. If it recovers accuracy the gain was contiguity; if it does not, the gain was
+    the fact's local context, which is the claim D34 makes.
+    """
+
+    name = "oracle_keep_random_span"
+    needs_model = False
+    is_oracle = True
+
+    def score(self, ctx: ScoreContext) -> torch.Tensor:
+        n = ctx.snapshot.seq_len
+        s = torch.arange(n, dtype=torch.float32) / max(n, 1)
+        for group in (ctx.target_tokens, ctx.control_span_tokens):
+            idx = torch.tensor([i for i in group if i < n], dtype=torch.long)
+            if idx.numel():
+                s[idx] += 10.0
+        return s
+
+
 class OracleDropTarget:
     """The informative oracle: keep everything *except* the answer-bearing tokens.
 
@@ -205,7 +231,7 @@ def build_scorer(name: str, window: int = 64) -> Scorer:
         return WindowAttention(window)
     table: dict[str, Scorer] = {
         s.name: s for s in (Recency(), KeyNorm(), ValueNorm(), OracleKeepTarget(),
-                            OracleKeepSentence(), OracleDropTarget())
+                            OracleKeepSentence(), OracleKeepRandomSpan(), OracleDropTarget())
     }
     if name not in table:
         raise ValueError(f"unknown scorer {name!r}; have {sorted(table) + ['window_attention']}")
