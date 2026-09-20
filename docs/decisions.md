@@ -890,3 +890,41 @@ keeps deep targets for free and an aggregate would hide the whole comparison:
   `kept_fraction_target` and `kept_fraction_sentence` print next to accuracy always. A scorer that holds
   accuracy while discarding the answer tokens has found redundancy, not importance (D32), and the only way to
   see that is to keep the diagnostic beside the outcome.
+
+## D34 — Importance is a property of spans, not tokens (2026-09-20)
+
+The test D33 set up. Same 25% retention budget, same protected attention sink, same 117 probe samples answered
+correctly without pruning, and **the answer-value tokens fully retained in both oracle arms**. The only
+difference is the *unit* that retention operates on.
+
+| arm at 25% retention | overall task failure | shallow | middle | deep |
+|---|---|---|---|---|
+| recency (trivial baseline) | 0.6923 | 1.000 | 1.000 | 0.027 |
+| `oracle_keep_target` — a **perfect token-level** scorer | 0.5641 | 0.773 | 0.861 | 0.027 |
+| `oracle_keep_sentence` — the fact's **whole sentence** | **0.1538** | **0.227** | **0.194** | 0.027 |
+
+Paired over the 117 shared samples: **+0.4103 [+0.3248, +0.5043], Wilcoxon p = 4.3e-12, 48 of 117 samples
+discordant.** No floor effect, no clustering caveat, no underpowered null — the cleanest comparison in the
+project so far.
+
+- **The sharpest form of the result.** A *perfect* token-level scorer buys **13 points** over the trivial
+  recency baseline. Changing the unit of retention to spans buys **54**. The headroom that the KV-compression
+  literature is competing over — better token scores — is a quarter of the headroom sitting in the choice of
+  unit, which that literature does not vary.
+- **Why it is not a tautology.** The span arm keeps the same answer-value tokens as the token arm; it adds only
+  the rest of the sentence around them. So the gain is not "the oracle found the answer" — both oracles found
+  it — but "the answer's value tokens are not interpretable without their local context". Necessary and not
+  sufficient (D33) becomes: *sufficient once the span is intact*.
+- **It is not the whole story either.** 15.4% of questions still fail at span level, so something beyond the
+  sentence is load-bearing for those. That residual is the next question, not a rounding error, and the next
+  candidate is document structure rather than a bigger window.
+- **Consequences.** (a) M4's scorers should be evaluated at span granularity, and a token-level scorer should
+  be reported against the span ceiling rather than against recency alone, or it will look better than it is.
+  (b) M5's retention decision variable is a **span**, not a token — which, with D32 (retention is all-or-nothing
+  across layers), fixes the allocator's decision unit on both axes from measurement rather than convenience.
+  (c) The probe labels sentences, so this is measurable here; on a natural corpus the span boundary becomes a
+  modelling choice and that limitation must be stated with the result.
+- **Scope, stated because it is easy to overclaim.** This is one model, one synthetic retrieval probe, and
+  oracles rather than deployable scorers. What is established is a *ceiling comparison* between two units, not
+  that any practical span scorer achieves it. A real span-level method still has to be built and beaten against
+  KIVI's own optimum (`docs/literature.md`).
