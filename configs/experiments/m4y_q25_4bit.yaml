@@ -1,0 +1,24 @@
+# M4 x M1 — the token-precision trade at a budget four times tighter, where it should bite.
+#
+# At ~4 bits per original token all three splits were near-lossless with query-aware span retention: 0, 1 and 3
+# failures of 117, none of the comparisons significant (D37). That is a floor, not a replication of the
+# published ordering, and the honest way to find the trade is to run where the arms can separate.
+#
+# This arm: 25.0% of tokens at 4 bits = 1.070 bits per ORIGINAL token. The family spans
+# 1.000 to 1.070, a 7% spread whose cheapest member is again the fewest-token one, so a win for fewer tokens
+# comes despite a bit handicap.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4y_q25_4bit
+compression:
+  scorer: query_attention
+  ratio: 0.25
+  unit: span
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

@@ -1045,3 +1045,40 @@ The fairness arm from D35 landed and reversed two of that entry's readings. Same
   control existed only because reporting a query-agnostic scorer as "attention-based importance" would have
   compared the literature against a weaker version of itself. Without that arm, M4 would have concluded
   "attention-based importance loses to recency".
+
+## D37 — With a good retention method the token-precision trade goes away at 4 bits (2026-09-20)
+
+"More Tokens, Lower Precision" (arXiv 2412.12706) compares 1x tokens at 16 bits, 2x at 8 and 4x at 4 at equal
+memory and finds more tokens at lower precision wins. Their retention is not a strong query-aware method. Ours
+is (D36), so the trade was re-run rather than inherited, with query-aware span retention throughout.
+
+| arm | bits / ORIGINAL token | task failure |
+|---|---|---|
+| 100% of tokens @ 4-bit | 4.260 | **0.0000** (0/117) |
+| 50% of tokens @ 8-bit | 4.096 | **0.0085** (1/117) |
+| 25% of tokens @ bf16 | 3.947 | **0.0256** (3/117) |
+
+| contrast | difference | p | discordant |
+|---|---|---|---|
+| 25% bf16 vs 100% 4-bit | +0.0256 [+0.0000, +0.0598] | 0.083 | 3 |
+| 25% bf16 vs 50% 8-bit | +0.0171 [+0.0000, +0.0427] | 0.157 | 2 |
+| 50% 8-bit vs 100% 4-bit | +0.0085 [+0.0000, +0.0256] | 0.317 | 1 |
+
+- **Not a replication, and not a refutation: a floor.** The ordering points the same way the published finding
+  does, but with 0, 1 and 3 failures out of 117 **no comparison is significant** and the project's own rule
+  (D30) says three arms this close to zero support a bound, not an ordering. What is established is that all
+  three are near-lossless.
+- **The finding is that the trade stops mattering.** The published comparison found a gap because its retention
+  was weak enough for token count to matter. With a retention method that keeps the right tokens, **any** of
+  the three splits costs at most 3 of 117 answers at ~4 bits per original token.
+- **So the practical advice inverts.** At the same 25% budget, the *method* is worth 67 points
+  (recency 0.6923 against query-aware span 0.0256) while the *split* is worth at most 3. Optimising where to
+  put bits between token count and precision is second-order next to choosing how tokens are selected —
+  which is the axis the compression literature varies least.
+- **Where the trade should bite, and the next family.** At ~1 bit per original token the three matched points
+  are 25% @ 4-bit (1.070), 12.5% @ 8-bit (1.039) and 6.25% @ bf16 (1.000). That budget is four times tighter
+  and the arms should separate; running it is the way to find the trade rather than assert its absence from a
+  floor.
+- **Scope.** One model, one synthetic retrieval probe, and a query-aware method that cannot run on a shared
+  prefix cache (D36). On a task where retention is harder — or with the query-agnostic scorer, whose best arm
+  sits at 0.624 — the trade may well reappear, and that is a prediction rather than a caveat.
