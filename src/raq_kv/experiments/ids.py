@@ -84,7 +84,8 @@ def _pruning_token(cfg: ExperimentConfig) -> str:
     if c is None or c.ratio >= 1.0:
         return "p0"
     tail = f"+r{c.protect_recent}" if c.protect_recent else ""
-    return f"p{round(c.ratio * 100)}{_SCORER_SHORT[c.scorer]}{tail}"
+    unit = "S" if c.unit == "span" else ""
+    return f"p{round(c.ratio * 100)}{_SCORER_SHORT[c.scorer]}{unit}{tail}"
 
 
 def slug(cfg: ExperimentConfig) -> str:

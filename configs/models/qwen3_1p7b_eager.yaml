@@ -1,0 +1,13 @@
+# The primary model with eager attention, needed only by scorers that read attention weights: sdpa returns
+# none (D5). It is a separate config because attn_implementation is part of the experiment identity, so an
+# eager run and an sdpa run are different experiments and cannot share a golden baseline - each M4 arm
+# generates its own.
+model:
+  hf_id: Qwen/Qwen3-1.7B
+  revision: 70d244cc86ccca08cf5af4e1e306ecf908b1ad5e
+  short_name: qwen3-1p7b-eager
+  dtype: bfloat16
+  attn_implementation: eager
+  device: cuda
+  chat_template_kwargs:
+    enable_thinking: false

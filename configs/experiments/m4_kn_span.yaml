@@ -1,0 +1,20 @@
+# M4 deployable arm — key_norm at span granularity.
+#
+# The cheapest scorer with span expansion. If a scorer this crude plus the right unit beats a good scorer
+# at the wrong unit, that is the clearest statement the result can take.
+#
+# Reference points at the same 25% budget, all measured (D33/D34): recency 0.692, a perfect TOKEN oracle 0.564,
+# a same-sized contiguous window in the wrong place 0.581, and the fact's own sentence 0.154. The oracle ceiling
+# is what a deployable arm is measured against; beating recency alone is not the bar.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4_kn_span
+compression:
+  scorer: key_norm
+  ratio: 0.25
+  unit: span
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

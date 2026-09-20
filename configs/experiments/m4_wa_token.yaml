@@ -1,0 +1,19 @@
+# M4 deployable arm — window_attention at token granularity.
+#
+# A deployable scorer at the unit the literature uses. window_attention ranks cached tokens by the
+# attention the last 64 context tokens paid them - no ground truth, no knowledge of the query.
+#
+# Reference points at the same 25% budget, all measured (D33/D34): recency 0.692, a perfect TOKEN oracle 0.564,
+# a same-sized contiguous window in the wrong place 0.581, and the fact's own sentence 0.154. The oracle ceiling
+# is what a deployable arm is measured against; beating recency alone is not the bar.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4_wa_token
+compression:
+  scorer: window_attention
+  ratio: 0.25
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

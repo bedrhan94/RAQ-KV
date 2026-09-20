@@ -158,3 +158,55 @@ def test_protection_shrinks_to_fit_a_tiny_budget():
     plan = select_keep(torch.randn(20), 0.1, protect_recent=5, protect_initial=5)
     assert plan.retained == 2, "the budget wins; protection cannot inflate the cache"
     assert plan.protected_initial == 2 and plan.protected_recent == 0
+
+
+def test_sentence_spans_cover_the_context_exactly():
+    """Every token belongs to one span and the spans tile the context, so the budget can still be fully spent."""
+    from raq_kv.compression.spans import sentence_spans
+
+    class FakeTok:
+        def convert_ids_to_tokens(self, ids):
+            return ["a", "b", ".", "c", "d", "e", "!", "f"]
+
+    spans = sentence_spans(FakeTok(), torch.arange(8))
+    assert spans == [(0, 3), (3, 7), (7, 8)]
+    assert sum(e - b for b, e in spans) == 8
+    assert [b for b, _ in spans] == sorted(b for b, _ in spans)
+
+
+def test_span_retention_keeps_whole_spans_and_never_half_of_one():
+    """Half a sentence is exactly the scattered-token condition span retention exists to avoid."""
+    from raq_kv.compression.spans import select_keep_spans
+
+    spans = [(0, 4), (4, 8), (8, 12), (12, 16)]
+    scores = torch.zeros(16)
+    scores[4:8] = 9.0  # the second span is the only interesting one
+    plan = select_keep_spans(scores, spans, ratio=0.5, protect_initial=0)
+    kept = set(plan.keep.tolist())
+    assert {4, 5, 6, 7} <= kept, "the winning span must be kept entire"
+    for b, e in spans:
+        inside = kept & set(range(b, e))
+        assert inside in (set(), set(range(b, e))), f"span [{b},{e}) was kept in part"
+
+
+def test_a_span_that_does_not_fit_is_skipped_not_truncated():
+    from raq_kv.compression.spans import select_keep_spans
+
+    spans = [(0, 10), (10, 12)]
+    scores = torch.zeros(12)
+    scores[:10] = 9.0  # the big span scores best but cannot fit a budget of 3
+    plan = select_keep_spans(scores, spans, ratio=0.25, protect_initial=0)
+    kept = set(plan.keep.tolist())
+    assert not (kept & set(range(10))), "the oversized span must be skipped whole"
+    assert kept == {10, 11}
+
+
+def test_span_retention_still_protects_the_sink():
+    from raq_kv.compression.spans import select_keep_spans
+
+    spans = [(0, 8), (8, 16), (16, 24)]
+    scores = torch.zeros(24)
+    scores[:8] = -9.0
+    plan = select_keep_spans(scores, spans, ratio=0.5, protect_initial=4)
+    assert set(range(4)) <= set(plan.keep.tolist())
+    assert plan.protected_initial == 4

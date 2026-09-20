@@ -1,0 +1,22 @@
+# M4 deployable arm — window_attention at span granularity.
+#
+# The same deployable scorer, with the same budget, keeping whole punctuation-delimited sentences instead
+# of scattered tokens. This is the pair that decides whether D34's oracle result transfers to a real
+# method: if span expansion moves a real scorer the way it moved the oracle, the unit is the finding and
+# it is actionable; if it does not, the oracle gap was about knowing WHERE the fact is, not about spans.
+#
+# Reference points at the same 25% budget, all measured (D33/D34): recency 0.692, a perfect TOKEN oracle 0.564,
+# a same-sized contiguous window in the wrong place 0.581, and the fact's own sentence 0.154. The oracle ceiling
+# is what a deployable arm is measured against; beating recency alone is not the bar.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m4_wa_span
+compression:
+  scorer: window_attention
+  ratio: 0.25
+  unit: span
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

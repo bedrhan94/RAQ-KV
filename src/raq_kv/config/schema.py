@@ -297,6 +297,11 @@ class CompressionConfig(StrictModel):
     # each config must remember.
     protect_initial: int = Field(default=4, ge=0, description="Initial tokens always kept (attention sink)")
     window: int = Field(default=64, gt=0, description="Observation window for window_attention")
+    # Token or span. D34 measured that the unit matters more than the score: at 25% retention a perfect
+    # token-level oracle failed 56% of questions and keeping the fact's own sentence failed 15%. Defaults to
+    # None so that adding it left existing retention runs' identities intact.
+    unit: Literal["token", "span"] | None = None
+    span_aggregate: Literal["mean", "sum", "max"] | None = None
 
 
 class OutputConfig(StrictModel):

@@ -14,6 +14,7 @@ import torch
 
 from raq_kv.budget.bit_accounting import full_precision_kv_budget
 from raq_kv.compression.retain import apply_retention, select_keep
+from raq_kv.compression.spans import select_keep_spans, sentence_spans
 from raq_kv.config.schema import (
     CachePPLTask,
     ExperimentConfig,
@@ -773,7 +774,8 @@ class Retention:
             raise ValueError(f"scorer '{self.scorer.name}' needs attention weights, so the model must use eager "
                              f"attention (D5); this config asks for '{self.cfg.model.attn_implementation}'")
         return {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict(),
-                "scorer": self.scorer.name, "scorer_is_oracle": self.scorer.is_oracle}
+                "scorer": self.scorer.name, "scorer_is_oracle": self.scorer.is_oracle,
+                "unit": self.compression.unit or "token"}
 
     @staticmethod
     def _role_tokens(sample: PromptSample, cache_len: int) -> dict[str, tuple[int, ...]]:
@@ -823,8 +825,14 @@ class Retention:
             snapshot=snapshot, context_ids=context_ids, model=model,
             target_tokens=roles["target"], distractor_tokens=roles["distractor"],
             sentence_tokens=roles["sentence"], control_span_tokens=control))
-        plan = select_keep(scores, self.cfg.compression.ratio, self.cfg.compression.protect_recent,
-                           self.cfg.compression.protect_initial)
+        c = self.cfg.compression
+        if c.unit == "span":
+            spans = sentence_spans(tok, context_ids)
+            plan = select_keep_spans(scores, spans, c.ratio, c.protect_recent, c.protect_initial,
+                                     c.span_aggregate or "mean")
+        else:
+            spans = []
+            plan = select_keep(scores, c.ratio, c.protect_recent, c.protect_initial)
         pruned = apply_retention(snapshot, plan)
 
         gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=pruned, eos_token_ids=eos)
@@ -837,6 +845,8 @@ class Retention:
             **kv_record_fields(self.lm, pruned, sample.cache_len),
             **plan.to_dict(),
             "scorer": self.scorer.name,
+            "unit": c.unit or "token",
+            "n_spans": len(spans),
             "golden_correct": bool(golden_score["correct"]),
             "golden_prediction": golden_text,
             "prediction": text,
