@@ -789,3 +789,37 @@ Arm H (two float16 bounds per metadata region, **+0.075%** of storage, no error-
 **Consequence for M5.** The protection axis reduces to a rate-dependent floor with two settings, both cheap. The
 allocator should take the deployment's expected error rate as an input and pick between them, rather than
 searching a protection dimension: there is nothing to search.
+
+## D31 — H2b: placement does not matter for task outcomes, and the proxy effect will not resolve (2026-09-20)
+
+The properly sized placement test: arms D and E, bit-identical, 19 of 28 layers protected each, differing only
+in *which* nine are left exposed — D the early layers 0–8, E the late layers 19–27. 180 samples of the
+4096-token condition at BER 1e-5, 8 draws each, no-fault controls exactly zero, 177 samples paired.
+
+| endpoint | D (early exposed) | E (late exposed) | D − E | p | discordant |
+|---|---|---|---|---|---|
+| task failure (secondary) | **0.0000** | **0.0000** | 0.0000 | 1 | 0 of 177 |
+| answer changed (primary, pre-registered) | 0.0177 | 0.0064 | +0.0113 [+0.0007, +0.0247] | **0.074** | 7 of 177 |
+
+- **Against the pre-registered rule, this is not support.** `docs/prereg_h2b.md` required Wilcoxon p < 0.05
+  **and** a bootstrap CI excluding zero. The CI excludes zero; p = 0.074 does not clear the threshold. The
+  pre-registration also said that anything else "is a third underpowered null and will be reported as one rather
+  than dressed up", so that is what this is.
+- **The sizing was wrong again, and for the same reason.** The run was built for ~130 events per arm from a 9.2%
+  proxy rate measured on 19 samples with 3 discordant — itself noise. The real rate at 4096 tokens is 1.77%, so
+  the run produced 25 and 9 events. A sign test needs ~13 discordant samples for 80% power here; there were 7.
+  **Twice now a power calculation has been built on an effect size estimated from a handful of events.** The rule
+  to take forward: size from a rate measured on a *different* set than the one that suggested the effect.
+- **What is nevertheless true.** The direction D18 predicts — exposing early layers is worse — has now appeared
+  in four independent tests (ratios 1.72×, 2.34×, 3.50×, 2.77×) and in 6 of the 7 discordant samples here. Four
+  replications of a sign is not nothing. It is also not the pre-registered threshold, and it will be reported as
+  a consistent direction below significance, not as a finding.
+- **The answer that *is* established, and it is the more useful one.** Task failure is **0 of 1416 trials in both
+  arms**. Protecting 19 of 28 layers is sufficient at this rate and length **regardless of which 19**. Placement
+  shows up only on a proxy that does not translate into a single lost answer. For the allocator, H2b's practical
+  answer is therefore: **do not spend search effort on where to put data ECC** — spend it on whether to buy data
+  ECC at all, and D25–D30 already answered that with "no".
+- **Where the question could still be answered.** Only in the regime where data faults dominate outcomes rather
+  than a proxy: D21's whole-row bursts, where late layers carried all 14 failures and early layers none. That is
+  the opposite sign to D18's, so a crossover remains the live hypothesis — but it needs the burst fault model,
+  not more samples of uniform SEU. Deferred to M5 with the fault model as an allocator input, not re-run here.
