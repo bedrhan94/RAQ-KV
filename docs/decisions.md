@@ -763,11 +763,21 @@ Arm H (two float16 bounds per metadata region, **+0.075%** of storage, no error-
 | G, metadata SECDED | **0.0000** | **0.0000** |
 | H − G, paired | +0.0000 [0.0000, 0.0000], p = 1, **0 discordant samples** | **+0.0593 [+0.0381, +0.0847], p = 1.1e-5, 22 discordant** |
 
-- **At 1e-6 the free check is not merely comparable to the code, it is identical on every sample.** Thirty times
-  the storage buys nothing at this rate.
+- **At 1e-6 neither arm failed at all**: 0/472 each, so the paired test has 0 discordant samples. That is an
+  *uninformative* comparison, not a demonstration of equality — two arms pinned at the floor cannot be told
+  apart by construction. What the rate establishes is an upper bound on the code's advantage: with 472 trials
+  and no events, at most ~0.6% by the rule of three. Thirty times the storage buys at most that much, which is
+  still the useful claim, but it is a bound and is written as one. (The same discipline as the D-vs-E null:
+  0 discordant means the test could not discriminate.)
 - **At 1e-5 the code wins decisively.** The guard sees only the 3 of 16 float16 bits that push a scale out of its
   clean range (measured coverage 20.1%, D29); the other thirteen are individually mild and, at ten times the
   rate, accumulate. SECDED corrects all of them — 434 words per trial — and stays at zero.
+- **Arm G's zero at 1e-5 is not an absence of hard cases.** 28 detected-uncorrectable metadata words occurred
+  across the 480 trials, one per affected trial, split over scale and zero-point regions — and the erasure
+  policy absorbed every one of them at no task cost. This is the same path that crashed the campaign in D27,
+  now exercised 28 times in anger and correct. The coincidence arithmetic that predicted it also lands:
+  0.051 DUEs per trial predicted from two flips meeting in one 16-bit word, 0.058 measured (and at 1e-6,
+  0.001 predicted, 0.000 measured).
 - **So the recommendation has a boundary, and the boundary is the result.** Below roughly 1e-6, spend 0.075% on a
   plausibility check. Above it, spend 2.3% on metadata SECDED. In neither regime is uniform data ECC (14%) worth
   its bits: arm B matched arm G at 1e-6 and neither differs from it in any measurement so far.
