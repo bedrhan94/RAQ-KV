@@ -20,6 +20,49 @@ ACCENT2 = RGBColor(0x2E, 0x6C, 0xA4)
 GREY = RGBColor(0x66, 0x66, 0x66)
 MONO = "Consolas"
 
+# Section 10's table. Module-level so the prose above it can count the rows rather than restate a
+# number that then drifts -- which it did: the intro said eight while the table held eleven.
+WITHDRAWN_ROWS = [
+    ["The multiplicative Joint Reliability Score (the brief's central mechanism)",
+     "Axes not commensurate (H2c); the two signals it multiplies are anti-correlated (Q48, rho = -0.377); "
+     "protection is a lookup; decisions are over spans, not (layer, token) cells",
+     "A staged rule with one measured switching point"],
+    ["'2-bit is degraded but functional' (D12)",
+     "Rested on perplexity alone; probe accuracy collapses at the same setting (D16)",
+     "Task failure, not perplexity, is the metric for every later claim"],
+    ["Metadata is 315x more damaging per bit than codes (D25)",
+     "The code-flip denominator was not a measured rate",
+     "A bound: at least 1543x"],
+    ["Metadata is 762x more damaging per bit than codes",
+     "The per-code-flip rate was three events in one non-shared sample - noise (D28)",
+     "The same bound: at most 6.5e-6 per code flip against about 1.0e-2 per metadata bit"],
+    ["ECC placement matters: late layers beat early by 1.73x",
+     "A clustering artefact. Arm D's 12 events came from 3 samples, arm E's 7 from 2; pooled-trial Fisher "
+     "treated them as hundreds of independent observations (D26)",
+     "Sample-level pairing everywhere; the direction is reported below significance (D31)"],
+    ["Protection fails through its own erasure policy (OR 4.79, p = 0.012)",
+     "Simpson's paradox. Long samples have 4x the flips and all of the damage; inside the only band with "
+     "events the OR falls to 1.66 (D28)",
+     "Context length is a reported stratum in every fault analysis"],
+    ["Arms B and C are equal; arms D and E are equal",
+     "Both pairs recorded zero failures, so the paired test had zero discordant samples",
+     "Upper bounds (about 0.6% on 472 trials) instead of equalities"],
+    ["The range check matches metadata SECDED",
+     "True at BER 1e-6 only; at 1e-5 it loses by +0.0593, p = 1.1e-5 (D29/D30)",
+     "A rate-conditioned lookup with the crossover located"],
+    ["oracle_keep_sentence is a ceiling (D34/D35)",
+     "It spends a fifth of its budget by recency regardless of relevance; a real method beats it by 13 "
+     "points (D36)",
+     "It is 'the best span policy tried', and every use of the word ceiling is withdrawn"],
+    ["Token-level importance scoring is actively harmful",
+     "Holds for query-agnostic scoring only; query-aware token scoring is not harmful (D36)",
+     "The claim is scoped to query-agnostic scoring"],
+    ["Four protection pilot runs",
+     "Source was edited while the sweep ran, so three manifests recorded three different diff hashes (D24)",
+     "The runner now refuses an experiment whose code changed mid-process; the four runs were retired, not "
+     "deleted"],
+]
+
 # H3, transcribed from `scripts/report_m4.py --arms m5h3_*` over the six emitted arms. Kept as data next to the
 # prose so a reviewer can diff it against the report output rather than trusting the paragraph around it.
 H3_ROWS = [
@@ -182,9 +225,9 @@ def build(doc: Document) -> None:
     para(doc, "This dossier is written for an external reviewer who has not seen the codebase. It records what "
               "was built, what was measured, the exact formulas behind every number, and - in its own section - "
               "every finding that was withdrawn or re-scoped after a control. Section 10 is the one worth "
-              "reading first: eight results in this project were stated and then withdrawn by the project's own "
-              "checks, none by an external reviewer, and the most useful thing a reviewer can do is find the "
-              "ninth.")
+              f"reading first: {len(WITHDRAWN_ROWS)} results in this project were stated and then withdrawn or "
+              "narrowed by the project's own checks, none by an external reviewer, and the most useful thing a "
+              "reviewer can do is find the next one.")
     rich(doc, [("Convention: ", "b"),
                ("every quantitative claim below is either a measurement with a paired confidence interval, or "
                 "an explicit bound. Where a comparison could not discriminate - typically because both arms "
@@ -568,6 +611,13 @@ def build(doc: Document) -> None:
                 "comparison that isolates the precision axis is joint against retention-only, where both arms "
                 "use query-aware span retention and differ only in whether the budget is spent on bits or on "
                 "more tokens - and that margin is 13.7 points at 1.05 and 6.8 at 2.00, not 66.")])
+    rich(doc, [("Why section 9.2 says 0.85% and this table says 3.42% for what looks like the same row. ", "b"),
+               ("They are two runs, not one. The M5 joint point keeps 25.00% of tokens and the H3 joint arm "
+                "keeps 24.67%, at the same 4-bit quantization, so the H3 arm has a 1.3% smaller realised budget "
+                "(1.0401 against 1.0543). Paired over the same 117 samples the difference is -0.0256 [-0.0598, "
+                "+0.0000], p = 0.083 on 3 discordant samples - it does not reach significance and the interval "
+                "touches zero. That is measured, not argued, and it doubles as a small replication: the joint "
+                "point reproduces at a tighter budget with a difference below the noise the design can resolve.")])
     rich(doc, [("A coupling the emitter found the hard way. ", "b"),
                ("Both retention-only arms were initially refused by the config schema: the allocator attached "
                 "its +0.075% metadata guard to a policy that does not quantize, and an unquantized cache has no "
@@ -587,46 +637,7 @@ def build(doc: Document) -> None:
                 "checks - none by an external reviewer. The decision log numbers the D36 retraction as the "
                 "seventh such event, and there have been more since. Nothing was deleted: superseded runs keep "
                 "their raw JSONL, marked with superseded_by and renamed.")])
-    table(doc, ["Withdrawn claim", "What killed it", "What stands instead"], [
-        ["The multiplicative Joint Reliability Score (the brief's central mechanism)",
-         "Axes not commensurate (H2c); the two signals it multiplies are anti-correlated (Q48, rho = -0.377); "
-         "protection is a lookup; decisions are over spans, not (layer, token) cells",
-         "A staged rule with one measured switching point"],
-        ["'2-bit is degraded but functional' (D12)",
-         "Rested on perplexity alone; probe accuracy collapses at the same setting (D16)",
-         "Task failure, not perplexity, is the metric for every later claim"],
-        ["Metadata is 315x more damaging per bit than codes (D25)",
-         "The code-flip denominator was not a measured rate",
-         "A bound: at least 1543x"],
-        ["Metadata is 762x more damaging per bit than codes",
-         "The per-code-flip rate was three events in one non-shared sample - noise (D28)",
-         "The same bound: at most 6.5e-6 per code flip against about 1.0e-2 per metadata bit"],
-        ["ECC placement matters: late layers beat early by 1.73x",
-         "A clustering artefact. Arm D's 12 events came from 3 samples, arm E's 7 from 2; pooled-trial Fisher "
-         "treated them as hundreds of independent observations (D26)",
-         "Sample-level pairing everywhere; the direction is reported below significance (D31)"],
-        ["Protection fails through its own erasure policy (OR 4.79, p = 0.012)",
-         "Simpson's paradox. Long samples have 4x the flips and all of the damage; inside the only band with "
-         "events the OR falls to 1.66 (D28)",
-         "Context length is a reported stratum in every fault analysis"],
-        ["Arms B and C are equal; arms D and E are equal",
-         "Both pairs recorded zero failures, so the paired test had zero discordant samples",
-         "Upper bounds (about 0.6% on 472 trials) instead of equalities"],
-        ["The range check matches metadata SECDED",
-         "True at BER 1e-6 only; at 1e-5 it loses by +0.0593, p = 1.1e-5 (D29/D30)",
-         "A rate-conditioned lookup with the crossover located"],
-        ["oracle_keep_sentence is a ceiling (D34/D35)",
-         "It spends a fifth of its budget by recency regardless of relevance; a real method beats it by 13 "
-         "points (D36)",
-         "It is 'the best span policy tried', and every use of the word ceiling is withdrawn"],
-        ["Token-level importance scoring is actively harmful",
-         "Holds for query-agnostic scoring only; query-aware token scoring is not harmful (D36)",
-         "The claim is scoped to query-agnostic scoring"],
-        ["Four protection pilot runs",
-         "Source was edited while the sweep ran, so three manifests recorded three different diff hashes (D24)",
-         "The runner now refuses an experiment whose code changed mid-process; the four runs were retired, not "
-         "deleted"],
-    ])
+    table(doc, ["Withdrawn claim", "What killed it", "What stands instead"], WITHDRAWN_ROWS)
     rich(doc, [("Two of these were caught by a control arm that was in the design for a different reason. ", "b"),
                ("The attention sink surfaced because an arm was expected to fail and failed 100% instead of "
                 "partially; the clustering problem surfaced because per-sample counts were printed beside the "
@@ -692,8 +703,8 @@ def build(doc: Document) -> None:
     bullet(doc, "7. Does H3 survive a strict iso-budget re-emission? The joint arm spends 2.8% more than "
                 "retention-only at 1.05 bits. We estimate the correction at 1.4 of the 13.7 points, but we have "
                 "not measured it. Would you require the re-run before accepting H3?")
-    bullet(doc, "8. Are any of the eleven withdrawals in section 10 wrong in the other direction - something "
-                "withdrawn that should have stood?")
+    bullet(doc, f"8. Are any of the {len(WITHDRAWN_ROWS)} withdrawals in section 10 wrong in the other "
+                "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
               "(D1-D41), docs/claims.md and the run manifests in outputs/; those records are the source of "

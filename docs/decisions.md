@@ -1266,6 +1266,20 @@ decides and what the experiment runs cannot hide in a YAML file. 117 samples, pa
   ratio — a solve for the ratio whose retained-span count lands on the joint arm's measured
   `bits_per_original_token`. That closes the loop properly instead of arguing about the size of the gap.
 
+### Reconciling D39's joint point (0.85%) with H3's joint arm (3.42%)
+
+These read as the same configuration in two tables and are not: `m4y_q25_4bit` keeps **25.00%** of tokens,
+`m5h3_1p05_joint` keeps **24.67%**, at identical 4-bit quantization, so the H3 arm has a 1.3% smaller realised
+budget (1.0401 against 1.0543). Paired over the same 117 samples:
+
+    m4y_q25_4bit 0.0085  vs  m5h3_1p05_joint 0.0342
+    difference -0.0256 [-0.0598, +0.0000]   p = 0.083   3 discordant
+
+Not significant, and the interval touches zero — 1 event against 4 out of 117. Measured rather than argued,
+because a reviewer comparing the two tables would otherwise see 0.85% and 3.42% for what looks like one row.
+It also doubles as a small replication: the joint point reproduces at a tighter budget with a difference below
+what this design can resolve. Both numbers stay in the record, each labelled with the arm that produced it.
+
 ### The emitter found a real coupling between two axes the project had treated as separable
 
 Both retention-only configs were **refused by the config schema** on first emission:
