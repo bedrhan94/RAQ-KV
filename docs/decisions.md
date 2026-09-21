@@ -1082,3 +1082,41 @@ is (D36), so the trade was re-run rather than inherited, with query-aware span r
 - **Scope.** One model, one synthetic retrieval probe, and a query-aware method that cannot run on a shared
   prefix cache (D36). On a task where retention is harder — or with the query-agnostic scorer, whose best arm
   sits at 0.624 — the trade may well reappear, and that is a prediction rather than a caveat.
+
+## D38 — At a tight budget the token-precision trade returns, and the published direction holds (2026-09-20)
+
+D37 found the trade invisible at ~4 bits per original token: all three splits were within 3 failures of 117 and
+no comparison was significant. That was a floor, so the family was re-run four times tighter, where the arms can
+separate. Query-aware span retention throughout, 117 samples, sink protected.
+
+| arm | bits / ORIGINAL token | kept_target | task failure |
+|---|---|---|---|
+| 25% of tokens @ 4-bit | 1.054 | 1.000 | **0.0085** (1/117) |
+| 12.5% of tokens @ 8-bit | 1.016 | 1.000 | **0.0684** (8/117) |
+| 6.25% of tokens @ bf16 | 0.967 | 0.915 | **0.1966** (23/117) |
+
+| contrast | difference | p | discordant |
+|---|---|---|---|
+| 6.25% bf16 vs 25% 4-bit | **+0.1880 [+0.1197, +0.2564]** | 2.7e-06 | 22 |
+| 6.25% bf16 vs 12.5% 8-bit | **+0.1282 [+0.0684, +0.1880]** | 1.1e-04 | 15 |
+| 12.5% 8-bit vs 25% 4-bit | **+0.0598 [+0.0171, +0.1026]** | 0.0082 | 7 |
+
+- **The published direction replicates, cleanly and monotonically.** More tokens at lower precision wins at
+  every step, all three comparisons significant. "More Tokens, Lower Precision" (arXiv 2412.12706) holds with a
+  retention method far stronger than the one it was established with, which is the useful form of a
+  replication: the conclusion was not an artefact of weak retention.
+- **One arm carries a confound, and the clean comparison survives without it.** The 6.25% arm has
+  `kept_target` 0.915 — at that budget even a query-aware scorer cannot fit the whole answer span, so part of
+  its disadvantage is lost answer tokens rather than precision. The 12.5% and 25% arms both keep **100%** of
+  the answer tokens and differ only in count against precision, and that comparison still favours more tokens
+  (+0.0598, p = 0.008). The finding does not rest on the confounded arm.
+- **Where the trade appears, and why it vanished before.** At ~4 bits every split is near-lossless, so there is
+  nothing to trade; at ~1 bit the budget is scarce enough that how it is divided matters. The practical reading
+  is a two-regime one: **above roughly 4 bits per original token, choose the split for engineering convenience
+  and spend the effort on the retention method; below it, prefer more tokens at lower precision.**
+- **The joint operating point M4 delivers.** 25% of tokens at 4 bits is **1.054 bits per original token — a
+  15.2x compression of the bf16 cache — for 0.85% task failure** (1 of 117). For comparison, recency at 25%
+  and bf16 (4.0 bits per original token, i.e. four times the storage) fails 69.2%.
+- **Scope, unchanged from D36 and still binding.** One model, one synthetic retrieval probe, and a query-aware
+  scorer that cannot run on a prefix cache shared across queries. The query-agnostic best sits at 0.624 at 25%
+  and bf16, so none of these compression numbers transfer to the shared-cache regime as they stand.
