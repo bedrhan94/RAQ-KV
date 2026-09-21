@@ -1,0 +1,30 @@
+# M5 frontier — at a budget where retention is already sufficient, does lower precision with more tokens still win?
+#
+# Two of this project's own findings collide here and the allocator cannot be derived without resolving it.
+# D38 measured that at ~1 bit per original token more tokens at lower precision wins at every step (4-bit over
+# 8-bit over bf16). D16 measured that 2-bit block-32 costs 12.8% of probe accuracy per token where 4-bit
+# block-128 is lossless. At this budget the two point opposite ways.
+#
+# The reconciliation under test: D38's regime had retention as the binding constraint - its 6.25% arm could not
+# fit the answer span (kept_target 0.915). By 25% the span fits and kept_target is 1.000, so past that point
+# extra tokens should buy less and per-token damage should start to dominate. If 2-bit @ 40.5% loses to
+# 4-bit @ 25%, the frontier has an interior optimum and the allocator is a staged rule with a measured
+# switching point rather than "always prefer more tokens".
+#
+# This arm: 3-bit block-64 at ratio 0.3148 = 1.064 bits per original token, matching the measured
+# joint point (25% of tokens at 4-bit block-128) to within rounding.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m5_freq_3bit
+quantization:
+  keys: {bits: 3, axis: group_token, group_size: 64}
+  values: {bits: 3, axis: per_token}
+compression:
+  scorer: query_attention
+  ratio: 0.3148
+  unit: span
+task:
+  kind: retention
+  n_samples: 120
+seed: 0
