@@ -1161,3 +1161,45 @@ window 128 — on the same probe, samples and metric as every M4 arm.
   here, at 6.13 bits per original token. What generalises is narrower and sturdier: a fixed-size residual
   window has a cost that scales as 1/context, and a method that sets one must be evaluated at the context
   length it will actually see.
+
+## D40 — The iso-budget frontier has an interior optimum at 3–4 bits, and it reconciles D38 with D16 (2026-09-21)
+
+Two of this project's own findings pointed opposite ways at the same budget. D38: at ~1 bit per original token
+more tokens at lower precision wins at every step. D16: 2-bit block-32 costs 12.8% of probe accuracy per token
+where 4-bit block-128 is lossless. The allocator could not be written without resolving it, so the missing
+points were measured rather than argued.
+
+Five arms, all at ~1.05 bits per original token, query-aware span retention throughout, 117 samples:
+
+| retention | bits | bits/orig | kept_target | task failure |
+|---|---|---|---|---|
+| 6.25% | bf16 | 0.967 | 0.915 | 0.1966 |
+| 12.5% | 8 | 1.016 | 1.000 | 0.0684 |
+| **25%** | **4** | **1.054** | 1.000 | **0.0085** |
+| 31.5% | 3 | 1.059 | 1.000 | 0.0171 |
+| 40.5% | 2 | 1.059 | 1.000 | 0.1368 |
+
+| contrast | difference | p | discordant |
+|---|---|---|---|
+| 12.5% @ 8-bit vs 25% @ 4-bit (too few tokens) | +0.0598 [+0.0171, +0.1026] | **0.0082** | 7 |
+| 40.5% @ 2-bit vs 25% @ 4-bit (too little precision) | +0.1282 [+0.0684, +0.1966] | **0.00027** | 17 |
+| 40.5% @ 2-bit vs 31.5% @ 3-bit | +0.1197 [+0.0598, +0.1880] | **0.00047** | 16 |
+| 31.5% @ 3-bit vs 25% @ 4-bit | +0.0085 [+0.0000, +0.0256] | 0.317 | 1 |
+
+- **A clean U, significant on both arms.** The optimum is a **plateau at 3–4 bits** — those two are
+  indistinguishable — with significant degradation from spending the budget on fewer tokens at higher
+  precision (8-bit) *and* from spending it on more tokens at lower precision (2-bit).
+- **Both earlier findings survive, in their own regimes.** D38's "more tokens wins" holds from bf16 down to
+  4 bits, which is the whole range it measured. Below 4 bits D16's per-token damage takes over and the
+  direction reverses. Neither was wrong; each was measured on one side of a turning point neither had crossed.
+- **The mechanism is clean, and `kept_target` shows it.** The 2-bit and 3-bit arms retain **100%** of the
+  answer tokens, so their damage is not lost content — it is per-token quantization error. The bf16 arm's
+  damage *is* lost content (kept_target 0.915). The two failure modes sit on opposite sides of the optimum and
+  are distinguishable in the diagnostic, not just in the outcome.
+- **This is the allocator's switching rule, and it is measured rather than assumed.** Given a budget, spend it
+  on tokens down to **4 bits and no further**; below that, precision is the binding constraint and extra tokens
+  make things worse. That single number is what M5's coarse stage needs, and it could not have been derived
+  from D16 or D38 alone.
+- **Scope.** One model, one probe, one budget level (~1.05 bits per original token). Whether the turning point
+  stays at 4 bits at other budgets is exactly the kind of thing that should be checked before the rule is
+  stated generally, and the second model family is the right place to check it.
