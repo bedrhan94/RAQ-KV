@@ -1120,3 +1120,44 @@ separate. Query-aware span retention throughout, 117 samples, sink protected.
 - **Scope, unchanged from D36 and still binding.** One model, one synthetic retrieval probe, and a query-aware
   scorer that cannot run on a prefix cache shared across queries. The query-agnostic best sits at 0.624 at 25%
   and bf16, so none of these compression numbers transfer to the shared-cache regime as they stand.
+
+## D39 — KIVI at its own configuration, and what its residual window costs at moderate context (2026-09-21)
+
+Every earlier comparison in this project ran against KIVI-*like* settings with `residual_window: 0`, which is a
+weakened baseline. This arm runs KIVI as published — keys `group_token` 32 (the streaming variant, not the
+context-wide `per_channel` D15 found worse and which KIVI does not use), values `group_channel` 32, residual
+window 128 — on the same probe, samples and metric as every M4 arm.
+
+| arm | bits / ORIGINAL token | task failure |
+|---|---|---|
+| **ours, joint: 25% of tokens @ 4-bit** | **1.054** | **0.0085** (1/117) |
+| ours, 4-bit, all tokens | 4.260 | **0.0000** |
+| **KIVI faithful, 2-bit** | **4.331** | **0.0513** (6/117) |
+| ours, query-aware span 25% @ bf16 | 3.947 | 0.0256 |
+| KIVI faithful, 4-bit | 6.127 | 0.0000 |
+
+- **The joint point dominates the faithful baseline outright**: 4.1x less storage *and* six times fewer
+  failures. This is the first comparison in the project made against another method at its own optimum rather
+  than a convenient version of it, and it is the one the M5 baseline table should carry.
+- **KIVI's fixed 128-token window makes its cost strongly context-dependent**, which a benchmark of long
+  documents would not surface:
+
+  | nominal context | KIVI 2-bit bits/orig | KIVI 2-bit failure | ours 4-bit bits/orig | ours 4-bit failure |
+  |---|---|---|---|---|
+  | 512 | **6.137** | 4.55% | 4.274 | 0% |
+  | 1024 | **4.603** | 7.14% | 4.262 | 0% |
+  | 2048 | 3.810 | 5.56% | 4.256 | 0% |
+  | 4096 | 3.406 | 3.23% | 4.253 | 0% |
+
+  **Below roughly 1500 tokens, KIVI 2-bit is strictly dominated by plain 4-bit with no window at all** — more
+  expensive *and* worse on this probe. Above it the window pays for itself on storage while still costing
+  answers here. Our configurations carry no residual window, so their cost is flat in length (4.274 to 4.253).
+- **The predictor is validated against real data, not just against the encoder.** It predicted 3.809 bits per
+  value for KIVI 2-bit at T = 2066; the measured mean at nominal 2048 is **3.810**. That is the closed-form
+  budget agreeing with a full campaign, which is the point of having pinned it.
+- **Scope, and it matters here more than usual.** KIVI was designed and evaluated for long-context workloads,
+  and this is a 512–4096-token synthetic retrieval probe with one model. "KIVI 2-bit loses 3–7% of answers" is
+  a statement about *this task at these lengths*, not about KIVI in general; its 4-bit configuration is lossless
+  here, at 6.13 bits per original token. What generalises is narrower and sturdier: a fixed-size residual
+  window has a cost that scales as 1/context, and a method that sets one must be evaluated at the context
+  length it will actually see.
