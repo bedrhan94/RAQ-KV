@@ -92,6 +92,22 @@ def _protection(ber: float) -> tuple[str | None, str, str]:
     return None, "secded", "metadata SECDED (D30): +2.3% storage, needed above ~1e-6 where the guard breaks"
 
 
+def _protection_for(bits: int | None, ber: float) -> tuple[str | None, str, str]:
+    """The same lookup, except that an unquantized cache has nothing for it to protect.
+
+    Every protection mechanism this project chose acts on the *quantization metadata* (D25-D30), so a policy
+    that does not quantize cannot use any of them, and the config schema rightly refuses the combination. This
+    is not a missing feature: it is the one place where the axes are coupled rather than separable, and it means
+    a retention-only policy is unprotectable by the mechanism that M3 measured as the best value per bit. The
+    only protection left to it is uniform data ECC at +14%, which D25 measured as never worth its bits.
+    """
+    if bits is None:
+        return None, "none", ("no quantization, so no quantization metadata to protect (D25-D30): this policy "
+                              "cannot use the +0.075% guard at all, and its only option is uniform data ECC at "
+                              "+14%, which is never worth its bits")
+    return _protection(ber)
+
+
 def allocate(budget_bits_per_original_token: float, ber: float = 1e-6, query_known: bool = True) -> Allocation:
     """Choose retention, precision and protection for a budget, by the measured rules.
 
@@ -117,8 +133,11 @@ def allocate(budget_bits_per_original_token: float, ber: float = 1e-6, query_kno
     ladder = [(b, g, c) for b, g, c in _PRECISIONS if b >= MIN_BITS]
     floor_bits, floor_group, floor_cost = ladder[0]
     if budget_bits_per_original_token >= _BF16_COST:
-        return Allocation(1.0, None, 0, scorer, "span", _SINK, guard, codec, _BF16_COST,
-                          ("budget covers the uncompressed cache; nothing to trade", protection_why))
+        # Unquantized, so the metadata guard has nothing to guard; say so rather than emitting a config the
+        # schema will reject.
+        bf16_guard, bf16_codec, bf16_why = _protection_for(None, ber)
+        return Allocation(1.0, None, 0, scorer, "span", _SINK, bf16_guard, bf16_codec, _BF16_COST,
+                          ("budget covers the uncompressed cache; nothing to trade", bf16_why))
     if budget_bits_per_original_token < floor_cost:
         # Scarce: hold the precision floor and spend everything on tokens (D38, down to the D40 turning point).
         chosen = (floor_bits, floor_group, floor_cost, budget_bits_per_original_token / floor_cost)
@@ -167,21 +186,23 @@ def single_signal(kind: str, budget_bits_per_original_token: float,
     about 2.63 bits per original token with its scales, so a precision-only policy simply does not exist below
     that - and that is a result about the axis, not a gap in the code.
     """
-    guard, codec, protection_why = _protection(ber)
     b = budget_bits_per_original_token
     if kind == "precision_only":
         for bits, group, cost in ((16, 0, _BF16_COST),) + tuple(reversed(_PRECISIONS)):
             if cost <= b:
-                return Allocation(1.0, None if bits == 16 else bits, group, "recency", "token", _SINK,
-                                  guard, codec, cost,
+                stored = None if bits == 16 else bits
+                guard, codec, protection_why = _protection_for(stored, ber)
+                return Allocation(1.0, stored, group, "recency", "token", _SINK, guard, codec, cost,
                                   ("all tokens kept; the budget buys precision only", protection_why))
         return None  # below ~2.63 bits per original token this policy has nothing left to give up
     if kind == "retention_only":
+        guard, codec, protection_why = _protection_for(None, ber)
         return Allocation(round(min(1.0, b / _BF16_COST), 4), None, 0, "query_attention", "span", _SINK,
                           guard, codec, min(_BF16_COST, b),
                           ("no quantization; the budget buys tokens only", protection_why))
     if kind == "recency_retention":
         bits, group, cost = _PRECISIONS[2]  # 4-bit, the measured safe point
+        guard, codec, protection_why = _protection_for(bits, ber)
         return Allocation(round(min(1.0, b / cost), 4), bits, group, "recency", "token", _SINK, guard, codec,
                           min(cost, b), ("recency at the safe operating point: the trivial baseline",
                                          protection_why))

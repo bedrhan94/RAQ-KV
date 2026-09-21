@@ -5,15 +5,13 @@
 #
 # The allocator's reasoning for this configuration:
 #   - no quantization; the budget buys tokens only
-#   - range check on metadata (D30): +0.075% storage, sufficient at this rate
+#   - no quantization, so no quantization metadata to protect (D25-D30): this policy cannot use the +0.075% guard at all, and its only option is uniform data ECC at +14%, which is never worth its bits
 #
 # Spends 2.0000 of the 2.0000 available.
 include:
   - models/qwen3_1p7b_eager.yaml
   - datasets/raq_probe_v0.yaml
 name: m5h3_2p00_retention_only
-protection:
-  metadata_guard: range
 compression:
   scorer: query_attention
   ratio: 0.125

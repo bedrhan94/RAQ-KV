@@ -1203,3 +1203,94 @@ Five arms, all at ~1.05 bits per original token, query-aware span retention thro
 - **Scope.** One model, one probe, one budget level (~1.05 bits per original token). Whether the turning point
   stays at 4 bits at other budgets is exactly the kind of thing that should be checked before the rule is
   stated generally, and the second model family is the right place to check it.
+
+## D41 — H3: the joint policy beats every single-signal policy that can reach the budget, and one of them cannot reach it at all (2026-09-21)
+
+H3 is the claim the project's title rests on: that allocating across three axes together beats varying one axis
+and fixing the rest. Six arms at two budgets, **every config emitted by `scripts/emit_allocation_configs.py`
+from the allocator's own `Allocation` object** rather than written by hand — so a gap between what the policy
+decides and what the experiment runs cannot hide in a YAML file. 117 samples, paired.
+
+| arm | retention | measured bits/orig | kept_target | task failure |
+|---|---|---|---|---|
+| **joint @ 1.05** (4-bit g128, query-aware spans) | 24.67% | 1.0401 | 1.000 | **0.0342** |
+| retention-only @ 1.05 (bf16, query-aware spans) | 6.56% | 1.0116 | 0.949 | 0.1709 |
+| recency-retention @ 1.05 (4-bit, recency tokens) | 24.67% | 1.0539 | 0.316 | 0.6923 |
+| **joint @ 2.00** (4-bit g128, query-aware spans) | 46.98% | 1.9849 | 1.000 | **0.0000** |
+| retention-only @ 2.00 (bf16, query-aware spans) | 12.50% | 1.9565 | 1.000 | 0.0684 |
+| recency-retention @ 2.00 (4-bit, recency tokens) | 46.98% | 2.0011 | 0.371 | 0.6838 |
+| precision-only, either budget | — | **infeasible** | — | not emitted |
+
+| contrast (joint is the reference) | difference | p | Holm | discordant |
+|---|---|---|---|---|
+| 1.05 vs retention-only | −0.1368 [−0.2051, −0.0769] | 1.62e-04 | **3.2e-04** | 18 |
+| 1.05 vs recency-retention | −0.6581 [−0.7436, −0.5726] | 1.71e-18 | **5.1e-18** | 77 |
+| 2.00 vs retention-only | −0.0684 [−0.1197, −0.0256] | 4.68e-03 | **4.7e-03** | 8 |
+| 2.00 vs recency-retention | −0.6838 [−0.7607, −0.5983] | 3.74e-19 | **1.5e-18** | 80 |
+
+- **H3 is supported, and all four contrasts survive Holm correction across the family.** Every single-signal
+  policy that can reach these budgets is beaten at both of them.
+- **Precision-only cannot reach either budget, and that is the cleanest result here.** Quantization alone
+  bottoms out at 2-bit, about 2.63 bits per original token once its fp16 scales are counted, so the policy the
+  quantization literature uses does not exist at 1.05 or 2.00. The allocator returns `None` rather than
+  overspending and calling the result a comparison (§44). H3's first answer is an absence, not a number.
+- **The comparison against recency-retention is NOT independent evidence for joint allocation, and must not be
+  reported as if it were.** Read `kept_target` first: recency keeps 31.6% of the answer tokens against the joint
+  arm's 100%, and by depth it fails 1.0000 on shallow targets and 0.0270 on deep ones, which its window keeps
+  for free. The 66-point margin is the query-awareness effect **D36 already measured**, re-measured at a fixed
+  budget. The contrast that isolates what H3 is actually about is **joint vs retention-only**, where both arms
+  use query-aware span retention and differ only in whether the budget buys bits or tokens — and that margin is
+  13.7 points at 1.05 and 6.8 at 2.00, not 66.
+
+### The iso-budget check fails by 1.5–2.8% against retention-only, in the winning arm's favour
+
+| pair | joint | opponent | deviation |
+|---|---|---|---|
+| 1.05 vs retention-only | 1.0401 | 1.0116 | joint spends **+2.8%** |
+| 1.05 vs recency-retention | 1.0401 | 1.0539 | joint spends −1.3% |
+| 2.00 vs retention-only | 1.9849 | 1.9565 | joint spends **+1.45%** |
+| 2.00 vs recency-retention | 1.9849 | 2.0011 | joint spends −0.8% |
+
+- **Mechanism.** Span retention keeps whole spans, so the realised ratio undershoots the requested one, and it
+  undershoots *more* at a small ratio because spans are coarse relative to a tiny budget: 0.0632 realised
+  against 0.0656 requested (−3.7%) versus 0.2438 against 0.2467 (−1.2%). Nothing is mis-accounted; the
+  allocator's `bits_per_original_token` is exact for the ratio it asked for, and the *experiment* lands below it.
+- **This breaks the ±1% rule the project set for itself, and in the direction that flatters the conclusion.**
+  Against recency-retention the deviation runs the other way and the comparison is conservative; against
+  retention-only it does not. Named here rather than left for a reviewer.
+- **Sensitivity estimate, labelled as an estimate and not a measurement.** D40's own bf16 frontier moved 2.6
+  points of task failure for a 5% relative change in retention (0.1966 at 6.25% to 0.1709 at 6.56%), so closing
+  a 2.8% budget gap is worth roughly **1.4 points** against a 13.7-point margin. The ordering is not at risk,
+  but the number is.
+- **Fix before this goes in a paper:** emit the single-signal arms by *realised* bits rather than requested
+  ratio — a solve for the ratio whose retained-span count lands on the joint arm's measured
+  `bits_per_original_token`. That closes the loop properly instead of arguing about the size of the gap.
+
+### The emitter found a real coupling between two axes the project had treated as separable
+
+Both retention-only configs were **refused by the config schema** on first emission:
+
+```
+Value error, protection guards the quantized representation, so quantization must be configured
+```
+
+- **The allocator was wrong and the schema was right.** `_protection()` ran as a lookup on the error rate
+  before anything knew whether the policy would quantize, so it attached the +0.075% metadata range guard
+  (D30) to a bf16 cache that has no quantization metadata to guard.
+- **The fix is a finding, not a patch.** Every protection mechanism M3 selected acts on **quantization
+  metadata** (D25–D30). So a retention-only policy is *unprotectable by the cheapest mechanism this project
+  has*, and its only remaining option is uniform data ECC at +14%, which D25 measured as never worth its bits.
+  This is the **one place where the three axes are genuinely coupled rather than separable** — and it is an
+  argument for joint allocation that the brief did not anticipate and that no experiment was designed to find.
+- `_protection_for(bits, ber)` now returns no guard and no codec when `bits is None`, carrying that sentence as
+  its rationale so it appears in the emitted config's header. Four tests pin it, including two that check the
+  fix did not silently disarm protection on the policies that *do* quantize.
+- **Process note.** This is the second time a schema validator has caught a scientific error rather than a
+  typing error (D24's provenance check was the first). Both were rules written to stop a class of mistake and
+  both fired on something the author believed was correct.
+
+### Scope
+
+One model, one probe, two budget levels. The joint-vs-retention-only margin is the load-bearing one and it is
+13.7 and 6.8 points on 18 and 8 discordant samples respectively — real, Holm-surviving, and not large. H3 is
+recorded as **supported with a stated iso-budget deviation**, not as a clean result.

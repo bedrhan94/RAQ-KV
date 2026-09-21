@@ -121,3 +121,32 @@ def test_the_allocation_never_exceeds_its_budget_at_any_rung_boundary(budget):
     plan = allocate(budget)
     assert plan.bits_per_original_token <= budget + 1e-9, f"overspent at {budget}"
     assert 0.0 < plan.retention_ratio <= 1.0
+
+
+@pytest.mark.parametrize("kind,budget", [("retention_only", 1.05), ("retention_only", 2.0),
+                                         ("precision_only", 16.0)])
+def test_an_unquantized_policy_claims_no_metadata_protection(kind, budget):
+    """Protection acts on quantization metadata, so a policy that does not quantize cannot claim any.
+
+    The emitter wrote `metadata_guard: range` into both retention-only arms of H3 and the config schema
+    refused them -- correctly, since there is no metadata in an unquantized cache. The bug was the allocator's:
+    it ran the protection lookup before it knew whether anything would be quantized. This is the one place the
+    axes are genuinely coupled, so the coupling is asserted rather than left to the schema to catch later.
+    """
+    plan = single_signal(kind, budget)
+    assert plan is not None and plan.bits is None
+    assert plan.metadata_guard is None and plan.metadata_codec == "none"
+    assert any("no quantization metadata to protect" in r for r in plan.rationale)
+
+
+def test_the_uncompressed_allocation_also_claims_no_metadata_protection():
+    plan = allocate(16.0)
+    assert plan.bits is None and plan.metadata_guard is None and plan.metadata_codec == "none"
+
+
+@pytest.mark.parametrize("kind", ["recency_retention", "precision_only"])
+def test_a_quantized_policy_still_gets_the_guard(kind):
+    """The fix must not silently disarm protection on the policies that do quantize."""
+    plan = single_signal(kind, 4.3)
+    assert plan is not None and plan.bits is not None
+    assert plan.metadata_guard == "range"
