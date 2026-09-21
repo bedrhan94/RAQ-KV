@@ -1,0 +1,33 @@
+# KIVI baseline at its own published configuration — 2-bit.
+#
+# Why this file exists: our configs set residual_window: 0, and a KIVI comparison without KIVI's residual
+# window is a weakened baseline, which the review protocol treats as a red line (docs/literature.md). This arm
+# runs KIVI as published so that anything the project claims to beat, it beats at the other method's optimum.
+#
+# The mapping from KIVI's description onto this codebase's axes, written out because getting it wrong is the
+# same failure as omitting the window:
+#   * keys quantized per-channel in groups of 32 ALONG THE TOKEN AXIS  -> axis: group_token, group_size: 32
+#     (this is the streaming-compatible variant; our 'per_channel' is the context-wide offline one, which is
+#      what D15 found worse and which KIVI does not use)
+#   * values quantized per-token in groups of 32 ALONG THE CHANNEL AXIS -> axis: group_channel, group_size: 32
+#     (coarser 'per_token' would give one scale per token, four times fewer than KIVI stores)
+#   * the most recent 128 tokens kept in the model dtype -> residual_window: 128
+#
+# No retention: ratio 1.0 keeps every token, so this measures the quantization scheme alone on the same probe,
+# the same samples and the same task metric as every M4 arm. The scorer is recency purely because ratio 1.0
+# makes it a no-op and it needs no model pass.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m5_kivi_2bit
+quantization:
+  keys: {bits: 2, axis: group_token, group_size: 32}
+  values: {bits: 2, axis: group_channel, group_size: 32}
+  residual_window: 128
+compression:
+  scorer: recency
+  ratio: 1.0
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

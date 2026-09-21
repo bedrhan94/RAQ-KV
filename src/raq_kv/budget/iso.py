@@ -19,7 +19,11 @@ from raq_kv.quantization.base import SCALE_BITS
 
 
 def _n_groups(spec: QuantSpec, geometry: KVGeometry, tokens: int) -> int:
-    """Number of quantization groups for one layer-part of shape ``[1, kv_heads, tokens, head_dim]``."""
+    """Number of quantization groups for one layer-part of shape ``[1, kv_heads, tokens, head_dim]``.
+
+    ``tokens`` is the number of *quantized* tokens, which is fewer than the cache length when a residual
+    window keeps recent tokens in the model dtype.
+    """
     heads, dim = geometry.num_kv_heads, geometry.head_dim
     if spec.axis == "per_tensor":
         return 1
@@ -83,25 +87,28 @@ def predict_budget(
     tokens: int,
 ) -> ArmBudget:
     """Closed-form budget of a quantized (and optionally protected) cache of ``tokens`` cached tokens."""
-    if quantization.residual_window:
-        # A residual window leaves recent tokens in the model dtype; predicting that needs the tail split, and
-        # guessing it would understate an arm's budget. Refused rather than approximated (plan §44).
-        raise NotImplementedError("residual_window is not covered by the closed-form predictor")
+    # A residual window keeps the most recent tokens in the model dtype, as KIVI and every streaming
+    # implementation do. Those tokens cost full precision and are excluded from the quantization groups, so
+    # both terms have to split - approximating either would understate the arm's budget (plan §44).
+    residual = min(quantization.residual_window, tokens)
+    quantized_tokens = tokens - residual
     per_part = geometry.num_kv_heads * tokens * geometry.head_dim
+    per_part_q = geometry.num_kv_heads * quantized_tokens * geometry.head_dim
+    per_part_r = geometry.num_kv_heads * residual * geometry.head_dim
     layers = geometry.num_layers
     data = meta = ecc_data = ecc_meta = 0
     for spec in (quantization.keys, quantization.values):
         if spec is None:  # the part stays in the model dtype: unquantized, and nothing to protect
             data += per_part * geometry.dtype_bits * layers
             continue
-        groups = _n_groups(spec, geometry, tokens)
+        groups = _n_groups(spec, geometry, quantized_tokens) if quantized_tokens else 0
         meta_per_layer = groups * SCALE_BITS * (1 if spec.symmetric else 2)
-        data += per_part * spec.bits * layers
+        data += (per_part_q * spec.bits + per_part_r * geometry.dtype_bits) * layers
         meta += meta_per_layer * layers
         if protection is None:
             continue
         protected_layers = layers if protection.data_layers is None else len(set(protection.data_layers))
-        ecc_data += _check_bits(per_part * spec.bits, protection.data_codec,
+        ecc_data += _check_bits(per_part_q * spec.bits, protection.data_codec,
                                 protection.data_word_bits) * protected_layers
         # Scales and zero points are encoded as separate regions, exactly as ProtectedKV does.
         n_meta_regions = 1 if spec.symmetric else 2

@@ -17,7 +17,11 @@ from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.models.arch import KVGeometry
 from raq_kv.quantization.apply import quantize_to_codes
 
-GEOM = KVGeometry(num_layers=3, num_q_heads=4, num_kv_heads=2, head_dim=8, dtype_bits=16)
+# dtype_bits must match the dtype `_snapshot` actually builds, or the predictor and the quantizer disagree the
+# moment any value stays unquantized - which is exactly what a residual window does. The residual-window test
+# below caught this when GEOM said 16 and the fixture was float32; the predictor was right and the fixture was
+# not, so the declared geometry is now the one the fixture has.
+GEOM = KVGeometry(num_layers=3, num_q_heads=4, num_kv_heads=2, head_dim=8, dtype_bits=32)
 TOKENS = 10  # deliberately not a multiple of the group sizes, so tail groups and pad words are exercised
 
 
@@ -85,3 +89,35 @@ def test_iso_budget_report_flags_a_mismatched_pair():
     report = iso_budget_report({"A": a, "B": b})
     assert not report["iso_budget"] and report["max_abs_deviation"] > 0.1
     assert iso_budget_report({"A": a, "A2": a})["max_abs_deviation"] == 0.0
+
+
+@pytest.mark.parametrize("residual", [0, 3, 5])
+@pytest.mark.parametrize("bits", [2, 4])
+def test_prediction_matches_the_real_quantizer_with_a_residual_window(residual, bits):
+    """A residual window keeps recent tokens at full precision and excludes them from the groups.
+
+    Both terms have to split, and getting either wrong understates the arm's budget — which matters most for
+    the KIVI baseline, whose published configuration uses one. Pinned against `quantize_snapshot`, the path
+    that actually implements it.
+    """
+    from raq_kv.quantization.apply import quantize_snapshot
+
+    spec = QuantSpec(bits=bits, axis="group_token", group_size=4, symmetric=False)
+    quant = QuantizationConfig(keys=spec, values=spec, residual_window=residual)
+    _, report = quantize_snapshot(_snapshot(), quant)
+    predicted = predict_budget(quant, None, GEOM, TOKENS)
+    assert predicted.data_bits == report.budget.kv_data_bits
+    assert predicted.quant_metadata_bits == report.budget.quant_metadata_bits
+
+
+def test_a_residual_window_costs_what_full_precision_costs():
+    """The residual tokens are stored at the model dtype, so the window's price is visible and linear in it."""
+    spec = QuantSpec(bits=2, axis="group_token", group_size=32)
+    cheap = predict_budget(QuantizationConfig(keys=spec, values=spec, residual_window=0), None, GEOM, 100)
+    dear = predict_budget(QuantizationConfig(keys=spec, values=spec, residual_window=50), None, GEOM, 100)
+    # Half the tokens move from 2 bits to the model dtype, so the data term rises by half of (dtype - 2) per
+    # value. Read from the geometry rather than written as a literal, which is how the previous version of this
+    # file drifted out of step with its own fixture.
+    step = GEOM.dtype_bits - 2
+    assert dear.data_bits - cheap.data_bits == pytest.approx(0.5 * step * cheap.kv_values, rel=1e-9)
+    assert dear.quant_metadata_bits < cheap.quant_metadata_bits, "fewer quantized tokens, fewer groups"
