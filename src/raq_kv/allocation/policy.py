@@ -206,4 +206,16 @@ def single_signal(kind: str, budget_bits_per_original_token: float,
         return Allocation(round(min(1.0, b / cost), 4), bits, group, "recency", "token", _SINK, guard, codec,
                           min(cost, b), ("recency at the safe operating point: the trivial baseline",
                                          protection_why))
+    if kind == "magnitude_only":
+        # Pre-registered in `docs/m4_m5_plan.md` as "the strongest single-signal policy", and it is the one the
+        # joint arm shares least with: key magnitude is computable at prefill, so unlike query-aware attention
+        # it works on a shared prefix cache (D36's open problem). Held at 4 bits and token granularity so the
+        # only thing varying against the joint arm is the *signal*, not the unit or the precision.
+        bits, group, cost = _PRECISIONS[2]
+        guard, codec, protection_why = _protection_for(bits, ber)
+        return Allocation(round(min(1.0, b / cost), 4), bits, group, "key_norm", "token", _SINK, guard, codec,
+                          min(cost, b),
+                          ("key magnitude at the safe operating point: the strongest single-signal policy the "
+                           "plan pre-registered, and the only baseline here that a shared prefix cache could "
+                           "actually run (D36)", protection_why))
     raise ValueError(f"unknown single-signal policy {kind!r}")

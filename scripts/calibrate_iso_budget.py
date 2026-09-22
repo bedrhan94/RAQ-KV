@@ -1,0 +1,150 @@
+"""Correct a single-signal arm's retention ratio so its *realised* budget matches the arm it is compared to.
+
+D41 recorded an iso-budget failure in the winning arm's favour: the joint arm spent 2.8% more than
+retention-only at 1.05 bits and 1.45% more at 2.00, outside the +/-1% rule the project set for itself. Nothing
+is mis-accounted -- `allocate()` is exact for the ratio it asks for. The gap is that **span retention keeps
+whole spans, so the realised ratio undershoots the requested one, and undershoots more at a small ratio**
+because a span is coarse relative to a tiny budget. Retention-only sits at 6.56%, where the rounding costs it
+3.7%; the joint arm sits at 24.67%, where it costs 1.2%.
+
+Arguing about the size of that gap is not the fix. Measuring it is:
+
+    ratio_corrected = ratio_requested * (bits_realised(reference) / bits_realised(arm))
+
+which is a first-order correction -- realised bits are close to linear in the requested ratio, but the span
+boundaries move, so the result is re-measured rather than assumed and this script prints the residual
+deviation when it is run again on the corrected arm.
+
+**The correction always aims at or above the reference**, never below. Giving a baseline slightly more storage
+than the arm it loses to is the conservative direction; giving it less is the mistake this script exists to
+undo. `--headroom` is therefore a small positive nudge by default, and a run that lands under the reference is
+reported as a failure of this script rather than quietly accepted.
+
+    python scripts/calibrate_iso_budget.py --reference m5h3_1p05_joint --arms m5h3_1p05_retention_only
+
+The corrected config keeps every other field of the original, takes a new `name` (so it is a new identity hash
+and a new run, never a silent overwrite -- D-series rule), and carries the measurement it came from in its
+header.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+from raq_kv.utils.io import read_json, read_jsonl
+from raq_kv.utils.paths import configs_dir, resolve_output_root
+
+SUFFIX = "_isocal"
+
+
+def realised_bits(raw_root: Path, name: str) -> tuple[float, int]:
+    """Mean stored bits per ORIGINAL token over the samples the arm answers correctly without pruning.
+
+    The same quantity `scripts/report_m4.py` prints, computed the same way, so the two cannot disagree: each
+    record's `avg_kv_bits` is the per-value width actually stored and `tokens_retained / tokens_original` is
+    what pruning realised on that sample, not what was asked for.
+    """
+    for exp in sorted(raw_root.glob("*")):
+        if ".superseded-" in exp.name or not (exp / "manifest.json").exists():
+            continue
+        manifest = read_json(exp / "manifest.json")
+        if manifest.get("superseded_by") or manifest["config"]["name"] != name:
+            continue
+        records = read_jsonl(exp / "results.jsonl")
+        if len(records) != manifest["unit_keys_total"]:
+            raise SystemExit(f"{name}: incomplete ({len(records)}/{manifest['unit_keys_total']}) -- finish it first")
+        ok = [r for r in records if r["golden_correct"]]
+        if not ok:
+            raise SystemExit(f"{name}: no samples answered correctly without pruning")
+        bits = [r["avg_kv_bits"] * r["tokens_retained"] / r["tokens_original"] for r in ok]
+        return sum(bits) / len(bits), len(ok)
+    raise SystemExit(f"no complete run found for arm {name!r}")
+
+
+def decide(deviation: float, tolerance: float) -> str:
+    """Correct, or leave alone? The asymmetry is the whole point, so it is one function and it is tested.
+
+    ``deviation`` is the arm's realised budget relative to the reference. Only an arm that is **short** is
+    corrected. An arm spending at or above the reference already makes its comparison conservative, and pulling
+    it down to satisfy a symmetric tolerance would be shaving a baseline's budget to make it lose by more --
+    the exact manipulation the iso-budget rule exists to prevent.
+    """
+    if deviation >= 0:
+        return "conservative"
+    return "within" if abs(deviation) <= tolerance else "correct"
+
+
+def corrected_config(source: Path, ratio: float, name: str, note: list[str]) -> str:
+    """The original config with two fields changed, and the measurement that changed them in the header."""
+    text = source.read_text(encoding="utf-8")
+    body = "\n".join(line for line in text.splitlines() if not line.startswith("#"))
+    body = re.sub(r"^(\s*)ratio:.*$", rf"\g<1>ratio: {ratio:.5f}", body, count=1, flags=re.M)
+    body = re.sub(r"^name:.*$", f"name: {name}", body, count=1, flags=re.M)
+    header = "\n".join(f"# {line}" for line in note)
+    return (f"# {name}: {source.stem} with its retention ratio corrected so the budget it REALISES matches its\n"
+            f"# reference arm, rather than the budget it was asked for.\n#\n"
+            f"# GENERATED by scripts/calibrate_iso_budget.py. Every other field is the allocator's own decision,\n"
+            f"# unchanged.\n#\n{header}\n#\n{body.lstrip()}")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--reference", required=True, help="Arm whose realised budget the others must match")
+    parser.add_argument("--arms", required=True, help="Comma-separated arms to correct")
+    parser.add_argument("--headroom", type=float, default=0.002,
+                        help="Aim this fraction ABOVE the reference, so the corrected arm is never short-changed")
+    parser.add_argument("--tolerance", type=float, default=0.01, help="The project's iso-budget rule")
+    parser.add_argument("--output-root", default="outputs")
+    args = parser.parse_args()
+
+    raw = resolve_output_root(args.output_root) / "raw"
+    ref_bits, ref_n = realised_bits(raw, args.reference)
+    print(f"reference {args.reference}: {ref_bits:.4f} bits/original token over {ref_n} samples\n")
+
+    out = configs_dir() / "experiments"
+    for arm in (a.strip() for a in args.arms.split(",") if a.strip()):
+        name = f"{arm}{SUFFIX}"
+        source = out / f"{arm}.yaml"
+        if not source.exists():
+            raise SystemExit(f"{source} not found -- emit the arm before calibrating it")
+        bits, n = realised_bits(raw, arm)
+        deviation = (bits - ref_bits) / ref_bits
+        target = ref_bits * (1.0 + args.headroom)
+
+        verdict = decide(deviation, args.tolerance)
+        if verdict == "conservative":
+            print(f"{arm}: {bits:.4f} ({deviation:+.2%}) -- at or above the reference, so the comparison is "
+                  f"already conservative; left alone")
+            continue
+        if verdict == "within":
+            print(f"{arm}: {bits:.4f} ({deviation:+.2%}) -- short, but inside the {args.tolerance:.0%} rule; "
+                  f"left alone")
+            continue
+
+        ratio = _ratio_of(source)
+        scaled = ratio * target / bits
+        note = [
+            f"measured {arm}: {bits:.4f} bits/original token over {n} samples ({deviation:+.2%} vs reference)",
+            f"reference {args.reference}: {ref_bits:.4f} bits/original token over {ref_n} samples",
+            f"span retention keeps whole spans, so the realised ratio undershoots the requested {ratio:.5f};",
+            f"scaling by {target / bits:.5f} aims at {target:.4f}, which is {args.headroom:.1%} ABOVE the",
+            "reference so the baseline is never given less storage than the arm it is compared against",
+            "first-order only: re-run this script on the corrected arm to read the residual deviation",
+        ]
+        (out / f"{name}.yaml").write_text(corrected_config(source, scaled, name, note), encoding="utf-8")
+        print(f"{arm}: {bits:.4f} ({deviation:+.2%}) -> {name} at ratio {scaled:.5f}, aiming {target:.4f}")
+    return 0
+
+
+def _ratio_of(config: Path) -> float:
+    match = re.search(r"^\s*ratio:\s*([0-9.]+)\s*$", config.read_text(encoding="utf-8"), flags=re.M)
+    if not match:
+        raise SystemExit(f"{config} has no compression ratio to correct")
+    return float(match.group(1))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

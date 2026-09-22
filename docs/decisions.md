@@ -1228,8 +1228,11 @@ decides and what the experiment runs cannot hide in a YAML file. 117 samples, pa
 | 2.00 vs retention-only | −0.0684 [−0.1197, −0.0256] | 4.68e-03 | **4.7e-03** | 8 |
 | 2.00 vs recency-retention | −0.6838 [−0.7607, −0.5983] | 3.74e-19 | **1.5e-18** | 80 |
 
-- **H3 is supported, and all four contrasts survive Holm correction across the family.** Every single-signal
-  policy that can reach these budgets is beaten at both of them.
+- **H3 is supported on this model family, and all four contrasts survive Holm correction.** Every single-signal
+  policy *run* that can reach these budgets is beaten at both of them. *(Scoped by D42: the plan pre-registers
+  **two model families** and a **magnitude-only** baseline that this campaign did not include, so "supported"
+  here means supported on one family against three of four pre-registered baselines. The general claim is not
+  yet made.)*
 - **Precision-only cannot reach either budget, and that is the cleanest result here.** Quantization alone
   bottoms out at 2-bit, about 2.63 bits per original token once its fp16 scales are counted, so the policy the
   quantization literature uses does not exist at 1.05 or 2.00. The allocator returns `None` rather than
@@ -1308,3 +1311,95 @@ Value error, protection guards the quantized representation, so quantization mus
 One model, one probe, two budget levels. The joint-vs-retention-only margin is the load-bearing one and it is
 13.7 and 6.8 points on 18 and 8 discordant samples respectively — real, Holm-surviving, and not large. H3 is
 recorded as **supported with a stated iso-budget deviation**, not as a clean result.
+
+## D42 — A pre-registration audit that scopes D41, an iso-budget deviation measured rather than estimated, and a latent provenance bug (2026-09-22)
+
+D41 closed H3 a day earlier. Writing the external-review dossier meant reading `docs/m4_m5_plan.md` §M5 line by
+line, and the plan says things D41 did not check itself against. Nothing below is new data about the model; it
+is an audit of a claim against its own pre-registration, and it makes D41's "supported" narrower.
+
+### 1. The iso-budget deviation is now measured, and the estimate was wrong in both directions
+
+D41 reported the joint arm spending **+2.8%** and **+1.45%** more than retention-only — outside the project's
+±1% rule, in the winning arm's favour — and estimated the correction at "roughly 1.4 points" from D40's bf16
+frontier. `scripts/calibrate_iso_budget.py` re-emits a short arm at the ratio whose *realised* budget matches
+its reference, and the arms were re-run:
+
+| pair | before | after | residual | margin before | margin after | correction |
+|---|---|---|---|---|---|---|
+| 1.05 vs retention-only | 1.0116 (−2.75%) | 1.0409 | **+0.07%** | 0.1368 | **0.1282** | 0.86 pts |
+| 2.00 vs retention-only | 1.9565 (−1.43%) | 1.9882 | **+0.17%** | 0.0684 | **0.0513** | 1.71 pts |
+
+- **The single estimate was wrong in both directions**: it overstated the 1.05 correction (0.86 actual against
+  1.4 estimated) and understated the 2.00 one (1.71). The span-coarseness mechanism predicts the *smaller*
+  budget suffers more, and the correction came out larger at the larger budget — unexplained, stated, and not
+  worth a story on two points.
+- **Both results survive**: −0.1282 [−0.1966, −0.0684], p = 2.7e-04, 17 discordant; and −0.0513 [−0.0940,
+  −0.0171], p = 1.4e-02, 6 discordant.
+- **The correction is deliberately one-directional.** The recency arms sit at **+1.33%** and **+0.82%**, also
+  outside a symmetric ±1% rule, and are left alone: pulling a baseline *down* to satisfy a tolerance is shaving
+  its budget to make it lose by more, which is the manipulation the rule exists to prevent. `decide()` is one
+  function with three outcomes and `tests/test_iso_calibration.py` pins the asymmetry, because an asymmetry
+  nobody tests gets tidied into symmetry by the next person who reads it.
+
+### 2. Two pre-registered conditions D41 did not check itself against
+
+`docs/m4_m5_plan.md` §M5 lists four baselines and a refutation rule. The audit:
+
+| pre-registered | status |
+|---|---|
+| uniform 4-bit, all tokens, metadata protected | ✅ `m4x_all4bit`: 4.2600 bits, **0.0000** failure. The joint point wins on bits (4.0×), not on failure — a Pareto comparison, and it must be reported as one |
+| KIVI at its own optimum, residual window 128 | ✅ D39 |
+| recency-only retention at the matched budget | ✅ D41 |
+| **magnitude-only allocation, "the strongest single-signal policy"** | ❌ **never run.** Now run, below |
+| **"on at least two model families", else H3 is refuted** | ❌ **one family.** Qwen3-1.7B only |
+
+**So D41's "H3 is supported" was an overclaim** — not because the data was wrong, but because the claim was
+never held against the rule that was frozen before it. The honest statement is: *supported on one model family
+against the baselines actually run.* The general claim is not made, and by the plan's own wording H3 cannot be
+called supported until a second family answers. This is the twelfth finding in the project withdrawn or
+re-scoped after a check, and the first one caught by re-reading the pre-registration rather than by a control
+arm.
+
+### 3. Magnitude-only, the baseline the plan called strongest, is the weakest thing measured
+
+| arm | bits/orig | kept_target | task failure | vs joint |
+|---|---|---|---|---|
+| magnitude-only @ 1.05 (key_norm, tokens, 4-bit) | 1.0539 (+1.33%) | 0.2128 | **0.9573** | −0.9231 [−0.9658, −0.8718], p = 2.7e-25, 108 discordant |
+| magnitude-only @ 2.00 | 2.0011 (+0.82%) | 0.4984 | **0.8376** | −0.8376 [−0.8974, −0.7692], p = 4.2e-23, 98 discordant |
+
+- **It is worse than recency** (0.9573 against 0.6923 at 1.05), which is the trivial baseline recency was
+  supposed to be. The plan's expectation that magnitude is "the strongest single-signal policy" is refuted.
+- **Key magnitude carries no usable signal about which tokens the answer needs.** Against the share a uniformly
+  random selection of the same size would keep in expectation: **−0.0339, p = 0.077** at 1.05 and **+0.0286,
+  p = 0.17** at 2.00. Indistinguishable from chance at both budgets, and the two trends point *opposite* ways,
+  which supports "no signal" over "anti-signal". Tested rather than eyeballed: the 0.2128-against-0.2467 gap
+  looked like a below-chance result and is not one.
+- **Why it matters beyond H3.** Magnitude is computable at prefill, so it is the only H3 baseline a *shared
+  prefix cache* could actually run (D36's open problem). That the cheap query-agnostic signal is at chance
+  makes the 0.624-against-0.026 gap harder, not easier.
+
+**All six contrasts survive Holm across the family** (1.6e-24, 2.1e-22, 1.5e-18, 5.1e-18, 5.5e-04, 1.4e-02).
+
+### 4. A `protection_arm` config silently accepts a `compression` block it never applies
+
+Found while designing the fault×retention experiment (`docs/m4_exit.md` row 10). `ProtectionArmTask.run_unit`
+goes prefill → quantize → protect → decode with **no compression step**, but the schema accepts a
+`compression` block on that task kind, the block survives validation into the config object, and
+`_pruning_token` reads it unconditionally. A run would therefore be **named `…_p25qaS_…` and hashed as pruned
+while executing unpruned** — a manifest that is internally consistent and wrong.
+
+This is D24's failure mode arrived at from the opposite direction: D24 was a manifest recording code that did
+not run, this is a manifest recording a *transform* that did not run. Nothing in the repository has hit it,
+because no such config was ever written. **The schema must refuse the combination until the task implements
+it**; deferred to the next commit because two campaigns were in flight and `config/` and `experiments/` are
+inside the runner's import graph.
+
+### 5. D24's narrowing, applied before it was verified
+
+`raq_kv.allocation.policy` was edited while two arms were in flight, on the reasoning that the runner does not
+import it. That reasoning is correct — verified afterwards, and each manifest records the tree state its own
+process imported, so nothing is corrupted. But **it was acted on before it was checked**, which is how D24
+happened in the first place. `tests/test_runner_import_surface.py` now pins the exemption: the modules declared
+safe to edit mid-campaign must stay outside the runner's import graph, and a test fails if an import is added.
+An exemption that lives only in an argument decays.

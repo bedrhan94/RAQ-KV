@@ -150,3 +150,24 @@ def test_a_quantized_policy_still_gets_the_guard(kind):
     plan = single_signal(kind, 4.3)
     assert plan is not None and plan.bits is not None
     assert plan.metadata_guard == "range"
+
+
+def test_magnitude_only_is_the_pre_registered_single_signal_baseline():
+    """`docs/m4_m5_plan.md` names magnitude-only "the strongest single-signal policy" among H3's baselines.
+
+    It was missing from the first H3 campaign, which ran only precision-, retention- and recency-based arms.
+    Held at 4 bits and token granularity on purpose: against the joint arm the only thing that varies is the
+    importance *signal*, so a win cannot be attributed to the unit or the precision.
+    """
+    plan = single_signal("magnitude_only", 1.05)
+    assert plan is not None
+    assert plan.scorer == "key_norm" and plan.unit == "token" and plan.bits == 4
+    assert plan.bits_per_original_token <= 1.05 + 1e-9
+    assert any("shared prefix cache" in r for r in plan.rationale)
+
+
+@pytest.mark.parametrize("kind", ["retention_only", "recency_retention", "magnitude_only"])
+@pytest.mark.parametrize("budget", [0.5, 1.05, 2.0, 4.3])
+def test_no_single_signal_policy_overspends_at_any_budget(kind, budget):
+    plan = single_signal(kind, budget)
+    assert plan is not None and plan.bits_per_original_token <= budget + 1e-9

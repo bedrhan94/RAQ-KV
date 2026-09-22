@@ -1,7 +1,7 @@
 """Builds the RAQ-KV technical review document (.docx) for an external reviewer.
 
 Regenerate with:  python scripts/build_review_docx.py
-Content is assembled from docs/decisions.md (D1-D40), docs/claims.md and the measured campaign outputs; the
+Content is assembled from docs/decisions.md (D1-D42), docs/claims.md and the measured campaign outputs; the
 numbers here are transcribed from those records, and the record is the source of truth if they ever disagree.
 """
 
@@ -61,24 +61,34 @@ WITHDRAWN_ROWS = [
      "Source was edited while the sweep ran, so three manifests recorded three different diff hashes (D24)",
      "The runner now refuses an experiment whose code changed mid-process; the four runs were retired, not "
      "deleted"],
+    ["'H3 is supported' (D41, stated one day before this revision)",
+     "A pre-registration audit, not new data. The plan requires two model families and names a magnitude-only "
+     "baseline; the campaign had one family and had not run that arm (D42)",
+     "Supported on one model family against the baselines actually run, with the unmet conditions named; the "
+     "general claim is not made"],
 ]
 
-# H3, transcribed from `scripts/report_m4.py --arms m5h3_*` over the six emitted arms. Kept as data next to the
-# prose so a reviewer can diff it against the report output rather than trusting the paragraph around it.
+# H3, transcribed from `scripts/report_m4.py --arms m5h3_*` over the eight arms that ran. Kept as data next to
+# the prose so a reviewer can diff it against the report output rather than trusting the paragraph around it.
+# The retention-only rows are the calibrated re-runs (D42); the originals spent 2.8% and 1.45% less.
 H3_ROWS = [
     ["joint @ 1.05 (4-bit, query-aware spans)", "24.67%", "1.0401", "1.0000", "0.0342"],
-    ["retention-only @ 1.05 (bf16, query-aware spans)", "6.56%", "1.0116", "0.9487", "0.1709"],
-    ["recency-retention @ 1.05 (4-bit, recency tokens)", "24.67%", "1.0539", "0.3162", "0.6923"],
+    ["retention-only @ 1.05 (bf16, query-aware spans)", "6.76%", "1.0409 (+0.07%)", "0.9487", "0.1624"],
+    ["magnitude-only @ 1.05 (4-bit, key-norm tokens)", "24.67%", "1.0539 (+1.33%)", "0.2128", "0.9573"],
+    ["recency-retention @ 1.05 (4-bit, recency tokens)", "24.67%", "1.0539 (+1.33%)", "0.3162", "0.6923"],
     ["joint @ 2.00 (4-bit, query-aware spans)", "46.98%", "1.9849", "1.0000", "0.0000"],
-    ["retention-only @ 2.00 (bf16, query-aware spans)", "12.50%", "1.9565", "1.0000", "0.0684"],
-    ["recency-retention @ 2.00 (4-bit, recency tokens)", "46.98%", "2.0011", "0.3712", "0.6838"],
+    ["retention-only @ 2.00 (bf16, query-aware spans)", "12.71%", "1.9882 (+0.17%)", "1.0000", "0.0513"],
+    ["magnitude-only @ 2.00 (4-bit, key-norm tokens)", "46.98%", "2.0011 (+0.82%)", "0.4984", "0.8376"],
+    ["recency-retention @ 2.00 (4-bit, recency tokens)", "46.98%", "2.0011 (+0.82%)", "0.3712", "0.6838"],
     ["precision-only, either budget", "-", "floor 2.63: infeasible", "-", "not emitted"],
 ]
 H3_PAIRS = [
     "                                    difference                  p         Holm     discordant",
-    "1.05  vs retention-only      -0.1368 [-0.2051, -0.0769]   1.62e-04   3.2e-04      18 of 117",
+    "1.05  vs retention-only      -0.1282 [-0.1966, -0.0684]   2.75e-04   5.5e-04      17 of 117",
+    "1.05  vs magnitude-only      -0.9231 [-0.9658, -0.8718]   2.69e-25   1.6e-24     108 of 117",
     "1.05  vs recency-retention   -0.6581 [-0.7436, -0.5726]   1.71e-18   5.1e-18      77 of 117",
-    "2.00  vs retention-only      -0.0684 [-0.1197, -0.0256]   4.68e-03   4.7e-03       8 of 117",
+    "2.00  vs retention-only      -0.0513 [-0.0940, -0.0171]   1.43e-02   1.4e-02       6 of 117",
+    "2.00  vs magnitude-only      -0.8376 [-0.8974, -0.7692]   4.18e-23   2.1e-22      98 of 117",
     "2.00  vs recency-retention   -0.6838 [-0.7607, -0.5983]   3.74e-19   1.5e-18      80 of 117",
 ]
 
@@ -217,7 +227,7 @@ def build(doc: Document) -> None:
     para(doc, "Technical review dossier - complete record of methods, formulas, measurements and corrections",
          italic=True, colour=GREY, space_after=2)
     para(doc, "Model: Qwen3-1.7B @ 70d244cc | Hardware: RTX 5060 Ti | "
-              "292 automated tests passing (7 GPU-gated, deselected) | decision records D1-D41",
+              "324 automated tests passing (7 GPU-gated, deselected) | decision records D1-D42",
          size=9, colour=GREY)
     rule(doc)
 
@@ -587,21 +597,41 @@ def build(doc: Document) -> None:
     rich(doc, [("Paired against the joint arm, task failure (Wilcoxon, bootstrap CI over samples, Holm across "
                 "the family of four):", "b")])
     code(doc, H3_PAIRS)
-    rich(doc, [("H3 is supported and all four contrasts survive Holm correction. ", "b"),
-               ("Every single-signal policy that can reach these budgets is beaten at both of them.")])
-    rich(doc, [("The iso-budget rule this project set for itself is broken against retention-only, in the "
-                "winning arm's favour. ", "b"),
-               ("The joint arm spends 1.0401 against retention-only's 1.0116 (+2.8%) and 1.9849 against 1.9565 "
-                "(+1.45%) - outside the +/-1% tolerance. The mechanism is span retention: whole spans are kept, "
-                "so the realised ratio undershoots the requested one, and it undershoots more at a small ratio "
-                "because spans are coarse relative to a tiny budget (0.0632 realised against 0.0656 requested, "
-                "-3.7%, versus 0.2438 against 0.2467, -1.2%). Against recency-retention the deviation runs the "
-                "other way (-1.3% and -0.8%) and those comparisons are conservative; against retention-only "
-                "they are not. As a sensitivity estimate - an estimate, not a measurement - D40's own bf16 "
-                "frontier moved 2.6 points of task failure for a 5% relative change in retention, which puts "
-                "the correction at roughly 1.4 points against a 13.7-point margin. The ordering is not at risk; "
-                "the number is. The fix before this goes in a paper is to emit the single-signal arms by "
-                "REALISED bits rather than requested ratio.")])
+    rich(doc, [("All six contrasts survive Holm correction - and H3 still does not meet its own "
+                "pre-registration. ", "b"),
+               ("The plan requires the joint policy to beat every single-signal policy on AT LEAST TWO model "
+                "families. This is one. So the honest statement is: supported on Qwen3-1.7B against the "
+                "baselines actually run, with the general claim not made. That gap was found by re-reading the "
+                "pre-registration after the result was written up, not by a control arm, and it is the twelfth "
+                "row of section 10.")])
+    rich(doc, [("The baseline the plan called 'the strongest single-signal policy' is the weakest thing "
+                "measured. ", "b"),
+               ("Magnitude-only retention fails 95.7% at 1.05 bits - worse than recency, which was supposed to "
+                "be the trivial baseline. It was also missing from the first campaign entirely. Key magnitude "
+                "selects answer-bearing tokens at chance: against the share a uniformly random selection of "
+                "the same size would keep, it lands at -0.0339 (p = 0.077) at 1.05 and +0.0286 (p = 0.17) at "
+                "2.00 - indistinguishable at both, with the two trends pointing opposite ways, which supports "
+                "'no signal' over 'anti-signal'. This was tested rather than eyeballed; the 0.2128-against-"
+                "0.2467 gap looks like a below-chance result and is not one. It matters beyond H3, because "
+                "magnitude is computable at prefill and is therefore the only baseline here a shared prefix "
+                "cache could run.")])
+    rich(doc, [("The iso-budget rule was broken on first measurement, and the fix was to re-run rather than to "
+                "argue. ", "b"),
+               ("The first campaign had the joint arm spending 2.8% and 1.45% MORE than retention-only, outside "
+                "the +/-1% tolerance and in the winning arm's favour. The mechanism is span retention: whole "
+                "spans are kept, so the realised ratio undershoots the requested one, and it undershoots more "
+                "at a small ratio because spans are coarse relative to a tiny budget. The baselines were "
+                "re-emitted at the ratio whose REALISED budget matches the joint arm and re-run; every "
+                "comparison in the table above is now within +0.17%, and no baseline is given less storage "
+                "than the arm it is compared against. The correction cost the joint arm 0.86 points at 1.05 "
+                "and 1.71 at 2.00 - both smaller than the margins, and both measured rather than estimated. "
+                "The prior estimate from D40's frontier was about 1.4 points, which overstated the 1.05 case "
+                "and understated the 2.00 one.")])
+    rich(doc, [("The correction is applied in one direction only. ", "b"),
+               ("An arm already spending at or above the joint arm is left alone: the recency arms sit at "
+                "+1.33% and +0.82%, outside a symmetric tolerance, and pulling them down to comply would be "
+                "shaving a baseline's budget to make it lose by more. That asymmetry is a tested property of "
+                "scripts/calibrate_iso_budget.py, not a convention.")])
     rich(doc, [("What this comparison does NOT establish. ", "b"),
                ("Read the kept_target column before the task-failure column. Recency keeps 31.6% of the answer "
                 "tokens and the joint arm keeps 100%, and the depth breakdown shows recency succeeding only on "
@@ -610,7 +640,7 @@ def build(doc: Document) -> None:
                 "at a fixed budget - it is not independent evidence that joint allocation is what helps. The "
                 "comparison that isolates the precision axis is joint against retention-only, where both arms "
                 "use query-aware span retention and differ only in whether the budget is spent on bits or on "
-                "more tokens - and that margin is 13.7 points at 1.05 and 6.8 at 2.00, not 66.")])
+                "more tokens - and that margin is 12.8 points at 1.05 and 5.1 at 2.00, not 66.")])
     rich(doc, [("Why section 9.2 says 0.85% and this table says 3.42% for what looks like the same row. ", "b"),
                ("They are two runs, not one. The M5 joint point keeps 25.00% of tokens and the H3 joint arm "
                 "keeps 24.67%, at the same 4-bit quantization, so the H3 arm has a 1.3% smaller realised budget "
@@ -666,12 +696,15 @@ def build(doc: Document) -> None:
                 "0.026, and a prefix cache is compressed before the query exists.")
     bullet(doc, "ECC golden vectors for an RTL cross-check have not been emitted, and the M2 and M4 exit "
                 "checklists have not been written (M0, M1 and M3 have).")
-    bullet(doc, "H3's load-bearing comparison is not strictly iso-budget. The joint arm spends 2.8% and 1.45% "
-                "more than retention-only, outside the project's own +/-1% rule and in the winning arm's "
-                "favour, because span retention undershoots a small requested ratio more than a large one. The "
-                "estimated correction is about 1.4 points against a 13.7-point margin, but that is an estimate "
-                "from D40's frontier rather than a measurement, and the arms should be re-emitted by realised "
-                "bits.")
+    bullet(doc, "H3 does not meet its own pre-registration. The plan requires the joint policy to beat every "
+                "single-signal policy on AT LEAST TWO model families; this is one. Until the second family is "
+                "run, H3 is supported on Qwen3-1.7B and the general claim is not made.")
+    bullet(doc, "No experiment in this project varies two axes at once. Protection was priced on unpruned "
+                "caches (M3); retention and precision were priced with no faults injected (M4, M5) - all 30 "
+                "retention runs are fault-free. The allocator's staged design ASSUMES the reliability tax is "
+                "flat in retention, and that assumption is currently untested. It is the one measurement that "
+                "could falsify the allocator's structure, and it is named in m4_exit.md row 10 as the reason "
+                "M4 is not closed.")
     bullet(doc, "Single-seed for most retention arms. The retention task is deterministic greedy decoding, so "
                 "the seed affects sample selection rather than the measurement, but multi-seed replication of "
                 "the M4 and M5 headline arms has not been done.")
@@ -700,14 +733,16 @@ def build(doc: Document) -> None:
     bullet(doc, "6. Does the staged allocator deserve to be called joint? It is a lookup plus a two-stage "
                 "ladder, not a joint optimisation. The defence is that the measurements refused a joint search "
                 "space. Is that defensible in a paper whose title says 'joint'?")
-    bullet(doc, "7. Does H3 survive a strict iso-budget re-emission? The joint arm spends 2.8% more than "
-                "retention-only at 1.05 bits. We estimate the correction at 1.4 of the 13.7 points, but we have "
-                "not measured it. Would you require the re-run before accepting H3?")
+    bullet(doc, "7. Is the reliability tax really flat in retention? The allocator assumes it - protection is a "
+                "lookup on the error rate with no retention term - and no experiment has tested it. Pruning "
+                "removes metadata (less to hit) but query-aware retention keeps exactly the answer-bearing "
+                "spans (each surviving scale matters more). Which effect would you expect to dominate, and "
+                "would the answer change the allocator's structure or only its constants?")
     bullet(doc, f"8. Are any of the {len(WITHDRAWN_ROWS)} withdrawals in section 10 wrong in the other "
                 "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
-              "(D1-D41), docs/claims.md and the run manifests in outputs/; those records are the source of "
+              "(D1-D42), docs/claims.md and the run manifests in outputs/; those records are the source of "
               "truth if they disagree with this document.", size=9, italic=True, colour=GREY)
 
 

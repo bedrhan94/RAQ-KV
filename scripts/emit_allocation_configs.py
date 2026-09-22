@@ -20,7 +20,7 @@ from pathlib import Path
 from raq_kv.allocation.policy import Allocation, allocate, single_signal
 from raq_kv.utils.paths import configs_dir
 
-POLICIES = ("joint", "precision_only", "retention_only", "recency_retention")
+POLICIES = ("joint", "precision_only", "retention_only", "recency_retention", "magnitude_only")
 
 
 def _quant_block(plan: Allocation) -> str:

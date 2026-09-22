@@ -334,6 +334,16 @@ class ExperimentConfig(StrictModel):
                 raise ValueError(f"{self.task.kind} does not support a residual window yet")
         if self.protection is not None and self.quantization is None:
             raise ValueError("protection guards the quantized representation, so quantization must be configured")
+        # A `compression` block on a task that never applies one would be worse than ignored: it reaches
+        # `_pruning_token`, so the run would be named `..._p25qaS_...` and hashed as pruned while executing
+        # unpruned -- a manifest that is internally consistent and wrong (D42). Only the tasks that actually
+        # prune may carry the block, and a task that learns to prune must be added here deliberately.
+        if self.compression is not None and not isinstance(self.task, RetentionTask):
+            raise ValueError(
+                f"{self.task.kind} does not apply a compression block, but one is configured. The block would "
+                "still enter the experiment id and the config hash, so the run would claim a pruning it never "
+                "performed. Remove it, or implement pruning for this task kind and allow it here."
+            )
         if isinstance(self.task, LatencyTask) and isinstance(self.dataset, WikiText2Config):
             corpus_tokens = self.dataset.n_chunks * (self.dataset.prefix_len + self.dataset.continuation_len + 1)
             if max(self.task.prompt_lens) > corpus_tokens:
