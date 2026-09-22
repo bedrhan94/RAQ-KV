@@ -693,6 +693,16 @@ def build(doc: Document) -> None:
                 "that survives pruning governs a group the answer depends on, where most groups in a full cache "
                 "govern filler. Protection is NOT separable from retention - which is the one thing the "
                 "multiplicative form this project rejected got right.")])
+    rich(doc, [("The compositional alternative, checked rather than argued. ", "b"),
+               ("Contrast 2's arms differ in more than pruning: the pruned cache holds about 4x fewer "
+                "quantization groups, so its flips might land in metadata more often - and metadata is at least "
+                "1543x more damaging per bit (section 7), which would explain part of +0.0893 without any "
+                "appeal to importance. Measured: metadata takes 6.1192% of the unpruned arm's flips and 6.1468% "
+                "of the pruned arm's, a paired difference of +0.028 percentage points at p = 0.57. The reason is "
+                "structural - with keys on group_token at group size 128, the group count scales with the token "
+                "count exactly as the code count does, so pruning leaves the composition invariant. The effect "
+                "is therefore not compositional. This control would need rerunning for a per_channel or "
+                "per_tensor arm, where group count does not scale with tokens.")])
     rich(doc, [("Contrast 3 explains why contrast 1 looks so good. ", "b"),
                ("Damage is strongly sublinear in flip count: 4.1x the flips buys only 2.1x the failure, because "
                 "an answer already broken cannot break further. The exposure drop therefore pays off more than "

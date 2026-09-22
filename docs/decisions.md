@@ -1450,6 +1450,30 @@ flips buys only 2.1× the failure (0.1875 → 0.4018), because an answer already
 the exposure drop pays off more than proportionally, which is what lets the concentration effect hide inside a
 matched-rate comparison.
 
+### The compositional alternative, checked and ruled out
+
+Contrast 2's arms differ in more than pruning: the pruned cache also holds ~4× fewer quantization groups, so a
+reviewer can reasonably ask whether its flips land in **metadata** more often than the unpruned arm's. Metadata
+is at least 1543× more damaging per bit (D25/D28), so even a small shift in where flips land would explain part
+of +0.0893 without any appeal to importance. Both arms record `storage_composition` and per-trial `by_target`,
+so this is measured rather than argued:
+
+| | stored bits | metadata share of **stored bits** | metadata share of **flips** |
+|---|---|---|---|
+| unpruned | 540.5 Mbit | 6.008% | **6.1192%** |
+| pruned, matched exposure | 132.6 Mbit | 6.002% | **6.1468%** |
+
+Paired per sample, the difference in metadata share of flips is **+0.028 percentage points, p = 0.57** — no
+effect. The reason is structural and worth stating: with keys on `group_token` at group size 128 and values
+`per_token`, the group count scales with the token count exactly as the code count does, so **pruning leaves the
+code/metadata composition invariant**. Both arms take 6.1% of their flips in metadata, 4324 flips per sample.
+
+So the +0.0893 is not compositional. **The mechanism sentence stands as written:** at equal exposure and equal
+composition, a flip in a pruned cache is more likely to cost an answer because the groups that survived pruning
+are the ones the answer depends on. Note the scope this control also creates: the invariance is a property of
+token-proportional axes. An arm quantizing on `per_channel` or `per_tensor`, where group count does **not** scale
+with tokens, would shift composition under pruning and this control would have to be rerun.
+
 ### What this does to the allocator
 
 **The staged design's first assumption is falsified as a mechanism.** Protection is *not* separable from
