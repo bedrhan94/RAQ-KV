@@ -61,7 +61,19 @@ derive exposure from the quantized cache, so a pruned arm automatically receives
 BER**. That is simultaneously the confound and the finding, and it is only separable if flips-per-trial is
 reported beside the failure rate — otherwise "pruning improves reliability" is unfalsifiable from the output.
 The arms must also be compared at matched *flip count* as well as matched rate, because those are different
-questions: "is a pruned cache safer to store" and "is a surviving scale more precious".
+questions: "is a pruned cache safer to store" and "is a surviving scale more precious". **Matched flip count is
+a required arm, not an optional one** — matched BER alone cannot separate "pruning is a reliability win" from
+"pruning concentrates risk and the exposure drop happens to cover it", and only the first of those is a result.
+
+**The path exists.** `generate_storage_plan(qkv, guard, seed, n_flips)` already takes an absolute flip count;
+`flips_for_rate` is the convenience wrapper that derives one from a BER. So a matched-count arm needs a config
+knob on `ProtectionArmTask` (`n_flips` as an alternative to `ber`, exactly one of the two required) rather than
+any change to the fault machinery, and no arm ever has to fake a rate to get a count.
+
+**One thing to check when relaxing the D42 schema guard.** `_pruning_token` reads `cfg.compression`
+unconditionally, so once `protection_arm` may carry the block its slug changes shape. Every existing
+`protection_arm` config has `compression is None` and must keep rendering `p0` exactly as before — otherwise
+the relaxation silently orphans the M3 run directories.
 
 ## Carried forward, not blocking closure
 
