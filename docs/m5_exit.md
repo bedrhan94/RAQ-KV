@@ -1,0 +1,57 @@
+# M5 exit checklist — joint allocation
+
+**Status: M5 NOT CLOSED as of 2026-09-23.** Six of eight criteria are met. The two that are not are both about
+generality, not mechanism: H3's pre-registered **two model families** (row 7), and the **precision × faults**
+pair that has never been crossed (row 8). Neither is a gap that more analysis closes; both need runs.
+
+Headline: **the joint point costs 1.054 bits per original token — 15.2× compression — and fails 0.85% of the
+probe's questions.** A faithful KIVI at its own published configuration costs 4.331 and fails 5.13%. Every
+single-signal policy that can reach 1.05 or 2.00 bits is beaten at both, all six contrasts surviving Holm; the
+policy the quantization literature uses cannot reach either budget at all.
+
+Criteria, from `docs/m4_m5_plan.md` §M5. M5 closes when every row is ✅ with evidence.
+
+| # | Criterion | Status | Evidence |
+|---|---|---|---|
+| 1 | Search is **staged**, not a flat sweep | ✅ | D22: retention and bit width move a budget by tens of percent, group size and protection by a few or a fraction of one, so a flat search spends itself on infeasible corners. `allocation/policy.py` is coarse (highest precision whose full-retention cost fits) → fine (spend the remainder on smaller groups) → protection by lookup. Every rule cites the decision that set it |
+| 2 | The one rule that could not be derived was **measured** | ✅ | D40: the iso-budget frontier has an interior optimum. Spending budget on tokens pays down to 4 bits and **reverses** below it — 2-bit at 40.5% loses to 4-bit at 25% by +0.1282 (p = 0.00027) with 100% of answer tokens kept in both, so the damage is per-token quantization error, not lost content. 3-bit ≈ 4-bit (p = 0.32), so `MIN_BITS = 4` is the conservative end of a plateau |
+| 3 | Baselines at **their own** optimum, none weakened | ✅ | D39: KIVI built at its published configuration — keys `group_token` 32, values `group_channel` 32, **residual window 128** — with the window paid for in the budget. One finding runs against us and is reported: the window costs R/T per value, so below ~1500 tokens KIVI is dominated by plain 4-bit with no window, which is a result about the window and not about KIVI's own claim, made at long context |
+| 4 | Equal total bits, **enforced by measurement** rather than asserted | ✅ | D41 found the joint arm spending +2.8% and +1.45% more than retention-only, outside the project's own ±1% rule and in the winning arm's favour. D42 fixed it by re-running: `scripts/calibrate_iso_budget.py` re-emits a short arm at the ratio whose *realised* budget matches its reference, and every H3 comparison is now within **+0.17%**. The correction is one-directional by design — raising a short baseline, never cutting a generous one — and that asymmetry is pinned by tests |
+| 5 | Configs **emitted by the allocator**, not written by hand | ✅ | `scripts/emit_allocation_configs.py` generates each arm from the allocator's own `Allocation` object, carrying its rationale into the config header. A gap between what the policy decides and what the experiment runs therefore cannot hide in a YAML file — which is the thing H3 is actually testing |
+| 6 | Infeasibility reported, never papered over (plan §44) | ✅ | `single_signal("precision_only", …)` returns `None` below ~2.63 bits per original token rather than overspending and calling the result a comparison. H3's first answer is an **absence**: the policy the quantization literature uses does not exist at either budget. Separately, D42: the allocator attached its metadata guard to an unquantized policy and the schema refused it — an unquantized cache has no metadata to guard, so a retention-only policy is unprotectable by the cheapest mechanism this project has |
+| 7 | **H3 on at least two model families**, else refuted | ❌ **NOT MET** | One family: Qwen3-1.7B. The plan's refutation rule is explicit — "if the joint policy does not beat *every* single-signal policy at equal bits on at least two model families, H3 is refuted and reported as such". D41 called H3 "supported" without checking itself against that rule; D42 recorded the overclaim as the twelfth withdrawal. **Llama-3.2-3B has identical KV geometry (D1)**, which is what makes it the right second family: a family effect separates from a geometry effect |
+| 8 | Every axis **pair** crossed, not just priced independently | ❌ **NOT MET** | D43 crossed retention × faults and refuted separability (+0.0893 at matched exposure, p = 0.016). **Precision × faults at fixed retention has never been run**, and neither has the three-way interaction. So the allocator's *precision* stage rests on the same kind of untested independence assumption that its protection stage turned out to violate |
+
+## What M5 learned that changed the allocator's shape
+
+**§6's multiplicative Joint Reliability Score is not what got built, and four measurements are why.** The axes are
+not commensurate (H2c: 4.844 against 2.344 bits/value for the brief's own "equal budget" pair). Protection is a
+lookup on the deployment's error rate, not a search dimension (D25–D31). The two sensitivity signals the score
+would multiply are **anti-correlated** (Q48: ρ = −0.377), so their product is worse than either. And the
+retention decision is over **spans, all-or-nothing across layers** (D32, D34), so half the cells a per-(layer,
+token) score would rank do not exist as choices.
+
+**But D43 showed the brief was right about one thing the staged design denies: the axes interact.** At equal
+fault exposure, a cache pruned to 25% fails more than an unpruned one, because query-aware span retention keeps
+exactly the answer-bearing spans and every surviving scale governs a group the answer needs. So protection is
+not separable from retention — just not through a product of per-cell scores.
+
+**The allocator's constants were deliberately left alone.** The contrast that would set a retention-dependent
+protection threshold has **4 discordant samples** and p = 0.066. What the code carries instead is a stated
+caveat in `_protection()`, pinned by a test: this lookup is **unconservative for aggressively pruned caches**.
+Row 8's precision × faults pair is the same question one axis over.
+
+## Carried forward, not blocking closure
+
+1. **Latency and bandwidth are not claimed anywhere.** Quantization is fake — codes are reconstructed to bf16,
+   so nothing shrinks in memory and no kernel exists. Every memory number is analytic, validated against the
+   CUDA allocator at full precision (ratio 1.0000). A reviewer should treat any speed claim as absent rather
+   than implied.
+2. **The probe's construction.** RAQ-Probe's facts are single sentences *by construction*, which is exactly the
+   structure the span finding exploits, and D43's concentration effect is measured through that same span
+   scorer. Both need a natural long-context task (RULER, LongBench) before they are called general.
+3. **The shared-prefix-cache gap.** Query-agnostic scoring sits at 0.624 against query-aware 0.026 (D36), and
+   D42 closed the cheapest hope: magnitude, the one signal computable at prefill, selects answer-bearing tokens
+   **at chance** (−0.034, p = 0.077; +0.029, p = 0.17).
+4. **M6 agent benchmarks.** C4 — that token-level metrics understate agent failures — has evidence from
+   retrieval only (+29% perplexity with −71% probe accuracy). The agent-level claim needs BFCL / tool-call.
