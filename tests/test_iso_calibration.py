@@ -68,18 +68,21 @@ def test_a_config_without_a_ratio_is_refused(tmp_path):
 def test_a_task_that_never_prunes_refuses_a_compression_block():
     """D42: the block would reach `_pruning_token` and name the run as pruned while it executed unpruned.
 
-    Found by trying to design the fault x retention experiment: `ProtectionArmTask.run_unit` goes prefill ->
+    Found by trying to design the fault x retention experiment: `ProtectionArmTask.run_unit` went prefill ->
     quantize -> protect -> decode with no compression step, yet the schema accepted the block, it survived into
     the config object, and the slug read it. That is a manifest that is internally consistent and wrong -- D24's
     failure mode reached from the other direction, since D24 was a manifest recording code that did not run and
     this is one recording a transform that did not run.
+
+    `protection_arm` now prunes (D43) and is allowed. `fault_qa` is not, and stands in here: the guard must keep
+    refusing every task kind that has not actually implemented the step.
     """
     import pathlib
 
     from raq_kv.config.loader import load_experiment_configs
 
-    src = pathlib.Path(__file__).resolve().parents[1] / "configs" / "experiments" / "m3_arm_h_range_guard.yaml"
-    text = src.read_text(encoding="utf-8").replace("name: m3_arm_h_range_guard", "name: _tmp_compression_leak")
+    src = pathlib.Path(__file__).resolve().parents[1] / "configs" / "experiments" / "m2_fault_qa_probe.yaml"
+    text = src.read_text(encoding="utf-8").replace("name: m2_fault_qa_probe", "name: _tmp_compression_leak")
     text += "compression:\n  scorer: query_attention\n  ratio: 0.25\n  unit: span\n  protect_initial: 4\n"
     tmp = src.parent / "_tmp_compression_leak.yaml"
     tmp.write_text(text, encoding="utf-8")

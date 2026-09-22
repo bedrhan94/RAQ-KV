@@ -1,0 +1,38 @@
+# Row 10 of docs/m4_exit.md: the first experiment in this project to vary TWO axes at once.
+#
+# Until now protection was priced on unpruned caches (M3) and retention on fault-free ones (M4, M5), so
+# the allocator's assumption that the reliability tax is flat in retention was never tested. It is not
+# obviously true. Pruning removes tokens and with them their quantization groups, so a pruned cache
+# presents fewer metadata bits to hit; but query-aware span retention keeps EXACTLY the answer-bearing
+# spans, so every surviving scale now governs a group the answer depends on.
+#
+# WRITTEN BEFORE THE RUN, so it cannot be fitted to the numbers: if the pruned arm wins at a matched
+# RATE, the first honest reading is 'fewer bits stored, fewer bits hit' -- arithmetic, not a finding
+# about importance. The finding only exists in the matched-EXPOSURE arm, where the pruned cache takes the
+# same absolute number of flips the unpruned one would have taken on that same sample.
+#
+# At the probe's mean context the gap is 504 flips unpruned against 124 pruned -- a factor of four.
+#
+# Pairing note: this arm's golden runs through its OWN cache (pruned, quantized, guarded, unfaulted), so
+# task_failure isolates fault damage. 'unpruned_correct' records separately whether the full cache could
+# answer, because the pruned arms lose some samples to pruning alone and those must not be charged to the
+# fault model. Cross-arm comparisons pair over the intersection.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m6_fr_unpruned_unprot
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+compression:
+  scorer: query_attention
+  ratio: 1.0
+  unit: span
+  protect_initial: 4
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-6
+  n_trials: 8
+  n_control: 1
+seed: 0

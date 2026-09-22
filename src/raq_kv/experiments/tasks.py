@@ -621,6 +621,65 @@ class FaultQA:
         }
 
 
+def role_tokens(sample: PromptSample, cache_len: int) -> dict[str, tuple[int, ...]]:
+    """The probe's own span labels, as cache positions: which tokens carry the answer, a distractor, a sentence."""
+    target, distractor, sentence = [], [], []
+    for span in sample.spans:
+        span_tokens = range(span.token_start, min(span.token_end, cache_len))
+        if span.label == "fact_value":
+            (target if span.role == "target" else distractor).extend(span_tokens)
+        elif span.label == "fact_sentence" and span.role == "target":
+            sentence.extend(span_tokens)
+    return {"target": tuple(target), "distractor": tuple(distractor), "sentence": tuple(sentence)}
+
+
+def control_span(seed: int, sample: PromptSample, cache_len: int, sentence: tuple[int, ...]) -> tuple[int, ...]:
+    """A contiguous window the size of the fact's sentence, placed somewhere else in the document.
+
+    Deterministic per sample, and deliberately kept clear of the sentence itself so the control cannot
+    accidentally include the context it is meant to exclude.
+    """
+    width = len(sentence)
+    if width == 0 or cache_len <= width:
+        return ()
+    rng = random.Random(derive_seed(seed, sample.sample_id, "control_span"))
+    lo, hi = (min(sentence), max(sentence)) if sentence else (0, 0)
+    for _ in range(64):
+        start = rng.randrange(0, cache_len - width)
+        if start + width <= lo or start > hi:
+            return tuple(range(start, start + width))
+    return ()
+
+
+def build_retention_plan(
+    cfg: ExperimentConfig, scorer: Any, tok: Any, model: Any, snapshot: KVSnapshot, context_ids: Any,
+    query_ids: Any, sample: PromptSample,
+) -> tuple[Any, list[Any], dict[str, tuple[int, ...]], tuple[int, ...]]:
+    """Score the cached tokens and decide which to keep. One implementation, two tasks.
+
+    Extracted from ``Retention`` when ``ProtectionArm`` gained a pruning step (D43), because the alternative was
+    two copies of the span/token branch drifting apart -- and a difference between how the fault experiment
+    prunes and how the retention experiment prunes would make the two milestones incomparable in exactly the
+    place they are meant to be compared.
+    """
+    c = cfg.compression
+    assert c is not None
+    roles = role_tokens(sample, sample.cache_len)
+    control = control_span(cfg.seed, sample, sample.cache_len, roles["sentence"])
+    scores = scorer.score(ScoreContext(
+        snapshot=snapshot, context_ids=context_ids, model=model, query_ids=query_ids,
+        target_tokens=roles["target"], distractor_tokens=roles["distractor"],
+        sentence_tokens=roles["sentence"], control_span_tokens=control))
+    if c.unit == "span":
+        spans = sentence_spans(tok, context_ids)
+        plan = select_keep_spans(scores, spans, c.ratio, c.protect_recent, c.protect_initial,
+                                 c.span_aggregate or "mean")
+    else:
+        spans = []
+        plan = select_keep(scores, c.ratio, c.protect_recent, c.protect_initial)
+    return plan, spans, roles, control
+
+
 class ProtectionArm:
     """One M3 arm at one bit error rate: the H2 vehicle.
 
@@ -646,6 +705,9 @@ class ProtectionArm:
         self.samples = {s.sample_id: s for s in samples}
         self._fingerprint = samples_fingerprint(samples)
         self.lm: LoadedModel | None = None
+        # Only the fault x retention arms carry a scorer; a plain M3 arm prunes nothing and builds none.
+        self.scorer = (build_scorer(cfg.compression.scorer, cfg.compression.window)
+                       if cfg.compression is not None else None)
 
     def unit_keys(self) -> list[str]:
         return list(self.samples)
@@ -655,7 +717,14 @@ class ProtectionArm:
 
     def setup(self) -> dict[str, Any]:
         self.lm = load_model(self.cfg.model)
-        return {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict()}
+        if self.scorer is not None and self.scorer.needs_model and self.cfg.model.attn_implementation != "eager":
+            raise ValueError(f"scorer '{self.scorer.name}' needs attention weights, which require eager "
+                             f"attention (D5); this config asks for '{self.cfg.model.attn_implementation}'")
+        info: dict[str, Any] = {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict()}
+        if self.scorer is not None and self.cfg.compression is not None:
+            info |= {"scorer": self.scorer.name, "scorer_is_oracle": self.scorer.is_oracle,
+                     "unit": self.cfg.compression.unit or "token"}
+        return info
 
     def run_unit(self, unit_key: str) -> dict[str, Any]:
         assert self.lm is not None and self.cfg.quantization is not None
@@ -666,17 +735,59 @@ class ProtectionArm:
         eos = set(self.lm.eos_token_ids)
 
         reset_peak(dev)
-        snapshot = prefill(model, ids[:, : sample.cache_len])
+        context_ids = ids[:, : sample.cache_len]
+        snapshot = prefill(model, context_ids)
+
+        # Optional pruning, for the arms that vary retention and faults together (D43). Prune BEFORE quantizing,
+        # the same order `Retention` uses and the order a system that compresses before storing would use:
+        # quantizing first would build groups over tokens about to be discarded, and `group_token` groups span
+        # tokens, so the two orders do not produce the same metadata or the same bit budget.
+        plan = roles = control = None
+        spans: list[Any] = []
+        unpruned_correct = None
+        unpruned_snapshot = snapshot
+        if self.cfg.compression is not None:
+            # Whether the model could answer from the FULL cache, recorded separately. Without it a sample that
+            # pruning alone breaks is indistinguishable from one the faults break, and the arm's clean failures
+            # would be charged to the fault model.
+            unpruned_text = tok.decode(greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=snapshot,
+                                                     eos_token_ids=eos).tokens, skip_special_tokens=True)
+            unpruned_correct = bool(SCORERS[sample.scorer](unpruned_text, sample.reference)["correct"])
+            plan, spans, roles, control = build_retention_plan(self.cfg, self.scorer, tok, model, snapshot,
+                                                               context_ids, query_ids, sample)
+            snapshot = apply_retention(snapshot, plan)
+
         qkv = quantize_to_codes(snapshot, self.cfg.quantization)
         guard = build_protection(qkv, self.cfg.protection)
         base = qkv.to_snapshot() if guard is None else guard.read_or_raise()
+        # The golden runs through THIS arm's cache -- pruned, quantized, protected, unfaulted. It is the arm's
+        # own no-fault reference, so `task_failure` isolates fault damage; a golden taken from the full cache
+        # would fold pruning damage into every trial and nothing would be attributable.
         golden_gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=base, eos_token_ids=eos)
         golden_text = tok.decode(golden_gen.tokens, skip_special_tokens=True)
         golden_score = SCORERS[sample.scorer](golden_text, sample.reference)
 
         regions = storage_regions(qkv, guard)
         stored_bits = total_stored_bits(regions)
-        n_flips = flips_for_rate(qkv, guard, self.task.ber)
+        # Exactly one of `n_flips` and `ber` is set (the task schema enforces it).
+        #
+        # `ber_basis: unpruned` is the attribution arm (D43). A pruned cache stores about a quarter of the bits,
+        # so at a matched *rate* it takes about a quarter of the flips -- and then "pruning improved
+        # reliability" is arithmetic, not a finding about importance. This basis applies the rate to what the
+        # arm WOULD store unpruned and injects that many flips into the pruned cache, so exposure is held equal
+        # and only the concentration of risk varies. The count is derived per sample, because a fixed number
+        # would give a 512-token and a 4096-token sample the same exposure when their storage differs eightfold.
+        if self.task.n_flips is not None:
+            n_flips = self.task.n_flips
+        elif self.task.ber_basis == "unpruned" and self.cfg.compression is not None:
+            # Quantized and protected for real rather than predicted, so this cannot drift from the encoders the
+            # way a closed-form predictor could; the throwaway cache is dropped immediately.
+            full_qkv = quantize_to_codes(unpruned_snapshot, self.cfg.quantization)
+            full_guard = build_protection(full_qkv, self.cfg.protection)
+            n_flips = flips_for_rate(full_qkv, full_guard, self.task.ber)
+            del full_qkv, full_guard
+        else:
+            n_flips = flips_for_rate(qkv, guard, self.task.ber)
         seed = derive_seed(self.cfg.seed, unit_key, "protection_arm")
 
         rows = []
@@ -719,9 +830,24 @@ class ProtectionArm:
             "golden_correct": bool(golden_score["correct"]),
             "golden_prediction": golden_text,
             "ber": self.task.ber,
+            "exposure_mode": ("count" if self.task.n_flips is not None
+                              else f"rate:{self.task.ber_basis or 'stored'}"),
             "stored_bits": stored_bits,
             "n_flips_per_trial": n_flips,
             "storage_composition": _storage_shares(regions),
+            # Present only on the fault x retention arms (D43). `unpruned_correct` separates a sample that
+            # pruning alone broke from one the faults broke; `kept_fraction_target` is the D32 diagnostic that
+            # says whether the arm kept the tokens the answer needs at all.
+            **({} if plan is None else {
+                **plan.to_dict(),
+                "scorer": self.scorer.name if self.scorer else None,
+                "unit": (self.cfg.compression.unit or "token") if self.cfg.compression else None,
+                "n_spans": len(spans),
+                "unpruned_correct": unpruned_correct,
+                "kept_fraction_target": plan.kept_fraction_of(roles["target"]),
+                "kept_fraction_sentence": plan.kept_fraction_of(roles["sentence"]),
+                "kept_fraction_control_span": plan.kept_fraction_of(control),
+            }),
             "faults": rows,
         }
 
@@ -777,34 +903,6 @@ class Retention:
                 "scorer": self.scorer.name, "scorer_is_oracle": self.scorer.is_oracle,
                 "unit": self.compression.unit or "token"}
 
-    @staticmethod
-    def _role_tokens(sample: PromptSample, cache_len: int) -> dict[str, tuple[int, ...]]:
-        target, distractor, sentence = [], [], []
-        for span in sample.spans:
-            span_tokens = range(span.token_start, min(span.token_end, cache_len))
-            if span.label == "fact_value":
-                (target if span.role == "target" else distractor).extend(span_tokens)
-            elif span.label == "fact_sentence" and span.role == "target":
-                sentence.extend(span_tokens)
-        return {"target": tuple(target), "distractor": tuple(distractor), "sentence": tuple(sentence)}
-
-    def _control_span(self, sample: PromptSample, cache_len: int, sentence: tuple[int, ...]) -> tuple[int, ...]:
-        """A contiguous window the size of the fact's sentence, placed somewhere else in the document.
-
-        Deterministic per sample, and deliberately kept clear of the sentence itself so the control cannot
-        accidentally include the context it is meant to exclude.
-        """
-        width = len(sentence)
-        if width == 0 or cache_len <= width:
-            return ()
-        rng = random.Random(derive_seed(self.cfg.seed, sample.sample_id, "control_span"))
-        lo, hi = (min(sentence), max(sentence)) if sentence else (0, 0)
-        for _ in range(64):
-            start = rng.randrange(0, cache_len - width)
-            if start + width <= lo or start > hi:
-                return tuple(range(start, start + width))
-        return ()
-
     def run_unit(self, unit_key: str) -> dict[str, Any]:
         assert self.lm is not None and self.cfg.compression is not None
         sample = self.samples[unit_key]
@@ -819,20 +917,9 @@ class Retention:
         golden_text = tok.decode(golden_gen.tokens, skip_special_tokens=True)
         golden_score = SCORERS[sample.scorer](golden_text, sample.reference)
 
-        roles = self._role_tokens(sample, sample.cache_len)
-        control = self._control_span(sample, sample.cache_len, roles["sentence"])
-        scores = self.scorer.score(ScoreContext(
-            snapshot=snapshot, context_ids=context_ids, model=model, query_ids=query_ids,
-            target_tokens=roles["target"], distractor_tokens=roles["distractor"],
-            sentence_tokens=roles["sentence"], control_span_tokens=control))
         c = self.cfg.compression
-        if c.unit == "span":
-            spans = sentence_spans(tok, context_ids)
-            plan = select_keep_spans(scores, spans, c.ratio, c.protect_recent, c.protect_initial,
-                                     c.span_aggregate or "mean")
-        else:
-            spans = []
-            plan = select_keep(scores, c.ratio, c.protect_recent, c.protect_initial)
+        plan, spans, roles, control = build_retention_plan(self.cfg, self.scorer, tok, model, snapshot,
+                                                           context_ids, query_ids, sample)
         pruned = apply_retention(snapshot, plan)
 
         # Prune first, then quantize: that is the order a system that compresses before storing would use, and

@@ -201,9 +201,37 @@ class ProtectionArmTask(StrictModel):
 
     kind: Literal["protection_arm"] = "protection_arm"
     n_samples: int | None = Field(default=60, description="Probe samples to use; None means all")
-    ber: float = Field(gt=0.0, lt=1.0, description="Bit error rate over the arm's declared storage")
+    ber: float | None = Field(default=None, gt=0.0, lt=1.0,
+                              description="Bit error rate over the arm's declared storage")
+    n_flips: int | None = Field(default=None, ge=1,
+                                description="Absolute flips per trial instead of a rate (D43 matched-count arms)")
+    # Defaults to None, not to "stored", and that is load-bearing rather than stylistic: `identity_dict` uses
+    # `exclude_none`, so a field with a non-None default serializes into every config that never mentions it and
+    # shifts its hash. Adding this with `default="stored"` moved all 14 protection-arm identities at once, which
+    # `tests/test_fault_retention_arm.py` caught. None means "stored".
+    ber_basis: Literal["stored", "unpruned"] | None = Field(
+        default=None,
+        description="What the rate is applied to: this arm's own storage (default), or what it would store "
+                    "unpruned (D43, the matched-exposure attribution arm)")
     n_trials: int = Field(default=8, ge=1, description="Independent storage-wide fault draws per sample")
     n_control: int = Field(default=1, ge=0, description="No-fault scorings; must be exactly zero damage")
+
+    @model_validator(mode="after")
+    def _exactly_one_exposure(self) -> ProtectionArmTask:
+        """A rate or a count, never both and never neither.
+
+        A pruned arm stores fewer bits, so at a matched *rate* it receives proportionally fewer flips. That is
+        simultaneously the confound and the finding (D43): a matched rate alone cannot separate "pruning is a
+        reliability win" from "pruning concentrates risk and the exposure drop happens to cover it", and only a
+        matched absolute count attributes the outcome. Both knobs therefore exist -- but an arm setting both
+        would have an exposure nobody could state, so exactly one is required.
+        """
+        if (self.ber is None) == (self.n_flips is None):
+            raise ValueError("a protection arm needs exactly one of `ber` (a rate) or `n_flips` (a count); "
+                             "both leaves the arm's exposure ambiguous, neither leaves it undefined")
+        if self.ber_basis == "unpruned" and self.ber is None:
+            raise ValueError("`ber_basis` describes what a rate is applied to, so it needs `ber`, not `n_flips`")
+        return self
 
 
 Task = Annotated[
@@ -337,8 +365,12 @@ class ExperimentConfig(StrictModel):
         # A `compression` block on a task that never applies one would be worse than ignored: it reaches
         # `_pruning_token`, so the run would be named `..._p25qaS_...` and hashed as pruned while executing
         # unpruned -- a manifest that is internally consistent and wrong (D42). Only the tasks that actually
-        # prune may carry the block, and a task that learns to prune must be added here deliberately.
-        if self.compression is not None and not isinstance(self.task, RetentionTask):
+        # prune may carry the block, and a task that learns to prune is added here deliberately.
+        #
+        # `protection_arm` joined this list in D43, when it gained a pruning step so that faults and retention
+        # could be varied together for the first time. A config with `compression is None` still renders `p0`,
+        # so the identities of every arm that ran before that change are unaffected -- checked, not assumed.
+        if self.compression is not None and not isinstance(self.task, RetentionTask | ProtectionArmTask):
             raise ValueError(
                 f"{self.task.kind} does not apply a compression block, but one is configured. The block would "
                 "still enter the experiment id and the config hash, so the run would claim a pruning it never "
