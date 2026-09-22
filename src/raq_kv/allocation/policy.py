@@ -89,7 +89,7 @@ def _protection(ber: float) -> tuple[str | None, str, str]:
 
     **This lookup takes no retention argument, and D43 showed that is wrong as a mechanism.** At equal fault
     *exposure* a cache pruned to 25% fails more than an unpruned one (0.4018 against 0.3125, +0.0893
-    [+0.0246, +0.1607], p = 0.016): query-aware span retention keeps exactly the answer-bearing spans, so every
+    [+0.0223, +0.1562], p = 0.016): query-aware span retention keeps exactly the answer-bearing spans, so every
     scale that survives pruning governs a group the answer depends on, where most groups in a full cache govern
     filler. Protection is therefore **not separable from retention**, which is the one thing the brief's
     multiplicative form got right.

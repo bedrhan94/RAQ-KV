@@ -677,9 +677,9 @@ def build(doc: Document) -> None:
     ])
     code(doc, [
         "                                       difference                  p    discordant   rule",
-        "1  matched RATE      pruning helps  -0.1250 [-0.1942, -0.0536]  6.1e-04    45 of 56    met",
-        "2  matched EXPOSURE  pruning hurts  +0.0893 [+0.0246, +0.1607]  1.6e-02    42 of 56    met",
-        "3  132 vs 540 flips, same cache     +0.2143 [+0.1674, +0.2656]  5.1e-09    44 of 56    met",
+        "1  matched RATE      pruning helps  -0.1250 [-0.1942, -0.0558]  6.1e-04    45 of 56    met",
+        "2  matched EXPOSURE  pruning hurts  +0.0893 [+0.0223, +0.1562]  1.6e-02    42 of 56    met",
+        "3  132 vs 540 flips, same cache     +0.2143 [+0.1652, +0.2656]  5.1e-09    44 of 56    met",
         "4  guard, pruned vs unpruned        +0.0268 [+0.0022, +0.0625]  6.6e-02     4 of 56    NOT met",
     ])
     rich(doc, [("Contrast 1 is not a result, and the config header said so before the run. ", "b"),

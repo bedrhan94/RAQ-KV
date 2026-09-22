@@ -25,6 +25,7 @@ findings for treating the second kind as the first.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from pathlib import Path
 
@@ -34,8 +35,22 @@ from scipy import stats
 from raq_kv.utils.io import read_json, read_jsonl
 from raq_kv.utils.paths import resolve_output_root
 
-META_TARGETS = ("scale", "zero")
 BOOTSTRAP = 10_000
+
+# Region names as `faults/storage.py` emits them: `code`, `scale`, `zero`, plus `check:<region>` for ECC check
+# bits and `bound:<region>` for the range guard's own stored limits.
+#
+# **Payload metadata and protection overhead are counted separately, and conflating them was a real mistake in
+# the first version of this script.** A substring test for "scale" matches `check:scale` too, so a metadata-SECDED
+# arm looked as though 8.4% of its flips hit metadata against a range-guarded arm's 6.2% -- and the control
+# reported "composition moved" on a comparison where nothing vulnerable had moved at all. The extra bits are
+# SECDED's own check bits, which exist to protect the metadata rather than to be damaged. The payload share is
+# what a concentration claim is about; the overhead share is reported beside it because D23 requires those bits
+# to be exposed to faults like any others, not because a shift in them means the same thing.
+def _classify(target: str) -> str:
+    if target.startswith(("check:", "bound:")):
+        return "overhead"
+    return "meta" if target in ("scale", "zero") else "code"
 
 
 def load_arm(raw_root: Path, name: str) -> dict[str, dict]:
@@ -88,34 +103,45 @@ def rates(data: dict[str, dict], samples: list[str], field: str) -> np.ndarray:
     return np.array(out)
 
 
-def metadata_flip_share(data: dict[str, dict], samples: list[str]) -> np.ndarray:
-    """Per sample, the fraction of injected flips that landed in quantization metadata."""
+def flip_shares(data: dict[str, dict], samples: list[str], kind: str) -> np.ndarray:
+    """Per sample, the fraction of injected flips that landed in ``kind`` -- 'meta', 'overhead' or 'code'."""
     out = []
     for s in samples:
         agg: dict[str, int] = {}
         for t in _trials(data[s]):
             for target, count in (t.get("by_target") or {}).items():
-                agg[target] = agg.get(target, 0) + count
+                agg[_classify(target)] = agg.get(_classify(target), 0) + count
         total = sum(agg.values())
-        meta = sum(v for k, v in agg.items() if any(m in k for m in META_TARGETS))
-        out.append(meta / total if total else 0.0)
+        out.append(agg.get(kind, 0) / total if total else 0.0)
     return np.array(out)
 
 
-def metadata_stored_share(data: dict[str, dict], samples: list[str]) -> float:
-    meta = total = 0
+def stored_shares(data: dict[str, dict], samples: list[str]) -> dict[str, float]:
+    agg: dict[str, int] = {}
     for s in samples:
         for target, bits in data[s]["storage_composition"].items():
-            total += bits
-            if any(m in target for m in META_TARGETS):
-                meta += bits
-    return meta / total if total else 0.0
+            agg[_classify(target)] = agg.get(_classify(target), 0) + bits
+    total = sum(agg.values()) or 1
+    return {k: v / total for k, v in agg.items()}
 
 
-def contrast(x_name: str, y_name: str, xv: np.ndarray, yv: np.ndarray, rng: np.random.Generator) -> dict:
+def _contrast_rng(x_name: str, y_name: str, seed: int) -> np.random.Generator:
+    """A generator keyed by the pair, so a contrast's interval does not depend on what was asked alongside it.
+
+    With one shared generator, requesting three contrasts in one invocation gave the third a different bootstrap
+    draw than requesting it alone -- so the same comparison had two intervals depending on the command line, which
+    is not a reproducible number. Keying on the arm names makes each contrast's interval a function of the data
+    and the ``--seed`` alone.
+    """
+    digest = hashlib.sha256(f"{seed}|{x_name}|{y_name}".encode()).digest()
+    return np.random.default_rng(int.from_bytes(digest[:8], "big"))
+
+
+def contrast(x_name: str, y_name: str, xv: np.ndarray, yv: np.ndarray, seed: int) -> dict:
     d = yv - xv
     discordant = int((d != 0).sum())
     p = 1.0 if discordant == 0 else float(stats.wilcoxon(xv, yv).pvalue)
+    rng = _contrast_rng(x_name, y_name, seed)
     boot = np.array([d[rng.integers(0, len(d), len(d))].mean() for _ in range(BOOTSTRAP)])
     lo, hi = (float(v) for v in np.percentile(boot, [2.5, 97.5]))
     return {"x": x_name, "y": y_name, "x_mean": float(xv.mean()), "y_mean": float(yv.mean()),
@@ -148,25 +174,26 @@ def main() -> int:
         flag = "ok " if changed == 0 else "FAIL"
         print(f"  [{flag}] {n:34s} {changed} of {total} control scorings changed")
 
-    print(f"\n{'arm':34s} {'stored Mbit':>12s} {'flips':>7s} {'meta%':>7s} "
+    print(f"\n{'arm':34s} {'stored Mbit':>12s} {'flips':>7s} {'meta%':>7s} {'ovhd%':>7s} "
           f"{'kept_tgt':>9s} {'task_fail':>10s} {'ans_chg':>8s}")
     for n, data in arms.items():
         stored = np.mean([data[s]["stored_bits"] for s in samples]) / 1e6
         flips = np.mean([data[s]["n_flips_per_trial"] for s in samples])
+        shares = stored_shares(data, samples)
         kept = data[samples[0]].get("kept_fraction_target")
         kept_txt = "-" if kept is None else f"{np.mean([data[s]['kept_fraction_target'] for s in samples]):.3f}"
-        print(f"{n:34s} {stored:12.1f} {flips:7.0f} {metadata_stored_share(data, samples):6.3%} "
-              f"{kept_txt:>9s} {rates(data, samples, 'task_failure').mean():10.4f} "
+        print(f"{n:34s} {stored:12.1f} {flips:7.0f} {shares.get('meta', 0):6.3%} "
+              f"{shares.get('overhead', 0):6.3%} {kept_txt:>9s} "
+              f"{rates(data, samples, 'task_failure').mean():10.4f} "
               f"{rates(data, samples, 'answer_changed').mean():8.4f}")
 
-    rng = np.random.default_rng(args.seed)
     for pair in args.contrast:
         if ":" not in pair:
             raise SystemExit(f"--contrast expects 'x:y', got {pair!r}")
         x, y = (p.strip() for p in pair.split(":", 1))
         for missing in (n for n in (x, y) if n not in arms):
             raise SystemExit(f"{missing!r} is not in --arms")
-        r = contrast(x, y, rates(arms[x], samples, "task_failure"), rates(arms[y], samples, "task_failure"), rng)
+        r = contrast(x, y, rates(arms[x], samples, "task_failure"), rates(arms[y], samples, "task_failure"), args.seed)
         verdict = "MEETS the rule" if r["meets_rule"] else "direction only (needs p<0.05 AND a CI excluding 0)"
         print(f"\n{x}  ->  {y}   [task_failure]"
               f"\n  {r['x_mean']:.4f} -> {r['y_mean']:.4f}   difference {r['difference']:+.4f} "
@@ -175,13 +202,16 @@ def main() -> int:
 
         # The composition control, printed with every contrast rather than on request: a shift here explains a
         # difference without any appeal to importance, so it is not optional context.
-        mx, my = metadata_flip_share(arms[x], samples), metadata_flip_share(arms[y], samples)
+        mx, my = flip_shares(arms[x], samples, "meta"), flip_shares(arms[y], samples, "meta")
         dm = my - mx
         pm = 1.0 if not (dm != 0).any() else float(stats.wilcoxon(mx, my).pvalue)
-        note = ("composition moved - part of the difference may be compositional, not importance"
-                if pm < 0.05 else "composition unchanged - an importance explanation is not undercut here")
-        print(f"  composition control: metadata share of flips {mx.mean():.4%} -> {my.mean():.4%}, "
-              f"difference {dm.mean():+.4%}, p = {pm:.3g}\n    {note}")
+        note = ("PAYLOAD composition moved - part of the difference may be compositional, not importance"
+                if pm < 0.05 else "payload composition unchanged - an importance explanation is not undercut")
+        ox, oy = flip_shares(arms[x], samples, "overhead"), flip_shares(arms[y], samples, "overhead")
+        print(f"  composition control: payload-metadata share of flips {mx.mean():.4%} -> {my.mean():.4%}, "
+              f"difference {dm.mean():+.4%}, p = {pm:.3g}\n    {note}"
+              f"\n    protection overhead share {ox.mean():.4%} -> {oy.mean():.4%} (check and bound bits are "
+              f"exposed per D23, but they are the protection, not the payload)")
     return 0
 
 

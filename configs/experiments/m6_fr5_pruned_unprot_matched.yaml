@@ -1,0 +1,37 @@
+# The REPLICATION of D43's headline at a second rate -- which the first 1e-5 batch did not provide.
+#
+# D43's structural finding (protection is not separable from retention) rests on contrast 2: UNPROTECTED
+# arms at 1e-6, matched exposure, +0.0893 [+0.0246, +0.1607], p = 0.016. The four arms first run at 1e-5
+# were all GUARDED, because that is where the allocator's escalation threshold lives -- and under the guard
+# the effect is not measurable at either rate and its direction even flips (+0.0268 at 1e-6, -0.0290 at
+# 1e-5, both below significance). That answers the allocator question but leaves the headline single-rate.
+#
+# WRITTEN BEFORE THE RUN. Two readings are live and these arms separate them:
+#  (a) the concentration effect is real and rate-independent, and the GUARD absorbs it. Then this pair
+#      should reproduce a positive matched-exposure difference at 1e-5, and the allocator needs no
+#      retention term because the guard already covers it.
+#  (b) the concentration effect is specific to 1e-6. Then this pair shows nothing, and D43's headline is a
+#      single-rate result that must be reported as such -- the thirteenth withdrawal.
+#
+# Either answer is worth the two runs. (b) would narrow the strongest structural claim in the project, so
+# it is named here rather than discovered later.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m6_fr5_pruned_unprot_matched
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+compression:
+  scorer: query_attention
+  ratio: 0.2467
+  unit: span
+  protect_initial: 4
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-5
+  ber_basis: unpruned
+  n_trials: 8
+  n_control: 1
+seed: 0
