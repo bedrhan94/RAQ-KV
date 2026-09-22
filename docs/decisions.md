@@ -1426,10 +1426,18 @@ alone breaks is never charged to the fault model.
 
 | contrast | difference | p | discordant | pre-registered rule |
 |---|---|---|---|---|
-| 1. matched **rate**: pruning helps | −0.1250 [−0.1920, −0.0536] | **6.1e-04** | 45 | **met** |
-| 2. matched **exposure**: pruning hurts | **+0.0893 [+0.0223, +0.1562]** | **0.016** | 42 | **met** |
+| 1. matched **rate**: pruning helps | −0.1250 [−0.1942, −0.0536] | **6.1e-04** | 45 | **met** |
+| 2. matched **exposure**: pruning hurts | **+0.0893 [+0.0246, +0.1607]** | **0.016** | 42 | **met** |
 | 3. same pruned cache, 132 vs 540 flips | +0.2143 [+0.1674, +0.2656] | 5.1e-09 | 44 | met |
 | 4. guard, pruned vs unpruned | +0.0268 [+0.0022, +0.0625] | 0.066 | **4** | **NOT met** |
+
+**Reproduce with** `scripts/report_fault_retention.py`, which is the canonical path for these numbers. The first
+version of this analysis was throwaway shell snippets, which is not a provenance for a structural claim; the
+script also caught that the first pass had used the `answer_changed` proxy rather than `task_failure` as the
+endpoint. Differences, p-values and discordant counts are exact; the **bootstrap intervals carry Monte Carlo
+error in the third decimal** (10,000 resamples), so the CIs above are the script's and an earlier shell run gave
+e.g. [+0.0223, +0.1562] for contrast 2 — the same interval to within resampling noise. Where a CI is quoted
+elsewhere in this record, the script's is the one to trust.
 
 ### The finding, and the arithmetic it had to be separated from
 
