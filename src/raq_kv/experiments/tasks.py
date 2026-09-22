@@ -742,7 +742,11 @@ class ProtectionArm:
         # the same order `Retention` uses and the order a system that compresses before storing would use:
         # quantizing first would build groups over tokens about to be discarded, and `group_token` groups span
         # tokens, so the two orders do not produce the same metadata or the same bit budget.
-        plan = roles = control = None
+        # Named `retention_plan`, not `plan`: the fault-trial loop below binds `plan` to a storage fault plan,
+        # and the first version of this method let that shadow the retention one. The smoke run caught it
+        # immediately, but only because it ran -- two objects called `plan` in one method is not a naming
+        # preference, it is a live bug waiting for the branch that reads the wrong one.
+        retention_plan = roles = control = None
         spans: list[Any] = []
         unpruned_correct = None
         unpruned_snapshot = snapshot
@@ -753,9 +757,9 @@ class ProtectionArm:
             unpruned_text = tok.decode(greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=snapshot,
                                                      eos_token_ids=eos).tokens, skip_special_tokens=True)
             unpruned_correct = bool(SCORERS[sample.scorer](unpruned_text, sample.reference)["correct"])
-            plan, spans, roles, control = build_retention_plan(self.cfg, self.scorer, tok, model, snapshot,
-                                                               context_ids, query_ids, sample)
-            snapshot = apply_retention(snapshot, plan)
+            retention_plan, spans, roles, control = build_retention_plan(
+                self.cfg, self.scorer, tok, model, snapshot, context_ids, query_ids, sample)
+            snapshot = apply_retention(snapshot, retention_plan)
 
         qkv = quantize_to_codes(snapshot, self.cfg.quantization)
         guard = build_protection(qkv, self.cfg.protection)
@@ -838,15 +842,15 @@ class ProtectionArm:
             # Present only on the fault x retention arms (D43). `unpruned_correct` separates a sample that
             # pruning alone broke from one the faults broke; `kept_fraction_target` is the D32 diagnostic that
             # says whether the arm kept the tokens the answer needs at all.
-            **({} if plan is None else {
-                **plan.to_dict(),
+            **({} if retention_plan is None else {
+                **retention_plan.to_dict(),
                 "scorer": self.scorer.name if self.scorer else None,
                 "unit": (self.cfg.compression.unit or "token") if self.cfg.compression else None,
                 "n_spans": len(spans),
                 "unpruned_correct": unpruned_correct,
-                "kept_fraction_target": plan.kept_fraction_of(roles["target"]),
-                "kept_fraction_sentence": plan.kept_fraction_of(roles["sentence"]),
-                "kept_fraction_control_span": plan.kept_fraction_of(control),
+                "kept_fraction_target": retention_plan.kept_fraction_of(roles["target"]),
+                "kept_fraction_sentence": retention_plan.kept_fraction_of(roles["sentence"]),
+                "kept_fraction_control_span": retention_plan.kept_fraction_of(control),
             }),
             "faults": rows,
         }
