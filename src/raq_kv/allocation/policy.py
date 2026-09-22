@@ -86,6 +86,22 @@ def _protection(ber: float) -> tuple[str | None, str, str]:
     fault-induced failure; above it the check loses decisively to metadata SECDED at 2.3% (+0.0593, p = 1.1e-5)
     because the thirteen of sixteen float16 bits it cannot see accumulate. Uniform data ECC at 14% is never
     chosen: arm B matched arm G at 1e-6 and nothing has separated them since.
+
+    **This lookup takes no retention argument, and D43 showed that is wrong as a mechanism.** At equal fault
+    *exposure* a cache pruned to 25% fails more than an unpruned one (0.4018 against 0.3125, +0.0893
+    [+0.0223, +0.1562], p = 0.016): query-aware span retention keeps exactly the answer-bearing spans, so every
+    scale that survives pruning governs a group the answer depends on, where most groups in a full cache govern
+    filler. Protection is therefore **not separable from retention**, which is the one thing the brief's
+    multiplicative form got right.
+
+    The constants below are deliberately unchanged. At 1e-6 the guard reaches 0.0000 unpruned and 0.0268 pruned
+    -- a direction consistent with concentration, but **4 discordant samples and p = 0.066**, which does not meet
+    the pre-registered rule (D31). Deriving a retention-dependent threshold from four events is precisely the
+    error D31 was written after. What callers must know instead is stated rather than encoded: **this lookup is
+    unconservative for aggressively pruned caches.** A deployment pruning to 25% should not assume the +0.075%
+    guard buys it the clean zero M3 measured on a full cache. The measurement that would set a retention term is
+    D43's contrast 4 repeated at 1e-5, where D29/D30 located the guard's breakdown and the unpruned arm is no
+    longer pinned at zero.
     """
     if ber <= 1e-6:
         return "range", "none", "range check on metadata (D30): +0.075% storage, sufficient at this rate"

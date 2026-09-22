@@ -1403,3 +1403,86 @@ process imported, so nothing is corrupted. But **it was acted on before it was c
 happened in the first place. `tests/test_runner_import_surface.py` now pins the exemption: the modules declared
 safe to edit mid-campaign must stay outside the runner's import graph, and a test fails if an import is added.
 An exemption that lives only in an argument decays.
+
+## D43 — The reliability tax is NOT flat in retention: pruning concentrates risk, and the allocator's first stage assumes otherwise (2026-09-23)
+
+Row 10 of `docs/m4_exit.md`, and the first experiment in this project to vary **two axes at once**. Until now
+protection was priced on unpruned caches (M3) and retention on fault-free ones (M4, M5, all 30 runs `nofault`),
+so the allocator's staged design — `_protection()` is a lookup on the bit error rate with **no retention term** —
+rested on an assumption nothing had tested.
+
+Five arms, 4-bit keys `group_token` 128 / values `per_token`, query-aware span retention at 24.67%, BER 1e-6,
+60 samples × 8 trials + 1 no-fault control (all controls exactly zero damage). Paired over the **56 of 60**
+samples every arm answers correctly with no faults *and* that the full cache also answers, so a sample pruning
+alone breaks is never charged to the fault model.
+
+| arm | stored | flips/trial | task failure |
+|---|---|---|---|
+| unpruned, unprotected | 540.5 Mbit | 540 | 0.3125 |
+| pruned 25%, unprotected (matched **rate**) | 132.6 Mbit | 132 | 0.1875 |
+| pruned 25%, unprotected (matched **exposure**) | 132.6 Mbit | **540** | **0.4018** |
+| unpruned, +0.075% range guard | 540.5 Mbit | 540 | **0.0000** |
+| pruned 25%, +0.075% range guard | 132.6 Mbit | 132 | 0.0268 |
+
+| contrast | difference | p | discordant | pre-registered rule |
+|---|---|---|---|---|
+| 1. matched **rate**: pruning helps | −0.1250 [−0.1920, −0.0536] | **6.1e-04** | 45 | **met** |
+| 2. matched **exposure**: pruning hurts | **+0.0893 [+0.0223, +0.1562]** | **0.016** | 42 | **met** |
+| 3. same pruned cache, 132 vs 540 flips | +0.2143 [+0.1674, +0.2656] | 5.1e-09 | 44 | met |
+| 4. guard, pruned vs unpruned | +0.0268 [+0.0022, +0.0625] | 0.066 | **4** | **NOT met** |
+
+### The finding, and the arithmetic it had to be separated from
+
+**Contrast 1 is not a result, and the config header said so before the run.** A pruned cache stores a quarter of
+the bits, so at a matched *rate* it takes a quarter of the flips — 132 against 540. "Pruning improved
+reliability" is then arithmetic about exposure, not a statement about importance. This is exactly why
+`ber_basis: unpruned` exists.
+
+**Contrast 2 is the result.** Give the pruned cache the same **absolute** number of flips the unpruned one takes
+on that same sample, and it fails **more**: 0.4018 against 0.3125, +0.0893 [+0.0223, +0.1562], p = 0.016 on 42
+discordant samples. **A flip that lands in a pruned cache is more likely to cost an answer.** The mechanism is
+the one D34/D36 make obvious in hindsight: query-aware span retention keeps *exactly* the answer-bearing spans
+(`kept_fraction_target` = 1.000), so every scale that survives pruning governs a group the answer depends on,
+where most groups in an unpruned cache govern filler.
+
+**Contrast 3 explains why contrast 1 looks so good.** Damage is strongly **sublinear** in flip count: 4.1× the
+flips buys only 2.1× the failure (0.1875 → 0.4018), because an answer already broken cannot break further. So
+the exposure drop pays off more than proportionally, which is what lets the concentration effect hide inside a
+matched-rate comparison.
+
+### What this does to the allocator
+
+**The staged design's first assumption is falsified as a mechanism.** Protection is *not* separable from
+retention: at equal exposure, how aggressively the cache was pruned changes how much a fault costs. §6's
+multiplicative form, which this project rejected on four grounds (D22, D25–D31, D18, D32–D34), was right about
+*this* one thing — the axes do interact, just not through a product of per-cell scores.
+
+**But the practical rule survives, and saying otherwise would overstate the finding.** At the matched BER a real
+deployment actually faces, pruning still *reduces* absolute failure (0.3125 → 0.1875, contrast 1), because the
+exposure drop more than covers the concentration. And the guard still does most of its job: 0.0268 pruned
+against 0.3125 unprotected.
+
+**What changed in the record, and what deliberately did not.** `_protection()` keeps its constants. The
+measurement that would justify moving them has not been made: contrast 4 — the guard reaching exactly 0.0000
+unpruned and 0.0268 pruned — has only **4 discordant samples** and p = 0.066, so it **does not meet the
+pre-registered rule** (p < 0.05 *and* a CI excluding zero, D31). The direction is consistent with concentration
+and is reported as a direction, not a result. Inventing a retention-dependent BER threshold from four events is
+exactly the mistake D31 was written after.
+
+**The honest statement of the allocator's status:** its protection lookup is **unconservative for aggressively
+pruned caches** by an amount this experiment bounds but does not resolve. A deployment pruning to 25% should not
+assume the +0.075% guard buys it the clean zero that M3 measured on a full cache.
+
+### The experiment that would set the constant
+
+Contrast 4 at a rate where the guard has room to fail. At 1e-6 the unpruned arm is at zero, so the comparison
+has almost no discordant samples by construction — the same both-at-zero problem D30 hit. D29/D30 located the
+guard's breakdown at **1e-5**, where unpruned reaches 5.93%. Repeating contrast 4 at 1e-5 is where a
+retention-dependent threshold becomes measurable, and it is one arm pair.
+
+### Scope
+
+One model, one probe, one rate, one retention ratio, one quantization configuration. The concentration effect is
+measured at 24.67% retention with a query-aware span scorer; whether it scales with the retention ratio, and
+whether a query-*agnostic* scorer concentrates risk less (it keeps fewer answer tokens, so it should), is
+unmeasured. **M4 closes with this row; M5's allocator carries a stated structural caveat rather than a fix.**

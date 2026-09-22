@@ -1,7 +1,15 @@
 # M4 exit checklist — token retention
 
-**Status: M4 NOT CLOSED as of 2026-09-22.** Nine of ten criteria are met. The one that is not is the
-experiment the milestone was designed around, and it is named in row 10 rather than quietly dropped.
+**Status: M4 CLOSED on 2026-09-23**, when row 10 was measured (D43). It was written a day earlier with row 10
+open and nine of ten criteria met; that version is preserved in git rather than rewritten, because the reason
+the milestone stayed open for a day is part of its record.
+
+**Row 10's answer changed a structural assumption, not a constant.** At equal exposure a pruned cache is
+significantly *more* fragile (+0.0893, p = 0.016): query-aware span retention keeps exactly the answer-bearing
+spans, so every surviving scale governs a group the answer needs. Protection is therefore **not separable from
+retention**, and the allocator's first stage assumes it is. The allocator's constants are unchanged — the
+measurement that would move them has four discordant samples — so M5 carries a stated caveat instead of a fix.
+See D43.
 
 Headline: **the unit of KV retention is the span, not the token.** At 25% retention a *perfect token oracle* —
 one that keeps every answer-bearing token — still fails 56.4% of questions, while the fact's own sentence fails
@@ -22,58 +30,30 @@ Criteria, from `docs/m4_m5_plan.md` §M4. M4 closes when every row is ✅ with e
 | 7 | Every number broken out by target depth | ✅ | `DEPTH_BANDS` in `report_m4.py`. Recency keeps deep targets for free — 0.027 failure deep against 1.000 shallow — so an aggregate would hide the entire comparison. Adopted as a standing reporting rule in D33 |
 | 8 | Claims use sample-level pairing | ✅ | D26's rule carried forward from M3: paired over the samples **every** arm answers correctly without pruning (117 of 120), Wilcoxon signed-rank, bootstrap CI over samples, Holm across pre-registered families |
 | 9 | Negative, withdrawn and re-scoped results reported as such | ✅ | D32 (both gate arms failed 100%; the attention sink, found by a control arm). D36 retraction 1: `oracle_keep_sentence` is **not** a ceiling — it spends a fifth of its budget by recency and a real method beats it by 13 points; every use of the word "ceiling" for it is withdrawn. D36 retraction 2: "token-level scoring is actively harmful" holds only for query-**agnostic** scoring. D37: at ~4 bits nothing is significant, reported as a floor rather than a replication |
-| 10 | **The retention frontier re-measured under faults** | ❌ **NOT DONE** | All **30** retention runs to date are `nofault`. The plan's sharpest prediction — "the reliability tax is set by precision alone and is flat in retention, so the *precision* half of the published optimum should move once reliability is priced and the *retention* half should not" — has never been tested. See below |
+| 10 | **The retention frontier re-measured under faults** | ✅ **done, and it refuted the prediction (D43)** | Five arms at BER 1e-6, 56 paired samples. The plan predicted the reliability tax is "flat in retention". It is not: at **matched exposure** a pruned cache fails 0.4018 against the unpruned 0.3125, +0.0893 [+0.0223, +0.1562], p = 0.016, 42 discordant. At a matched *rate* pruning appears to win (−0.1250, p = 6.1e-04) but takes a quarter of the flips, which is arithmetic about exposure and was flagged in the config header before the run. Damage is sublinear in flip count (4.1× flips → 2.1× failure), which is what lets the concentration effect hide inside a matched-rate comparison |
 
-## Why row 10 is the one that matters
+## Why row 10 was the one that mattered
 
-It is the only row that tests the word "joint". The three axes have each been measured, but **never two at
-once**: M3 priced protection on unpruned caches, M4 and M5 priced retention and precision with no faults
-injected. The allocator's staged design *assumes* row 10's answer — `_protection()` is a lookup on the error
-rate alone, with no retention term — and that assumption is currently untested.
-
-It is also not obviously true. Two effects push opposite ways:
+Row 10 was the only row that tested the word "joint". The three axes had each been measured, but **never two
+at once**: M3 priced protection on unpruned caches, M4 and M5 priced retention and precision with no faults
+injected. Two effects opposed each other, and which dominated was the whole question:
 
 * Pruning removes tokens, and with them their quantization groups, so at a fixed bit error rate a pruned cache
   presents **fewer metadata bits to hit**. Exposure falls roughly with the retention ratio.
 * But query-aware span retention keeps *exactly* the answer-bearing spans (`kept_target` = 1.000 at 25%). Every
-  surviving scale now governs a group the answer depends on, so each metadata flip that does land should be
-  **more damaging** than it was in an unpruned cache where most groups were filler.
+  surviving scale governs a group the answer depends on, so each metadata flip that does land should be **more
+  damaging** than in an unpruned cache where most groups are filler.
 
-If the first dominates, the allocator is right and retention is a free reliability win — compression and
-robustness pulling the same way, which would be a result worth stating on its own. If the second dominates,
-protection is **not** separable from retention, the staged design is wrong at its first stage, and the
-multiplicative form the brief proposed looks better than the measurements have so far made it look.
+**Both are real, and they act at different places.** The exposure drop dominates the absolute outcome — at a
+matched rate pruning cuts failure from 0.3125 to 0.1875 — while the concentration effect dominates the
+*mechanism*: at matched exposure the pruned cache fails more. So compression and robustness do pull the same way
+in practice, but not for the reason the staged design assumed, and the allocator's protection lookup is
+**unconservative for aggressively pruned caches** by an amount D43 bounds without resolving.
 
-**The experiment:** the M5 joint point (25% of tokens at 4-bit, query-aware spans) and uniform 4-bit at full
-retention, both at the same BER, unprotected and with the metadata range guard — four arms, one rate, paired
-over samples. It is cheap and it is the one measurement that can falsify the allocator's structure.
-
-**It cannot be run yet, and the reason is a bug the design surfaced (D42).** `ProtectionArmTask` is the only
-task that injects faults, and its `run_unit` goes prefill → quantize → protect → decode with **no compression
-step**. Worse, a `protection_arm` config carrying a `compression` block is *accepted*: the block validates,
-survives into the config object, and reaches `_pruning_token`, so the run would be named `…_p25qaS_…` and
-hashed as pruned while executing unpruned. That is a manifest that is internally consistent and wrong — the
-failure mode D24's provenance check exists to prevent, arrived at from the other direction. The schema must
-refuse the combination until the task implements it.
-
-**Two things the experiment must report or it proves nothing.** `flips_for_rate` and `storage_regions` both
-derive exposure from the quantized cache, so a pruned arm automatically receives **fewer flips at the same
-BER**. That is simultaneously the confound and the finding, and it is only separable if flips-per-trial is
-reported beside the failure rate — otherwise "pruning improves reliability" is unfalsifiable from the output.
-The arms must also be compared at matched *flip count* as well as matched rate, because those are different
-questions: "is a pruned cache safer to store" and "is a surviving scale more precious". **Matched flip count is
-a required arm, not an optional one** — matched BER alone cannot separate "pruning is a reliability win" from
-"pruning concentrates risk and the exposure drop happens to cover it", and only the first of those is a result.
-
-**The path exists.** `generate_storage_plan(qkv, guard, seed, n_flips)` already takes an absolute flip count;
-`flips_for_rate` is the convenience wrapper that derives one from a BER. So a matched-count arm needs a config
-knob on `ProtectionArmTask` (`n_flips` as an alternative to `ber`, exactly one of the two required) rather than
-any change to the fault machinery, and no arm ever has to fake a rate to get a count.
-
-**One thing to check when relaxing the D42 schema guard.** `_pruning_token` reads `cfg.compression`
-unconditionally, so once `protection_arm` may carry the block its slug changes shape. Every existing
-`protection_arm` config has `compression is None` and must keep rendering `p0` exactly as before — otherwise
-the relaxation silently orphans the M3 run directories.
+**What was not done, deliberately.** Contrast 4 — the guard reaching 0.0000 unpruned and 0.0268 pruned — has
+only 4 discordant samples and p = 0.066, so it does not meet the pre-registered rule and no retention-dependent
+BER threshold was invented from it. The experiment that would set one is contrast 4 repeated at **1e-5**, where
+D29/D30 located the guard's breakdown and the unpruned arm is no longer pinned at zero.
 
 ## Carried forward, not blocking closure
 

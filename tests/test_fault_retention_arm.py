@@ -132,3 +132,21 @@ def test_the_matched_exposure_arm_derives_its_count_per_sample():
     assert "flips_for_rate(full_qkv, full_guard" in source, "the count is not derived from the unpruned cache"
     # The unpruned reference must be captured BEFORE pruning overwrites the snapshot, or it is the pruned one.
     assert source.index("unpruned_snapshot = snapshot") < source.index("apply_retention(")
+
+
+def test_the_protection_lookup_declares_that_it_ignores_retention():
+    """D43 falsified the separability the lookup assumes, and the caveat must travel with the code.
+
+    The constants are deliberately unchanged -- the measurement that would move them has 4 discordant samples --
+    so the only thing keeping a caller from over-trusting the +0.075% guard on a pruned cache is that the
+    docstring says so. A refactor that tidies the docstring away silently restores the overclaim.
+    """
+    from raq_kv.allocation.policy import _protection
+
+    doc = _protection.__doc__ or ""
+    assert "not separable from retention" in doc
+    assert "unconservative for aggressively pruned caches" in doc
+    # And the lookup really does still take only a rate, so the docstring is not describing a fixed bug.
+    import inspect
+
+    assert list(inspect.signature(_protection).parameters) == ["ber"]

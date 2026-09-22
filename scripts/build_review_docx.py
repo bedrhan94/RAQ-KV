@@ -1,7 +1,7 @@
 """Builds the RAQ-KV technical review document (.docx) for an external reviewer.
 
 Regenerate with:  python scripts/build_review_docx.py
-Content is assembled from docs/decisions.md (D1-D42), docs/claims.md and the measured campaign outputs; the
+Content is assembled from docs/decisions.md (D1-D43), docs/claims.md and the measured campaign outputs; the
 numbers here are transcribed from those records, and the record is the source of truth if they ever disagree.
 """
 
@@ -227,7 +227,7 @@ def build(doc: Document) -> None:
     para(doc, "Technical review dossier - complete record of methods, formulas, measurements and corrections",
          italic=True, colour=GREY, space_after=2)
     para(doc, "Model: Qwen3-1.7B @ 70d244cc | Hardware: RTX 5060 Ti | "
-              "324 automated tests passing (7 GPU-gated, deselected) | decision records D1-D42",
+              "333 automated tests passing (7 GPU-gated, deselected) | decision records D1-D43",
          size=9, colour=GREY)
     rule(doc)
 
@@ -655,8 +655,61 @@ def build(doc: Document) -> None:
                 "result in its own right - every protection mechanism M3 chose acts on quantization metadata, so "
                 "a retention-only policy is unprotectable by the cheapest mechanism this project has, and its "
                 "only remaining option is uniform data ECC at +14%, which D25 measured as never worth its bits. "
-                "This is the one place where the three axes are genuinely coupled rather than separable, and it "
+                "This is one place where the axes are genuinely coupled rather than separable, and it "
                 "is now asserted by a test rather than left for the schema to catch.")])
+
+    doc.add_heading("9.5 Crossing two axes for the first time: does pruning change what a fault costs?", level=2)
+    rich(doc, [("Every result above this line prices one axis at a time. ", "b"),
+               ("Protection was measured on unpruned caches (section 7) and retention and precision with no "
+                "faults injected (sections 8 and 9) - all 30 retention runs were fault-free. The allocator's "
+                "staged design assumes the reliability tax is flat in retention: its protection stage is a "
+                "lookup on the error rate with no retention term at all. Nothing had tested that.")])
+    para(doc, "Five arms, 4-bit, BER 1e-6, 60 samples x 8 trials plus a no-fault control per sample (every "
+              "control at exactly zero damage). Paired over the 56 of 60 samples every arm answers correctly "
+              "unfaulted AND that the full cache also answers, so a sample pruning alone breaks is never "
+              "charged to the fault model.")
+    table(doc, ["Arm", "Stored", "Flips / trial", "Task failure"], [
+        ["unpruned, unprotected", "540.5 Mbit", "540", "0.3125"],
+        ["pruned 25%, unprotected - matched RATE", "132.6 Mbit", "132", "0.1875"],
+        ["pruned 25%, unprotected - matched EXPOSURE", "132.6 Mbit", "540", "0.4018"],
+        ["unpruned, +0.075% range guard", "540.5 Mbit", "540", "0.0000"],
+        ["pruned 25%, +0.075% range guard", "132.6 Mbit", "132", "0.0268"],
+    ])
+    code(doc, [
+        "                                       difference                  p    discordant   rule",
+        "1  matched RATE      pruning helps  -0.1250 [-0.1920, -0.0536]  6.1e-04    45 of 56    met",
+        "2  matched EXPOSURE  pruning hurts  +0.0893 [+0.0223, +0.1562]  1.6e-02    42 of 56    met",
+        "3  132 vs 540 flips, same cache     +0.2143 [+0.1674, +0.2656]  5.1e-09    44 of 56    met",
+        "4  guard, pruned vs unpruned        +0.0268 [+0.0022, +0.0625]  6.6e-02     4 of 56    NOT met",
+    ])
+    rich(doc, [("Contrast 1 is not a result, and the config header said so before the run. ", "b"),
+               ("A cache pruned to a quarter stores a quarter of the bits, so at a matched RATE it takes a "
+                "quarter of the flips - 132 against 540. 'Pruning improved reliability' is then arithmetic "
+                "about exposure, not a statement about importance.")])
+    rich(doc, [("Contrast 2 is the result: at equal exposure, pruning makes faults MORE damaging. ", "b"),
+               ("Give the pruned cache the same absolute number of flips the unpruned one takes on that same "
+                "sample and it fails 0.4018 against 0.3125. The mechanism follows from section 8: query-aware "
+                "span retention keeps exactly the answer-bearing spans (kept_target = 1.000), so every scale "
+                "that survives pruning governs a group the answer depends on, where most groups in a full cache "
+                "govern filler. Protection is NOT separable from retention - which is the one thing the "
+                "multiplicative form this project rejected got right.")])
+    rich(doc, [("Contrast 3 explains why contrast 1 looks so good. ", "b"),
+               ("Damage is strongly sublinear in flip count: 4.1x the flips buys only 2.1x the failure, because "
+                "an answer already broken cannot break further. The exposure drop therefore pays off more than "
+                "proportionally, and that is what lets the concentration effect hide inside a matched-rate "
+                "comparison.")])
+    rich(doc, [("What was deliberately NOT changed. ", "b"),
+               ("The allocator's protection constants stand. Contrast 4 - the guard reaching exactly 0.0000 "
+                "unpruned and 0.0268 pruned - has 4 discordant samples and p = 0.066, so it fails the "
+                "pre-registered rule of section 4 and no retention-dependent threshold was derived from it. "
+                "Inventing one from four events is the error that produced three of the withdrawals in section "
+                "10. What the code carries instead is a stated caveat, pinned by a test so a refactor cannot "
+                "tidy it away: this lookup is unconservative for aggressively pruned caches. The experiment "
+                "that would set the constant is contrast 4 at 1e-5, where the guard's breakdown was located.")])
+    rich(doc, [("The practical reading, which runs the other way. ", "b"),
+               ("At the matched rate a real deployment faces, pruning still cuts absolute failure from 0.3125 "
+                "to 0.1875, and the guard still removes most of what is left. Compression and robustness do "
+                "pull the same way in practice - just not for the reason the staged design assumed.")])
 
     doc.add_page_break()
 
@@ -699,12 +752,14 @@ def build(doc: Document) -> None:
     bullet(doc, "H3 does not meet its own pre-registration. The plan requires the joint policy to beat every "
                 "single-signal policy on AT LEAST TWO model families; this is one. Until the second family is "
                 "run, H3 is supported on Qwen3-1.7B and the general claim is not made.")
-    bullet(doc, "No experiment in this project varies two axes at once. Protection was priced on unpruned "
-                "caches (M3); retention and precision were priced with no faults injected (M4, M5) - all 30 "
-                "retention runs are fault-free. The allocator's staged design ASSUMES the reliability tax is "
-                "flat in retention, and that assumption is currently untested. It is the one measurement that "
-                "could falsify the allocator's structure, and it is named in m4_exit.md row 10 as the reason "
-                "M4 is not closed.")
+    bullet(doc, "The allocator's protection lookup is unconservative for aggressively pruned caches, and is "
+                "shipped that way on purpose. Section 9.5 measures the effect; the constant that would fix it "
+                "rests on 4 discordant samples, so it was not invented. A deployment pruning to 25% should not "
+                "assume the +0.075% guard buys the clean zero M3 measured on a full cache.")
+    bullet(doc, "Only ONE pair of axes has ever been varied together. Section 9.5 crosses retention with "
+                "faults; precision has never been crossed with faults at a fixed retention, and the three-way "
+                "interaction is unmeasured. Every joint claim outside 9.5 is a claim about two axes priced "
+                "independently.")
     bullet(doc, "Single-seed for most retention arms. The retention task is deterministic greedy decoding, so "
                 "the seed affects sample selection rather than the measurement, but multi-seed replication of "
                 "the M4 and M5 headline arms has not been done.")
@@ -733,16 +788,16 @@ def build(doc: Document) -> None:
     bullet(doc, "6. Does the staged allocator deserve to be called joint? It is a lookup plus a two-stage "
                 "ladder, not a joint optimisation. The defence is that the measurements refused a joint search "
                 "space. Is that defensible in a paper whose title says 'joint'?")
-    bullet(doc, "7. Is the reliability tax really flat in retention? The allocator assumes it - protection is a "
-                "lookup on the error rate with no retention term - and no experiment has tested it. Pruning "
-                "removes metadata (less to hit) but query-aware retention keeps exactly the answer-bearing "
-                "spans (each surviving scale matters more). Which effect would you expect to dominate, and "
-                "would the answer change the allocator's structure or only its constants?")
+    bullet(doc, "7. Section 9.5 shows protection is not separable from retention, but leaves the allocator's "
+                "constants alone because the contrast that would move them has 4 discordant samples. Is "
+                "shipping a stated caveat the right call, or should the allocator refuse to promise the "
+                "+0.075% guard at all below some retention ratio - accepting a threshold that is not yet "
+                "measured?")
     bullet(doc, f"8. Are any of the {len(WITHDRAWN_ROWS)} withdrawals in section 10 wrong in the other "
                 "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
-              "(D1-D42), docs/claims.md and the run manifests in outputs/; those records are the source of "
+              "(D1-D43), docs/claims.md and the run manifests in outputs/; those records are the source of "
               "truth if they disagree with this document.", size=9, italic=True, colour=GREY)
 
 
