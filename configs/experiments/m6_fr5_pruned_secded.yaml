@@ -1,0 +1,43 @@
+# D43 follow-up at BER 1e-5: where does a retention-dependent protection threshold sit?
+#
+# D43 measured the concentration effect at 1e-6 and found the +0.075% range guard reaching exactly 0.0000
+# unpruned and 0.0268 pruned -- a direction, but 4 discordant samples and p = 0.066, so no threshold was
+# derived from it. At 1e-6 the unpruned arm is pinned at zero, which is the both-at-zero problem D30 hit.
+# D29/D30 located the guard's breakdown at 1e-5, where unpruned reaches 5.93% and metadata SECDED 0.00%.
+# That is where the comparison has room.
+#
+# WRITTEN BEFORE THE RUN:
+#  * unpruned+guard should land near D29/D30's 5.93%. It will not match exactly: those arms ran under sdpa
+#    and these need eager attention for query_attention (D5), which changes the experiment identity, so
+#    this arm generates its own reference rather than borrowing one.
+#  * pruned+guard at a matched RATE takes ~1/4 the flips, so a lower failure rate there is exposure
+#    arithmetic again, NOT evidence the guard is retention-insensitive.
+#  * pruned+guard at matched EXPOSURE against unpruned+guard is the real test, and it is also the FIRST
+#    REPLICATION of D43's structural finding at a second rate. D43's +0.0893 is single-rate.
+#  * pruned+metadata SECDED is the allocator's escalation option. If it recovers what the guard loses on a
+#    pruned cache, the rule becomes 'escalate earlier when pruning aggressively' and the threshold is
+#    measurable. If it does not, the escalation ladder itself is insufficient under pruning.
+#
+# The golden runs through this arm's own cache; 'unpruned_correct' keeps pruning's own cost separate.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m6_fr5_pruned_secded
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_codec: secded
+  metadata_word_bits: 16
+compression:
+  scorer: query_attention
+  ratio: 0.2467
+  unit: span
+  protect_initial: 4
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-5
+  n_trials: 8
+  n_control: 1
+seed: 0
