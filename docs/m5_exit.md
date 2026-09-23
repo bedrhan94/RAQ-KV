@@ -36,10 +36,12 @@ fault exposure, a cache pruned to 25% fails more than an unpruned one, because q
 exactly the answer-bearing spans and every surviving scale governs a group the answer needs. So protection is
 not separable from retention — just not through a product of per-cell scores.
 
-**The allocator's constants were deliberately left alone.** The contrast that would set a retention-dependent
-protection threshold has **4 discordant samples** and p = 0.066. What the code carries instead is a stated
-caveat in `_protection()`, pinned by a test: this lookup is **unconservative for aggressively pruned caches**.
-Row 8's precision × faults pair is the same question one axis over.
+**The allocator's constants were deliberately left alone, and D44 showed that was the right call for a reason
+D43 had wrong.** D43 justified it with a 4-discordant-sample contrast and then overstated the conclusion,
+calling the lookup "unconservative for aggressively pruned caches". At 1e-5 that contrast reverses: the pruned
+guarded arm beats the unpruned one and escalating to SECDED buys nothing. Under the guard the retention effect
+is not measurable at either rate, so a retention term is **open in both directions** -- which is what
+`_protection()` now says, pinned by a test. Row 8's precision × faults pair is the same question one axis over.
 
 ## Carried forward, not blocking closure
 

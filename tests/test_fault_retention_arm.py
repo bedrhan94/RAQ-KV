@@ -134,18 +134,24 @@ def test_the_matched_exposure_arm_derives_its_count_per_sample():
     assert source.index("unpruned_snapshot = snapshot") < source.index("apply_retention(")
 
 
-def test_the_protection_lookup_declares_that_it_ignores_retention():
-    """D43 falsified the separability the lookup assumes, and the caveat must travel with the code.
+def test_the_protection_lookup_declares_what_is_and_is_not_established():
+    """D43 falsified separability as a mechanism, and the caveat must travel with the code.
 
-    The constants are deliberately unchanged -- the measurement that would move them has 4 discordant samples --
-    so the only thing keeping a caller from over-trusting the +0.075% guard on a pruned cache is that the
-    docstring says so. A refactor that tidies the docstring away silently restores the overclaim.
+    D43 also overstated it: it wrote that the lookup is "unconservative for aggressively pruned caches" on a
+    contrast with 4 discordant samples at p = 0.066, and D44 measured the same contrast at 1e-5 going the other
+    way. The docstring now has to say both halves -- the effect is real unprotected, and not measurable under the
+    guard -- because the only thing keeping a caller from over- or under-trusting the guard is that text.
     """
     from raq_kv.allocation.policy import _protection
 
     doc = _protection.__doc__ or ""
-    assert "not separable from retention" in doc
-    assert "unconservative for aggressively pruned caches" in doc
+    assert "not separable from retention" in doc, "D43's mechanism finding must stay stated"
+    assert "open in both directions" in doc, "D44 left the retention term unresolved, not settled"
+    assert "not measurable at either rate" in doc
+    # The withdrawn overclaim may appear only as a withdrawal, never as an assertion. Checking for the phrase
+    # alone would fail on the sentence that retracts it, so what is required is that the retraction is there.
+    if "unconservative for aggressively pruned caches" in doc:
+        assert "overstated" in doc, "the withdrawn caveat is quoted without being withdrawn"
     # And the lookup really does still take only a rate, so the docstring is not describing a fixed bug.
     import inspect
 

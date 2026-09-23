@@ -47,8 +47,10 @@ injected. Two effects opposed each other, and which dominated was the whole ques
 **Both are real, and they act at different places.** The exposure drop dominates the absolute outcome — at a
 matched rate pruning cuts failure from 0.3125 to 0.1875 — while the concentration effect dominates the
 *mechanism*: at matched exposure the pruned cache fails more. So compression and robustness do pull the same way
-in practice, but not for the reason the staged design assumed, and the allocator's protection lookup is
-**unconservative for aggressively pruned caches** by an amount D43 bounds without resolving.
+in practice, but not for the reason the staged design assumed. D43 went one step further and called the
+allocator's protection lookup "unconservative for aggressively pruned caches"; **D44 withdrew that** -- at 1e-5
+the pruned guarded arm is better than the unpruned one and escalation buys nothing, so under the guard the effect
+is not measurable at either rate and a retention term is open in both directions.
 
 **What was not done, deliberately.** Contrast 4 — the guard reaching 0.0000 unpruned and 0.0268 pruned — has
 only 4 discordant samples and p = 0.066, so it does not meet the pre-registered rule and no retention-dependent

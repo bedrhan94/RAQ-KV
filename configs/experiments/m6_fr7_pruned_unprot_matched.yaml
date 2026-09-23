@@ -1,0 +1,38 @@
+# D43's concentration effect at a THIRD rate, chosen because the second one saturated.
+#
+# D43 measured it at 1e-6 on unprotected arms: 0.3125 unpruned against 0.4018 at matched exposure,
+# +0.0893 [+0.0223, +0.1562], p = 0.016, 42 of 56 discordant. The 1e-5 attempt failed to replicate for a
+# diagnosable reason and not an interesting one: unprotected at 1e-5 puts BOTH arms at the ceiling (0.9420
+# and 0.9621), so there is no room to measure anything. 14 discordant samples, p = 0.097. That is the
+# both-arms-pinned problem D30 hit at the floor, arriving from the other end.
+#
+# 3e-7 is where the unprotected arm has room. M3's calibration sweep measured 1.25% / 3.75% / 12.5% /
+# 33.75% / 67.5% at 3e-8 / 1e-7 / 3e-7 / 1e-6 / 3e-6, so 3e-7 should land the unpruned arm near 12%:
+# a different decade from 1e-6, well clear of both the floor and the ceiling.
+#
+# WRITTEN BEFORE THE RUN. The rate was chosen from a sweep measured on a DIFFERENT set than the one that
+# suggested the effect, which is the D31 rule this project violated twice before adopting it.
+#  * a positive matched-exposure difference here replicates D43 across a decade and the structural claim
+#    stands on two rates.
+#  * a null here, with room to measure, narrows D43 to a single rate and is the thirteenth withdrawal.
+# Both outcomes are named now so neither can be reframed after the fact.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m6_fr7_pruned_unprot_matched
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+compression:
+  scorer: query_attention
+  ratio: 0.2467
+  unit: span
+  protect_initial: 4
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 3.0e-7
+  ber_basis: unpruned
+  n_trials: 8
+  n_control: 1
+seed: 0

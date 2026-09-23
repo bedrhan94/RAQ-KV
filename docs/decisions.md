@@ -1527,3 +1527,88 @@ One model, one probe, one rate, one retention ratio, one quantization configurat
 measured at 24.67% retention with a query-aware span scorer; whether it scales with the retention ratio, and
 whether a query-*agnostic* scorer concentrates risk less (it keeps fewer answer tokens, so it should), is
 unmeasured. **M4 closes with this row; M5's allocator carries a stated structural caveat rather than a fix.**
+
+## D44 — At 1e-5 the guard survives pruning, escalation buys nothing, and D43's headline could not be replicated because both arms hit the ceiling (2026-09-23)
+
+D43 left one measurement named as the next thing to do: repeat the guard contrast at 1e-5, where D29/D30 located
+the guard's breakdown and the unpruned arm is not pinned at zero. Six arms were run at 1e-5. The answer to the
+allocator's question is clean; **the attempt to replicate D43's own headline failed, for a diagnosable and
+uninteresting reason, and that failure is the most important thing in this record.**
+
+All arms: 4-bit keys `group_token` 128 / values `per_token`, query-aware span retention at 24.67% where pruned,
+60 samples × 8 trials + 1 no-fault control (every control exactly zero damage), paired over 56 shared samples.
+Canonical numbers from `scripts/report_fault_retention.py`.
+
+| arm | flips/trial | task failure |
+|---|---|---|
+| unpruned, range guard | 5405 | **0.0603** |
+| pruned 25%, range guard (matched rate) | 1326 | 0.0312 |
+| pruned 25%, range guard (matched exposure) | 5405 | 0.0737 |
+| pruned 25%, metadata SECDED (matched rate) | 1356 | 0.0290 |
+| unpruned, unprotected | 5405 | **0.9420** |
+| pruned 25%, unprotected (matched exposure) | 5405 | **0.9621** |
+
+### 1. The guard replicates D29/D30 through a new code path
+
+Unpruned range guard at 1e-5 reaches **0.0603**, against the **0.0593** D29/D30 measured. That is a clean
+replication and it is load-bearing for everything below: these arms run through the pruning-capable
+`ProtectionArm` added in D43, under **eager** attention rather than sdpa, generating their own golden. If the new
+path had changed what the guard does, this is where it would show.
+
+### 2. Under the guard, pruning has no measurable effect — and the direction is not even consistent
+
+| rate | contrast | difference | p | discordant |
+|---|---|---|---|---|
+| 1e-6 | guard, pruned vs unpruned | +0.0268 [+0.0022, +0.0625] | 0.066 | 4 |
+| 1e-5 | guard, pruned vs unpruned (matched rate) | **−0.0290** [−0.0714, +0.0134] | 0.059 | 25 |
+| 1e-5 | guard, pruned vs unpruned (matched exposure) | +0.0134 [−0.0312, +0.0603] | **0.71** | 29 |
+
+**The sign flips between rates and neither contrast meets the rule.** At 1e-6 the pruned guarded arm looked
+slightly worse on 4 discordant samples; at 1e-5, on 25, it is better. Under the guard there is no consistent
+retention effect to report in either direction.
+
+### 3. Escalating to metadata SECDED buys nothing on a pruned cache at this rate
+
+Pruned guard 0.0312 against pruned SECDED 0.0290: **−0.0022 [−0.0201, +0.0156], p = 0.91, 6 discordant.** On an
+*unpruned* cache at the same rate the escalation was decisive (D30: +0.0593, p = 1.1e-5). The coherent reading is
+that the guard's breakdown is driven by **flip count**, and a pruned cache at a matched rate takes 4× fewer
+flips, so it sits below the breakdown. Pruning *delays* the guard's failure in rate terms rather than hastening it.
+
+### 4. **D43's caveat in `_protection()` was wrong, and is corrected**
+
+D43 wrote, on the strength of the 1e-6 guard contrast, that the protection lookup is *"unconservative for
+aggressively pruned caches"*. Rows 2 and 3 do not support that: at 1e-5 the pruned guarded arm is **better** than
+the unpruned one, and escalation adds nothing. The caveat took a direction resting on **4 discordant samples**
+more seriously than the project's own rule allows — the error D31 exists to prevent, committed in the same
+decision record that cited D31 for refusing to move the constants. The docstring and its test now say what is
+actually established:
+
+* the concentration effect is real on an **unprotected** cache at 1e-6 (D43 contrast 2);
+* under the metadata guard it is **not measurable at either rate**, with inconsistent sign;
+* so whether protection needs a retention term is **open in both directions**, not "unconservative".
+
+### 5. The replication of D43's headline failed on saturation, which is not a null result
+
+The direct test — unprotected, matched exposure, 1e-5 — gives +0.0201 [−0.0022, +0.0446], p = 0.097, 14
+discordant. But look at the levels: **0.9420 and 0.9621.** Unprotected at 1e-5 destroys nearly every answer in
+both arms, so there is no room to measure a difference. This is D30's both-arms-pinned problem arriving from the
+**ceiling** instead of the floor, and the design error is mine: 1e-5 was chosen because it is where the *guard*
+breaks, which is a different question from where the *effect* is measurable.
+
+**It is not evidence against D43 and must not be reported as such.** The direction is positive, matching 1e-6,
+and 14 discordant samples at a 94% base rate is an uninformative test. D43's headline therefore remains a
+**single-rate result** until it is tested where the unprotected arm has room.
+
+### 6. What is running, and why that rate
+
+3e-7, on both unprotected arms at matched exposure. M3's calibration sweep — measured on a different set than the
+one that suggested the effect, which is the D31 rule — puts the unprotected arm at **12.5%** there: a different
+decade from 1e-6 and well clear of both floor and ceiling. Both outcomes are pre-committed in the config headers:
+a positive difference replicates D43 across a decade; a null **with room to measure** narrows D43 to one rate and
+is the thirteenth withdrawal.
+
+### Scope
+
+One model, one probe, one retention ratio, one quantization configuration. Rows 2 and 3 are matched-rate
+comparisons except where stated, which is the deployment condition; row 5's failure is about the rate chosen, not
+about the effect.

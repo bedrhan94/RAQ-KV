@@ -1,7 +1,7 @@
 """Builds the RAQ-KV technical review document (.docx) for an external reviewer.
 
 Regenerate with:  python scripts/build_review_docx.py
-Content is assembled from docs/decisions.md (D1-D43), docs/claims.md and the measured campaign outputs; the
+Content is assembled from docs/decisions.md (D1-D44), docs/claims.md and the measured campaign outputs; the
 numbers here are transcribed from those records, and the record is the source of truth if they ever disagree.
 """
 
@@ -66,6 +66,11 @@ WITHDRAWN_ROWS = [
      "baseline; the campaign had one family and had not run that arm (D42)",
      "Supported on one model family against the baselines actually run, with the unmet conditions named; the "
      "general claim is not made"],
+    ["'The protection lookup is unconservative for aggressively pruned caches' (D43)",
+     "A conclusion drawn from 4 discordant samples at p = 0.066. Repeated at 1e-5 the contrast reversed - the "
+     "pruned guarded arm beats the unpruned one, and escalating to SECDED buys nothing (D44)",
+     "Under the guard the effect is not measurable at either rate and the sign is inconsistent, so a retention "
+     "term is open in both directions"],
 ]
 
 # H3, transcribed from `scripts/report_m4.py --arms m5h3_*` over the eight arms that ran. Kept as data next to
@@ -227,7 +232,7 @@ def build(doc: Document) -> None:
     para(doc, "Technical review dossier - complete record of methods, formulas, measurements and corrections",
          italic=True, colour=GREY, space_after=2)
     para(doc, "Model: Qwen3-1.7B @ 70d244cc | Hardware: RTX 5060 Ti | "
-              "333 automated tests passing (7 GPU-gated, deselected) | decision records D1-D43",
+              "333 automated tests passing (7 GPU-gated, deselected) | decision records D1-D44",
          size=9, colour=GREY)
     rule(doc)
 
@@ -708,14 +713,30 @@ def build(doc: Document) -> None:
                 "an answer already broken cannot break further. The exposure drop therefore pays off more than "
                 "proportionally, and that is what lets the concentration effect hide inside a matched-rate "
                 "comparison.")])
-    rich(doc, [("What was deliberately NOT changed. ", "b"),
+    rich(doc, [("What was deliberately NOT changed - and where we then overstated it. ", "b"),
                ("The allocator's protection constants stand. Contrast 4 - the guard reaching exactly 0.0000 "
                 "unpruned and 0.0268 pruned - has 4 discordant samples and p = 0.066, so it fails the "
-                "pre-registered rule of section 4 and no retention-dependent threshold was derived from it. "
-                "Inventing one from four events is the error that produced three of the withdrawals in section "
-                "10. What the code carries instead is a stated caveat, pinned by a test so a refactor cannot "
-                "tidy it away: this lookup is unconservative for aggressively pruned caches. The experiment "
-                "that would set the constant is contrast 4 at 1e-5, where the guard's breakdown was located.")])
+                "pre-registered rule of section 4 and no retention-dependent threshold was derived from it. But "
+                "the same record then called the lookup 'unconservative for aggressively pruned caches', which "
+                "is a conclusion those four samples do not carry. Repeating the contrast at 1e-5 reversed it: "
+                "the pruned guarded arm reaches 0.0312 against the unpruned arm's 0.0603, and escalating from "
+                "the guard to metadata SECDED on a pruned cache buys nothing (-0.0022, p = 0.91) where on an "
+                "unpruned cache at that rate it was decisive. The guard's breakdown tracks flip count, and a "
+                "pruned cache at a matched rate takes four times fewer flips, so it sits below the breakdown. "
+                "Under the guard the effect is not measurable at either rate and the sign is inconsistent, so a "
+                "retention term is open in both directions - that wording is withdrawn and the docstring now "
+                "says so, pinned by a test.")])
+    rich(doc, [("The headline is still a single-rate result, and the attempt to replicate it failed on "
+                "saturation. ", "b"),
+               ("The direct test - unprotected, matched exposure, at 1e-5 - gives +0.0201 [-0.0022, +0.0446], "
+                "p = 0.097 on 14 discordant samples. But the levels are 0.9420 and 0.9621: unprotected at 1e-5 "
+                "destroys nearly every answer in both arms, so there is no room to measure anything. That is the "
+                "both-arms-pinned problem of section 7 arriving from the ceiling instead of the floor, and the "
+                "design error is ours - 1e-5 is where the GUARD breaks, which is a different question from where "
+                "the EFFECT is measurable. It is not evidence against the finding and is not reported as such. "
+                "3e-7 is the rate with room (the unprotected arm sits near 12% there, from a calibration sweep "
+                "measured on a different set than the one that suggested the effect), and both outcomes were "
+                "pre-committed before it was run.")])
     rich(doc, [("The practical reading, which runs the other way. ", "b"),
                ("At the matched rate a real deployment faces, pruning still cuts absolute failure from 0.3125 "
                 "to 0.1875, and the guard still removes most of what is left. Compression and robustness do "
@@ -762,10 +783,15 @@ def build(doc: Document) -> None:
     bullet(doc, "H3 does not meet its own pre-registration. The plan requires the joint policy to beat every "
                 "single-signal policy on AT LEAST TWO model families; this is one. Until the second family is "
                 "run, H3 is supported on Qwen3-1.7B and the general claim is not made.")
-    bullet(doc, "The allocator's protection lookup is unconservative for aggressively pruned caches, and is "
-                "shipped that way on purpose. Section 9.5 measures the effect; the constant that would fix it "
-                "rests on 4 discordant samples, so it was not invented. A deployment pruning to 25% should not "
-                "assume the +0.075% guard buys the clean zero M3 measured on a full cache.")
+    bullet(doc, "Whether the allocator's protection lookup needs a retention term is open in BOTH directions. "
+                "Section 9.5's concentration effect is significant on an unprotected cache at one rate; under "
+                "the metadata guard it is not measurable at either rate tested and the sign is inconsistent. "
+                "The constants are therefore unchanged, and a reviewer should read that as unresolved rather "
+                "than as safe.")
+    bullet(doc, "Section 9.5's headline rests on a SINGLE error rate. The attempt to replicate it at 1e-5 put "
+                "both arms above 94% failure, where nothing is measurable; a third rate with room was running "
+                "when this document was generated. Until it answers, the strongest structural claim in this "
+                "project has one rate behind it.")
     bullet(doc, "Only ONE pair of axes has ever been varied together. Section 9.5 crosses retention with "
                 "faults; precision has never been crossed with faults at a fixed retention, and the three-way "
                 "interaction is unmeasured. Every joint claim outside 9.5 is a claim about two axes priced "
@@ -807,7 +833,7 @@ def build(doc: Document) -> None:
                 "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
-              "(D1-D43), docs/claims.md and the run manifests in outputs/; those records are the source of "
+              "(D1-D44), docs/claims.md and the run manifests in outputs/; those records are the source of "
               "truth if they disagree with this document.", size=9, italic=True, colour=GREY)
 
 

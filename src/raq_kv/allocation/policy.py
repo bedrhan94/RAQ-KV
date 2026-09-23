@@ -94,14 +94,21 @@ def _protection(ber: float) -> tuple[str | None, str, str]:
     filler. Protection is therefore **not separable from retention**, which is the one thing the brief's
     multiplicative form got right.
 
-    The constants below are deliberately unchanged. At 1e-6 the guard reaches 0.0000 unpruned and 0.0268 pruned
-    -- a direction consistent with concentration, but **4 discordant samples and p = 0.066**, which does not meet
-    the pre-registered rule (D31). Deriving a retention-dependent threshold from four events is precisely the
-    error D31 was written after. What callers must know instead is stated rather than encoded: **this lookup is
-    unconservative for aggressively pruned caches.** A deployment pruning to 25% should not assume the +0.075%
-    guard buys it the clean zero M3 measured on a full cache. The measurement that would set a retention term is
-    D43's contrast 4 repeated at 1e-5, where D29/D30 located the guard's breakdown and the unpruned arm is no
-    longer pinned at zero.
+    **The constants below are unchanged, and whether they should be is open in both directions.** D43 asserted
+    here that the lookup is "unconservative for aggressively pruned caches", on the strength of a 1e-6 contrast
+    with **4 discordant samples** at p = 0.066. D44 measured the same contrast at 1e-5 and it went the other way:
+    the pruned guarded arm reaches 0.0312 against the unpruned arm's 0.0603, and escalating from the guard to
+    metadata SECDED on a pruned cache buys nothing (-0.0022, p = 0.91) where on an unpruned cache at that rate it
+    was decisive (D30: +0.0593, p = 1.1e-5). The guard's breakdown tracks **flip count**, and a pruned cache at a
+    matched rate takes about four times fewer flips, so it sits below the breakdown.
+
+    So what is established is narrower than D43 claimed:
+
+    * the concentration effect is real on an **unprotected** cache at 1e-6;
+    * under this guard it is **not measurable at either rate**, and the sign is inconsistent (+0.0268 at 1e-6 on
+      4 discordant samples, -0.0290 at 1e-5 on 25);
+    * therefore a retention term is neither justified nor ruled out, and the earlier "unconservative" wording
+      overstated a direction the project's own rule (D31) says to report as a direction.
     """
     if ber <= 1e-6:
         return "range", "none", "range check on metadata (D30): +0.075% storage, sufficient at this rate"
