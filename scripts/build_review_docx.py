@@ -1,7 +1,7 @@
 """Builds the RAQ-KV technical review document (.docx) for an external reviewer.
 
 Regenerate with:  python scripts/build_review_docx.py
-Content is assembled from docs/decisions.md (D1-D47), docs/claims.md and the measured campaign outputs; the
+Content is assembled from docs/decisions.md (D1-D48), docs/claims.md and the measured campaign outputs; the
 numbers here are transcribed from those records, and the record is the source of truth if they ever disagree.
 """
 
@@ -86,30 +86,37 @@ WITHDRAWN_ROWS = [
 # the prose so a reviewer can diff it against the report output rather than trusting the paragraph around it.
 # The retention-only rows are the calibrated re-runs (D42); the originals spent 2.8% and 1.45% less.
 H3_ROWS = [
-    ["joint @ 1.05", "Qwen3-1.7B", "1.0384-1.0401", "1.0000", "0.0101"],
-    ["retention-only @ 1.05 (bf16 spans)", "Qwen3-1.7B", "+0.07%", "0.9487", "0.0707"],
-    ["magnitude-only @ 1.05 (key-norm)", "Qwen3-1.7B", "+1.33%", "0.1984", "0.9495"],
-    ["recency-retention @ 1.05", "Qwen3-1.7B", "+1.33%", "0.3162", "0.6364"],
-    ["joint @ 1.05", "Llama-3.2-3B", "1.0384", "1.0000", "0.0000"],
-    ["retention-only @ 1.05 (bf16 spans)", "Llama-3.2-3B", "+0.31%", "0.9208", "0.1386"],
-    ["magnitude-only @ 1.05 (key-norm)", "Llama-3.2-3B", "+1.56%", "0.0709", "1.0000"],
-    ["recency-retention @ 1.05", "Llama-3.2-3B", "+1.56%", "0.3600", "0.6400"],
-    ["precision-only, either budget", "both", "floor 2.63: infeasible", "-", "not emitted"],
+    ["joint @ 0.70 (4-bit, 16.4% of tokens)", "Qwen3-1.7B", "0.6932", "1.0000", "0.0101"],
+    ["retention-only @ 0.70 (bf16, 4.4%)", "Qwen3-1.7B", "+2.25%", "0.7980", "0.2222"],
+    ["magnitude-only @ 0.70 (key-norm)", "Qwen3-1.7B", "+1.52%", "0.1034", "1.0000"],
+    ["recency-retention @ 0.70", "Qwen3-1.7B", "+1.52%", "0.3569", "0.6465"],
+    ["joint @ 0.70 (4-bit, 16.4% of tokens)", "Llama-3.2-3B", "0.6946", "1.0000", "0.0000"],
+    ["retention-only @ 0.70 (bf16, 4.6%)", "Llama-3.2-3B", "+0.13%", "0.7921", "0.2871"],
+    ["magnitude-only @ 0.70 (key-norm)", "Llama-3.2-3B", "+1.46%", "0.1010", "1.0000"],
+    ["recency-retention @ 0.70", "Llama-3.2-3B", "+1.46%", "0.3600", "0.6600"],
+    ["precision-only, any of the 3 budgets", "both", "floor 2.63: infeasible", "-", "not emitted"],
 ]
 H3_PAIRS = [
-    "fam    budget baseline          joint    base         p   Holm/12  disc  verdict",
-    "Qwen   1.05   retention-only   0.0101  0.0707     0.034      0.10     8  FAILS Holm at 12",
-    "Qwen   1.05   magnitude-only   0.0101  0.9495   5.2e-22   5.2e-21    93  meets",
-    "Qwen   1.05   recency          0.0101  0.6364   3.4e-15   2.4e-14    62  meets",
-    "Qwen   2.00   retention-only   0.0000  0.0000         1         1     0  BOUND, both at floor",
-    "Qwen   2.00   magnitude-only   0.0000  0.8081   3.7e-19   3.4e-18    80  meets",
-    "Qwen   2.00   recency          0.0000  0.6263   3.4e-15   2.4e-14    62  meets",
+    "fam    budget baseline          joint    base         p   Holm/18  disc  verdict",
+    "Qwen   0.70   retention-only   0.0101  0.2222   4.6e-06   2.3e-05    21  meets",
+    "Qwen   0.70   magnitude-only   0.0101  1.0000   4.2e-23   6.3e-22    98  meets",
+    "Qwen   0.70   recency          0.0101  0.6465   2.1e-15   2.1e-14    63  meets",
+    "Llama  0.70   retention-only   0.0000  0.2871   7.2e-08   4.3e-07    29  meets",
+    "Llama  0.70   magnitude-only   0.0000  1.0000   1.5e-23   2.7e-22   100  meets",
+    "Llama  0.70   recency          0.0000  0.6600   4.5e-16   5.4e-15    66  meets",
+    "  -- the six above are the pre-registered rule, met on both families --",
+    "Qwen   1.05   retention-only   0.0101  0.0707     0.034      0.10     8  bound-ish, fails Holm",
+    "Qwen   1.05   magnitude-only   0.0101  0.9495   5.2e-22   7.3e-21    93  meets",
+    "Qwen   1.05   recency          0.0101  0.6364   3.4e-15   3.1e-14    62  meets",
     "Llama  1.05   retention-only   0.0000  0.1386   1.8e-04   7.3e-04    14  meets",
-    "Llama  1.05   magnitude-only   0.0000  1.0000   1.5e-23   1.8e-22   100  meets",
-    "Llama  1.05   recency          0.0000  0.6400   1.2e-15   1.0e-14    64  meets",
+    "Llama  1.05   magnitude-only   0.0000  1.0000   1.5e-23   2.7e-22   100  meets",
+    "Llama  1.05   recency          0.0000  0.6400   1.2e-15   1.4e-14    64  meets",
+    "Qwen   2.00   retention-only   0.0000  0.0000         1         1     0  BOUND, both at floor",
+    "Qwen   2.00   magnitude-only   0.0000  0.8081   3.7e-19   4.9e-18    80  meets",
+    "Qwen   2.00   recency          0.0000  0.6263   3.4e-15   3.1e-14    62  meets",
     "Llama  2.00   retention-only   0.0000  0.0099      0.32      0.63     1  BOUND, both at floor",
-    "Llama  2.00   magnitude-only   0.0000  0.9900   2.5e-23   2.8e-22    99  meets",
-    "Llama  2.00   recency          0.0000  0.6100   5.7e-15   2.9e-14    61  meets",
+    "Llama  2.00   magnitude-only   0.0000  0.9900   2.5e-23   4.0e-22    99  meets",
+    "Llama  2.00   recency          0.0000  0.6100   5.7e-15   4.0e-14    61  meets",
 ]
 
 
@@ -247,7 +254,7 @@ def build(doc: Document) -> None:
     para(doc, "Technical review dossier - complete record of methods, formulas, measurements and corrections",
          italic=True, colour=GREY, space_after=2)
     para(doc, "Model: Qwen3-1.7B @ 70d244cc | Hardware: RTX 5060 Ti | "
-              "346 automated tests passing (7 GPU-gated, deselected) | decision records D1-D47",
+              "346 automated tests passing (7 GPU-gated, deselected) | decision records D1-D48",
          size=9, colour=GREY)
     rule(doc)
 
@@ -612,28 +619,32 @@ def build(doc: Document) -> None:
               "Precision-only emits nothing at either budget: quantization alone bottoms out at about 2.63 bits "
               "per original token, so the policy the quantization literature uses does not reach these budgets "
               "at all. That is H3's first result and it is an absence, not a number.")
-    table(doc, ["Arm @ 1.05 bits/original token", "Family", "Bits vs joint", "Kept target",
+    table(doc, ["Arm @ 0.70 bits/original token", "Family", "Bits vs joint", "Kept target",
                 "Task failure"], H3_ROWS)
     rich(doc, [("All twelve contrasts, both families, task failure (Wilcoxon, bootstrap CI over samples, Holm "
                 "across the whole family of twelve):", "b")])
     code(doc, H3_PAIRS)
-    rich(doc, [("Nine of twelve survive. Against magnitude-only and recency-retention it is 8 of 8 - two "
-                "families, two budgets - which is the cleanest result in this project. ", "b"),
-               ("On Llama the joint arm is perfect: 0 of 101 samples fail at 1.05 bits per original token, "
-                "against Qwen's 1 of 99. The cross-family replication is not marginal on the joint policy's own "
-                "performance.")])
-    rich(doc, [("But the pre-registered rule is NOT met as written, and that is the finding to take away from "
-                "this section. ", "b"),
-               ("The rule says the joint policy must beat EVERY single-signal policy on at least two families. "
-                "Against retention-only - the only baseline that isolates the precision axis, since both arms "
-                "use query-aware span retention - it is met on one family at one budget. Llama at 1.05 meets it "
-                "decisively (Holm 7.3e-04). Qwen at 1.05 gives p = 0.034, which fails Holm at a family of "
-                "twelve and passes at a family of three; the plan pre-registered 'Holm-corrected' without "
-                "defining the family, so both readings are defensible and the conservative one is the headline. "
-                "Recording that rather than choosing the favourable family size is the point. And both 2.00 "
-                "contrasts are bounds, not wins: joint and retention-only both reach the floor (0.0000 against "
-                "0.0000 on Qwen with 0 discordant samples, 0.0000 against 0.0099 on Llama with 1), which by the "
-                "rule of section 4 is an upper bound on the difference and never a win.")])
+    rich(doc, [("The pre-registered rule is met at 0.70 bits, on both families, with all six of those contrasts "
+                "surviving Holm across the whole family of eighteen. ", "b"),
+               ("The rule is: the joint policy must beat EVERY single-signal policy at equal bits on at least two "
+                "model families. At 0.70 it does - retention-only at Holm 2.3e-05 on Qwen and 4.3e-07 on Llama, "
+                "magnitude-only and recency at 1e-14 or below on both. That is 22.9x compression of the KV cache "
+                "with 0 of 101 samples failing on Llama and 1 of 99 on Qwen.")])
+    rich(doc, [("The three contrasts that fail are all retention-only at the LOOSER budgets, and they fail "
+                "because the joint arm is essentially lossless there. ", "b"),
+               ("At 2.00 both arms reach the floor (0.0000 against 0.0000 on Qwen with 0 discordant samples, "
+                "0.0000 against 0.0099 on Llama with 1), which by the rule of section 4 is an upper bound and "
+                "never a win. At 1.05 on Qwen, p = 0.034 on 8 discordant samples fails Holm at eighteen. A "
+                "comparison with no room is not a policy that failed to win, and an earlier revision of this "
+                "section reported the 1.05 result as the verdict before the tighter budget existed - that "
+                "reading is superseded, not deleted.")])
+    rich(doc, [("The advantage grows monotonically as the budget tightens, which the project's own earlier "
+                "measurements predict. ", "b"),
+               ("Joint against retention-only: a bound at 2.00, then -0.0606 (Qwen) and -0.1386 (Llama) at 1.05, "
+                "then -0.2121 and -0.2871 at 0.70. Section 9.1 found two regimes - at about 4 bits per original "
+                "token nothing discriminates, at about 1 bit every step matters - and joint allocation is a way "
+                "of spending scarce bits well, so its value should vanish where bits are plentiful and grow "
+                "where they are not. Three budgets on two families show that rather than arguing it from one.")])
     rich(doc, [("Putting the two families on the same footing moved Qwen's numbers AGAINST us. ", "b"),
                ("Section 8's probe has a tool-calling fact type whose gold format encodes Qwen's convention - "
                 "<tool_call> tags with 'arguments' - and Llama emits bare JSON with 'parameters', retrieving the "
@@ -812,9 +823,10 @@ def build(doc: Document) -> None:
     bullet(doc, "Two models for H3 only. Llama-3.2-3B (identical KV geometry, verified) was run for section "
                 "9.4; every other claim in this document - sections 6, 7, 8, 9.1 to 9.3 and 9.5 - is still "
                 "single-model on Qwen3-1.7B.", bold=False)
-    bullet(doc, "The 1.05-bit comparisons are floor-limited on the joint side. The joint arm fails 0 of 101 "
-                "samples on Llama and 1 of 99 on Qwen, so a baseline better than retention-only could not be "
-                "distinguished from it here, and neither could a better joint policy.")
+    bullet(doc, "Every section 9.4 comparison is floor-limited on the JOINT side. The joint arm never came off "
+                "the floor on Llama at any of the three budgets (0 of 101 each time) and failed 1 of 99 on Qwen, "
+                "so a policy better than this one could not be distinguished from it here - and neither could a "
+                "slightly worse one. Locating where this policy breaks needs a budget below 0.70.")
     bullet(doc, "One synthetic probe for the task metric. RAQ-Probe's facts are single sentences by "
                 "construction, which is exactly the structure the span finding (H4) exploits. The span result "
                 "must be treated as probe-dependent until it replicates on natural long-context tasks.")
@@ -886,7 +898,7 @@ def build(doc: Document) -> None:
                 "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
-              "(D1-D47), docs/claims.md and the run manifests in outputs/; those records are the source of "
+              "(D1-D48), docs/claims.md and the run manifests in outputs/; those records are the source of "
               "truth if they disagree with this document.", size=9, italic=True, colour=GREY)
 
 

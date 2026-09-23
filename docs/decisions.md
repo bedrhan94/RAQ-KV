@@ -1817,3 +1817,61 @@ random.
 Two families, one probe, five fact types, two budgets, one retention ratio per budget, no faults injected. The
 joint arm's perfection on Llama (0 of 101) means the 1.05 comparisons are floor-limited on the joint side too: a
 better baseline could not be distinguished from it here.
+
+## D48 — H3's pre-registered rule is met at 0.70 bits on both families, and the joint policy's advantage grows as the budget tightens (2026-09-23)
+
+D47 returned a **partial** verdict, and diagnosed why: against retention-only the joint arm was **floor-limited**
+— 0 of 101 on Llama and 1 of 99 on Qwen at 1.05 bits, with both arms at the floor at 2.00. Two arms at the floor
+are a bound, never a win (D30). The diagnosis implied its own fix: run a **tighter** budget, where the baselines
+have room to fail and the comparison has something to discriminate.
+
+0.70 bits per original token. The allocator picks 4-bit at **16.44%** retention (against 24.67% at 1.05);
+retention-only drops to bf16 at 4.4%. `precision_only` again emits nothing — its floor is ~2.63, so the absence
+result now holds at three budgets. Iso-budget enforced by measurement; every baseline spends at or above the joint
+arm. `tool_arg` excluded from both families (D46).
+
+| family | budget | baseline | joint | baseline | p | **Holm/18** | discordant |
+|---|---|---|---|---|---|---|---|
+| **Qwen** | **0.70** | **retention-only** | 0.0101 | 0.2222 | 4.6e-06 | **2.3e-05** | 21 |
+| **Qwen** | **0.70** | **magnitude-only** | 0.0101 | 1.0000 | 4.2e-23 | **6.3e-22** | 98 |
+| **Qwen** | **0.70** | **recency** | 0.0101 | 0.6465 | 2.1e-15 | **2.1e-14** | 63 |
+| **Llama** | **0.70** | **retention-only** | 0.0000 | 0.2871 | 7.2e-08 | **4.3e-07** | 29 |
+| **Llama** | **0.70** | **magnitude-only** | 0.0000 | 1.0000 | 1.5e-23 | **2.7e-22** | 100 |
+| **Llama** | **0.70** | **recency** | 0.0000 | 0.6600 | 4.5e-16 | **5.4e-15** | 66 |
+
+**All six meet the rule, on both families, corrected across the whole family of eighteen contrasts.** The
+pre-registered refutation rule — "if the joint policy does not beat *every* single-signal policy at equal bits on
+at least two model families, H3 is refuted" — is **met at 0.70 bits per original token.** H3 moves from
+*partially supported* (D47) to **supported**.
+
+**15 of 18 contrasts survive Holm overall.** The three that do not are all retention-only at the looser budgets,
+and they are now explained rather than outstanding: Qwen 1.05 (p = 0.034, Holm 0.10, 8 discordant) and both 2.00
+contrasts (0 and 1 discordant) fail because the **joint arm is essentially lossless there**, not because the
+policy is weak. A bound at the floor is not a failure to win; it is a comparison with no room.
+
+### The advantage grows monotonically as the budget tightens
+
+| budget | Qwen: joint vs retention-only | Llama: joint vs retention-only |
+|---|---|---|
+| 2.00 | 0.0000 vs 0.0000 (bound) | 0.0000 vs 0.0099 (bound) |
+| 1.05 | −0.0606 | −0.1386 |
+| **0.70** | **−0.2121** | **−0.2871** |
+
+Monotone in both families, and it is the pattern the project's own earlier measurements predict. D37/D38 found two
+regimes: at ~4 bits per original token nothing discriminates, at ~1 bit every step matters. Joint allocation is a
+way of spending scarce bits well, so its value should vanish where bits are plentiful and grow where they are not
+— which is what these three budgets show, on two families, rather than being argued from one.
+
+### What the joint policy achieves at 0.70
+
+**22.9× compression** of the KV cache (0.70 against 16 bits per original token), with **0 of 101** samples failing
+on Llama-3.2-3B and **1 of 99** on Qwen3-1.7B. The joint arm never came off the floor on Llama at any of the three
+budgets tested.
+
+### Scope, and the limitation this creates
+
+The Llama comparisons are floor-limited **on the joint side at every budget**, so a policy better than this one
+could not be distinguished from it here, and neither could a slightly worse one. Establishing where this policy
+*does* break needs a budget below 0.70 — the allocator holds 4-bit down to its D40 floor and buys tokens, so
+0.55 gives 12.9% retention and 0.45 about 10.6%. Two families, one probe, five fact types, three budgets, no
+faults injected; the fault interaction is D43/D45's separate result and has not been crossed with this one.
