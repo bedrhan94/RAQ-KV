@@ -12,6 +12,7 @@ territory only, and what is pinned here is the scoring and span logic, which is 
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from raq_kv.config.schema import BFCLConfig
 from raq_kv.evaluation.scoring import SCORERS, parse_any_calls, score_bfcl_ast, score_tool_arg
@@ -161,5 +162,41 @@ def test_the_schema_unit_is_a_distinct_choice_from_the_sentence_unit():
 
     assert CompressionConfig(scorer="recency", ratio=0.25, unit="schema").unit == "schema"
     assert CompressionConfig(scorer="recency", ratio=0.25, unit="span").unit == "span"
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         CompressionConfig(scorer="recency", ratio=0.25, unit="sentence")
+
+
+def test_the_retention_task_builds_samples_through_the_dispatcher():
+    """A scripted edit silently failed to match here once, and the campaign died four arms in.
+
+    The Retention constructor called `build_raq_probe` directly, so a `bfcl` dataset reached probe-only code and
+    crashed on `filler_hf_id`. The config schema had already been told the task accepts the vehicle, so nothing
+    caught it until GPU time was spent. Asserting the dispatcher is used is cheaper than that.
+    """
+    import inspect
+
+    from raq_kv.experiments import tasks
+
+    source = inspect.getsource(tasks.Retention.__init__)
+    assert "build_probe_samples(" in source
+    assert "build_raq_probe(" not in source, "Retention bypasses the dataset dispatcher"
+
+
+def test_every_task_that_accepts_bfcl_can_actually_reach_the_bfcl_builder():
+    """The general form: if the schema lets a task see `bfcl`, its constructor must have a path to that builder.
+
+    Two shapes are legitimate. `QAGenerate` branches on the dataset type inline and names `build_raq_probe` in one
+    of its branches; `Retention` delegates to `build_probe_samples`. What is NOT legitimate is naming only the
+    probe builder with no branch, which is the state that sent four M6 arms to a crash.
+    """
+    import inspect
+
+    from raq_kv.config.schema import _TASK_DATASETS
+    from raq_kv.experiments import tasks
+
+    for kind, cls in {"retention": tasks.Retention, "qa_generate": tasks.QAGenerate}.items():
+        if "bfcl" not in _TASK_DATASETS[kind]:
+            continue
+        source = inspect.getsource(cls.__init__)
+        reaches_bfcl = "build_probe_samples(" in source or "build_bfcl(" in source or "BFCLConfig" in source
+        assert reaches_bfcl, f"{cls.__name__} accepts bfcl but its constructor has no path to that builder"

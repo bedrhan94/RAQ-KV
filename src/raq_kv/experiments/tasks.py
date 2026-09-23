@@ -934,7 +934,7 @@ class Retention:
         self.task: RetentionTask = cfg.task
         self.compression = cfg.compression
         self.tokenizer = load_tokenizer(cfg.model)
-        samples = build_raq_probe(cfg.dataset, self.tokenizer, dict(cfg.model.chat_template_kwargs))
+        samples = build_probe_samples(cfg, self.tokenizer)
         if self.task.n_samples is not None and self.task.n_samples < len(samples):
             picked = random.Random(derive_seed(cfg.seed, "probe_subset")).sample(samples, self.task.n_samples)
             samples = sorted(picked, key=lambda s: s.sample_id)
