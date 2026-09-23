@@ -1659,3 +1659,67 @@ questions and conflating them is the error D44 recorded.
 One model, one probe, one retention ratio (24.67%), one quantization configuration, one scorer. Whether the risk
 ratio scales with the retention ratio is unmeasured, and a query-*agnostic* scorer should concentrate risk less
 because it keeps fewer answer tokens — that is a prediction the project has not tested.
+
+## D46 — RAQ-Probe's `tool_arg` fact type encodes one family's tool-calling dialect, and does not transfer (2026-09-23)
+
+The cross-family replication H3 pre-registers needs Llama-3.2-3B to answer RAQ-Probe at all. It does, except for
+one fact type, and the exception is a **probe limitation rather than a model one**.
+
+Golden RAQ-Probe, Llama-3.2-3B-Instruct, 720 samples:
+
+| fact type | accuracy |
+|---|---|
+| id | 0.9917 |
+| date | 0.9750 |
+| number | 0.9750 |
+| constraint | 0.9667 |
+| entity | 0.9333 |
+| **tool_arg** | **0.0000** (0 of 120, every context length) |
+| overall | 0.8069 |
+| **excluding `tool_arg`** | **0.9683** (against Qwen3's 0.983 — comparable) |
+
+**Llama retrieves the right value every time and is scored wrong for its format.** The probe's gold text is
+`<tool_call>\n{"name": …, "arguments": {…}}\n</tool_call>` — Qwen's convention — and `parse_tool_calls` requires
+the `<tool_call>` tags. Llama emits bare JSON using `parameters` instead of `arguments`:
+
+```
+ref  gold=93259021  tool_name=get_account_balance  arg_name=account_number
+pred {"name": "get_account_balance", "parameters": {"account_number": "93259021"}}
+```
+
+The fact is retrieved. The dialect differs.
+
+### Why the scorer was not broadened
+
+The obvious fix — accept untagged JSON and treat `parameters` as an alias for `arguments` — was written and
+**tested against every stored Qwen tool_arg prediction before being considered**: 492 predictions re-scored,
+**2 changed**. Not a safe superset. Both flips are *truncated generations* in a degraded 2-bit arm, where the
+closing `</tool_call>` was cut off by `max_new_tokens` and the bare-JSON fallback rescued it — arguably the
+current scorer is right to count a malformed output as wrong when the measurement is about damage.
+
+Adopting it anyway would mean Llama and Qwen were scored by **different code**, since stored `correct` values are
+computed at run time. Making that consistent would require re-running every Qwen arm. Changing the measurement
+protocol (S0) mid-project so that a second family passes is exactly the move that destroys cross-run
+comparability, so it was not made.
+
+### What is done instead
+
+`tool_arg` is **excluded from the cross-family comparison on both families**. On Llama the exclusion is automatic
+— every `tool_arg` sample has `golden_correct = False`, and every paired analysis in this project conditions on
+that — but Qwen's comparisons must be restricted to the same five fact types or the two families would be
+compared on different compositions. That restriction is an analysis-side filter; no dataset or config changes,
+so no identity moves.
+
+### The finding this leaves behind
+
+**The probe's only agent-shaped fact type is family-specific.** `tool_arg` is the closest thing RAQ-Probe has to
+an agent task, and it turns out to measure adherence to one model family's tool-call formatting as much as
+retrieval. That is worth stating against **C4** — "token-level metrics under-estimate agent failures" — whose
+agent evidence was already thin and now has one less usable vehicle. A probe intended to generalize across
+families should score tool calls by *what was called with what*, not by the syntax used to say it; the current
+scorer is kept because changing it now costs more than it buys, not because it is right.
+
+### Scope
+
+One alternative family. Whether other families (Mistral, Gemma) emit yet other dialects is unmeasured, but the
+mechanism — a probe encoding the convention of the model it was developed against — predicts they would.

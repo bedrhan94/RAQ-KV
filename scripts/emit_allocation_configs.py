@@ -73,6 +73,11 @@ def main() -> int:
     parser.add_argument("--budgets", default="1.05,2.0", help="Comma-separated bits per original token")
     parser.add_argument("--ber", type=float, default=1e-6)
     parser.add_argument("--prefix", default="m5h3")
+    # The cross-family replicate H3 pre-registers (docs/m4_m5_plan.md §M5). Llama-3.2-3B has the same KV
+    # geometry as Qwen3-1.7B -- verified, both 57344 values per token -- so the allocator's cost table transfers
+    # unchanged and only the family varies. The eager variant is picked automatically for attention scorers.
+    parser.add_argument("--model", default="qwen3_1p7b",
+                        help="Base model config stem; '_eager' is appended for scorers that read attention")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
@@ -86,7 +91,8 @@ def main() -> int:
                 skipped.append(f"{policy} at {budget}: infeasible - this policy cannot reach that budget")
                 continue
             # A scorer that needs attention weights needs eager attention (D5), which is its own model config.
-            model = "qwen3_1p7b_eager" if plan.scorer in ("query_attention", "window_attention") else "qwen3_1p7b"
+            needs_eager = plan.scorer in ("query_attention", "window_attention")
+            model = f"{args.model}_eager" if needs_eager else args.model
             name = f"{args.prefix}_{tag}_{policy}"
             (out / f"{name}.yaml").write_text(render(name, plan, budget, policy, model), encoding="utf-8")
             written.append(f"{name}: ratio {plan.retention_ratio}, bits {plan.bits}, group {plan.group_size}, "

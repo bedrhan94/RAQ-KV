@@ -1,0 +1,22 @@
+# The cross-family replicate, with eager attention for the scorers that read attention weights (D5: sdpa
+# returns none). A separate config because attn_implementation is part of the experiment identity.
+#
+# The cross-family replicate. Chosen in D1 for one reason: Llama-3.2-3B-Instruct has **exactly the same KV
+# geometry** as Qwen3-1.7B -- 28 layers, 8 KV heads, head_dim 128, 112 KiB per token in bf16 -- so a difference
+# between the two is a *family* effect and not a cache-geometry effect. Every bit-budget constant in
+# `allocation/policy.py` is a cost per stored value at a given axis and group size, so an identical geometry is
+# what lets those constants transfer without being re-derived.
+#
+# The families differ where it matters for this project: Qwen3 applies QK-Norm, so its key statistics differ from
+# Llama's (D1, D15) -- and key-outlier behaviour is what group_token quantization is built around. If the
+# retention and precision findings are artefacts of QK-Norm, this is the model that shows it.
+#
+# H3's pre-registered refutation rule needs **two** model families (`docs/m4_m5_plan.md` §M5). D41 called H3
+# supported on one, which D42 recorded as the twelfth withdrawal. This config exists to settle that.
+model:
+  hf_id: meta-llama/Llama-3.2-3B-Instruct
+  revision: 0cb88a4f764b7a12671c53f0838cd831a0843b95
+  short_name: llama3p2-3b-eager
+  dtype: bfloat16
+  attn_implementation: eager
+  device: cuda

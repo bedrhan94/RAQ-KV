@@ -1,0 +1,17 @@
+# Can Llama-3.2-3B answer RAQ-Probe at all? The precondition for every cross-family replication.
+#
+# D1 chose this model because its KV geometry is identical to Qwen3-1.7B's -- verified empirically, both give
+# kv_values_per_token = 57344 -- so the bit-budget constants transfer. That says nothing about whether the model
+# can do the task. The probe places a fact in a long context and asks for it back; Qwen3 answers 98.3% of them
+# clean. If Llama is far below that, H3's second family is unmeasurable here and the honest move is to say so
+# rather than to run eight arms against a floor.
+#
+# M0's exit criterion 7 asked for a golden accuracy band of 85-100% per fact type x depth. The same band applies.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m7_llama_golden_probe
+task:
+  kind: qa_generate
+  score_answer_nll: true
+seed: 0
