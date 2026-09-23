@@ -1612,3 +1612,50 @@ is the thirteenth withdrawal.
 One model, one probe, one retention ratio, one quantization configuration. Rows 2 and 3 are matched-rate
 comparisons except where stated, which is the deployment condition; row 5's failure is about the rate chosen, not
 about the effect.
+
+## D45 — The concentration effect replicates across a decade, and the 1e-5 null was saturation exactly as diagnosed (2026-09-23)
+
+D44 named the measurement: repeat D43's headline contrast at a rate where the unprotected arm has room. 3e-7 was
+chosen from M3's calibration sweep — measured on a different set than the one that suggested the effect, which is
+the D31 rule — where the unprotected arm sits near 12.5%. Both outcomes were pre-committed in the config headers
+before the run.
+
+**It replicates, and more strongly than at 1e-6.** Unprotected arms, matched exposure, 56 paired samples:
+
+| rate | flips/trial | unpruned | pruned 25% | absolute difference | risk ratio | p | discordant |
+|---|---|---|---|---|---|---|---|
+| **3e-7** | 162 | **0.1116** | **0.2232** | **+0.1116 [+0.0536, +0.1719]** | **2.000** | **4.6e-04** | 43 |
+| **1e-6** | 541 | 0.3125 | 0.4018 | +0.0893 [+0.0223, +0.1562] | 1.286 | 0.016 | 42 |
+| 1e-5 | 5405 | 0.9420 | 0.9621 | +0.0201 [−0.0022, +0.0446] | 1.021 | 0.097 | 14 |
+
+- **Two rates, a decade apart, both meeting the pre-registered rule** (p < 0.05 *and* a CI excluding zero). The
+  concentration effect is no longer a single-rate result.
+- **The rate choice validated itself.** The unpruned arm landed at 0.1116 against the 12.5% the calibration sweep
+  predicted, which is the check that makes the choice a prediction rather than a search for a friendly rate.
+- **The 1e-5 null is explained, not excused.** The risk ratio falls monotonically — **2.00 → 1.29 → 1.02** — as
+  the unpruned base rate rises from 11% to 31% to 94%. That is what saturation does: once nearly every answer is
+  destroyed in both arms, no multiplicative difference can express itself as an absolute one. D44 diagnosed this
+  from the levels before this run existed, and the diagnosis held.
+- **The composition control passes at every rate.** Payload-metadata share of flips 6.1988% → 6.2654% at 3e-7,
+  p = 0.69 (and 6.1192% → 6.1468%, p = 0.58 at 1e-6), so the effect is not a shift in *where* flips land. As at
+   1e-6, this is structural: `group_token` group count scales with the token count exactly as the code count does.
+- **The direction is the same at all three rates**, including the saturated one.
+
+### What now stands, and what still does not
+
+**Stands:** a fault landing in a pruned cache is about **twice** as likely to cost an answer at low exposure, and
+the mechanism is that query-aware span retention keeps exactly the answer-bearing spans (`kept_target` = 1.000 in
+every pruned arm here), so every surviving scale governs a group the answer depends on. Protection is **not
+separable from retention** on an unprotected cache, replicated across a decade.
+
+**Still does not:** whether the *allocator* needs a retention term. Under the metadata guard the effect remains
+unmeasurable at both rates tested with an inconsistent sign (D44), and the constants are unchanged. The natural
+next measurement is the guard contrast at **3e-7** — the rate that just proved to be where this effect is
+visible — rather than at 1e-5, where D44 looked because that is where the guard breaks. Those are two different
+questions and conflating them is the error D44 recorded.
+
+### Scope
+
+One model, one probe, one retention ratio (24.67%), one quantization configuration, one scorer. Whether the risk
+ratio scales with the retention ratio is unmeasured, and a query-*agnostic* scorer should concentrate risk less
+because it keeps fewer answer tokens — that is a prediction the project has not tested.

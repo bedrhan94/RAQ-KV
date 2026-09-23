@@ -87,12 +87,14 @@ def _protection(ber: float) -> tuple[str | None, str, str]:
     because the thirteen of sixteen float16 bits it cannot see accumulate. Uniform data ECC at 14% is never
     chosen: arm B matched arm G at 1e-6 and nothing has separated them since.
 
-    **This lookup takes no retention argument, and D43 showed that is wrong as a mechanism.** At equal fault
-    *exposure* a cache pruned to 25% fails more than an unpruned one (0.4018 against 0.3125, +0.0893
-    [+0.0223, +0.1562], p = 0.016): query-aware span retention keeps exactly the answer-bearing spans, so every
-    scale that survives pruning governs a group the answer depends on, where most groups in a full cache govern
-    filler. Protection is therefore **not separable from retention**, which is the one thing the brief's
-    multiplicative form got right.
+    **This lookup takes no retention argument, and D43/D45 showed that is wrong as a mechanism.** At equal fault
+    *exposure* a cache pruned to 25% fails about twice as often at low exposure -- 0.2232 against 0.1116 at 3e-7
+    (+0.1116 [+0.0536, +0.1719], p = 4.6e-04) and 0.4018 against 0.3125 at 1e-6 (+0.0893 [+0.0223, +0.1562],
+    p = 0.016), a decade apart and both meeting the pre-registered rule. Query-aware span retention keeps exactly
+    the answer-bearing spans, so every scale that survives pruning governs a group the answer depends on, where
+    most groups in a full cache govern filler. Protection is therefore **not separable from retention**, which is
+    the one thing the brief's multiplicative form got right. (The risk ratio falls 2.00 -> 1.29 -> 1.02 as the
+    unprotected base rate rises 11% -> 31% -> 94%, so the 1e-5 null is saturation rather than absence.)
 
     **The constants below are unchanged, and whether they should be is open in both directions.** D43 asserted
     here that the lookup is "unconservative for aggressively pruned caches", on the strength of a 1e-6 contrast

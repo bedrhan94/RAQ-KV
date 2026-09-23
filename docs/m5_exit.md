@@ -31,10 +31,11 @@ would multiply are **anti-correlated** (Q48: ρ = −0.377), so their product is
 retention decision is over **spans, all-or-nothing across layers** (D32, D34), so half the cells a per-(layer,
 token) score would rank do not exist as choices.
 
-**But D43 showed the brief was right about one thing the staged design denies: the axes interact.** At equal
-fault exposure, a cache pruned to 25% fails more than an unpruned one, because query-aware span retention keeps
-exactly the answer-bearing spans and every surviving scale governs a group the answer needs. So protection is
-not separable from retention — just not through a product of per-cell scores.
+**But D43 showed the brief was right about one thing the staged design denies: the axes interact — and D45
+replicated it across a decade.** At equal fault exposure a cache pruned to 25% fails about **twice** as often at
+low exposure (0.2232 against 0.1116 at 3e-7, p = 4.6e-04; 0.4018 against 0.3125 at 1e-6, p = 0.016), because
+query-aware span retention keeps exactly the answer-bearing spans and every surviving scale governs a group the
+answer needs. So protection is not separable from retention — just not through a product of per-cell scores.
 
 **The allocator's constants were deliberately left alone, and D44 showed that was the right call for a reason
 D43 had wrong.** D43 justified it with a 4-discordant-sample contrast and then overstated the conclusion,

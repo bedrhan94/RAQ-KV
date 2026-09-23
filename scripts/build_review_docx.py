@@ -1,7 +1,7 @@
 """Builds the RAQ-KV technical review document (.docx) for an external reviewer.
 
 Regenerate with:  python scripts/build_review_docx.py
-Content is assembled from docs/decisions.md (D1-D44), docs/claims.md and the measured campaign outputs; the
+Content is assembled from docs/decisions.md (D1-D45), docs/claims.md and the measured campaign outputs; the
 numbers here are transcribed from those records, and the record is the source of truth if they ever disagree.
 """
 
@@ -232,7 +232,7 @@ def build(doc: Document) -> None:
     para(doc, "Technical review dossier - complete record of methods, formulas, measurements and corrections",
          italic=True, colour=GREY, space_after=2)
     para(doc, "Model: Qwen3-1.7B @ 70d244cc | Hardware: RTX 5060 Ti | "
-              "333 automated tests passing (7 GPU-gated, deselected) | decision records D1-D44",
+              "333 automated tests passing (7 GPU-gated, deselected) | decision records D1-D45",
          size=9, colour=GREY)
     rule(doc)
 
@@ -726,17 +726,29 @@ def build(doc: Document) -> None:
                 "Under the guard the effect is not measurable at either rate and the sign is inconsistent, so a "
                 "retention term is open in both directions - that wording is withdrawn and the docstring now "
                 "says so, pinned by a test.")])
-    rich(doc, [("The headline is still a single-rate result, and the attempt to replicate it failed on "
-                "saturation. ", "b"),
-               ("The direct test - unprotected, matched exposure, at 1e-5 - gives +0.0201 [-0.0022, +0.0446], "
-                "p = 0.097 on 14 discordant samples. But the levels are 0.9420 and 0.9621: unprotected at 1e-5 "
-                "destroys nearly every answer in both arms, so there is no room to measure anything. That is the "
-                "both-arms-pinned problem of section 7 arriving from the ceiling instead of the floor, and the "
-                "design error is ours - 1e-5 is where the GUARD breaks, which is a different question from where "
-                "the EFFECT is measurable. It is not evidence against the finding and is not reported as such. "
-                "3e-7 is the rate with room (the unprotected arm sits near 12% there, from a calibration sweep "
-                "measured on a different set than the one that suggested the effect), and both outcomes were "
-                "pre-committed before it was run.")])
+    rich(doc, [("The effect replicates across a decade, and the one rate that showed nothing was saturated. ",
+                "b"),
+               ("The first replication attempt, at 1e-5, gave +0.0201, p = 0.097 - but the levels were 0.9420 and "
+                "0.9621, so unprotected at 1e-5 destroys nearly every answer in both arms and nothing is "
+                "measurable. That was the both-arms-pinned problem of section 7 arriving from the ceiling instead "
+                "of the floor, and the design error was ours: 1e-5 is where the GUARD breaks, which is a "
+                "different question from where the EFFECT is visible. 3e-7 was then chosen from a calibration "
+                "sweep measured on a different set than the one that suggested the effect, with both outcomes "
+                "pre-committed in the config header, and the effect came back stronger:")])
+    code(doc, [
+        "  rate    flips   unpruned    pruned   difference                      ratio          p   discord.",
+        "  3e-7      162     0.1116    0.2232   +0.1116 [+0.0536, +0.1719]      2.000   4.6e-04   43 of 56",
+        "  1e-6      541     0.3125    0.4018   +0.0893 [+0.0223, +0.1562]      1.286   1.6e-02   42 of 56",
+        "  1e-5     5405     0.9420    0.9621   +0.0201 [-0.0022, +0.0446]      1.021   9.7e-02   14 of 56",
+    ])
+    rich(doc, [("Two rates a decade apart meet the pre-registered rule, and the risk ratio falls monotonically "
+                "as the base rate rises. ", "b"),
+               ("2.00 at an 11% base rate, 1.29 at 31%, 1.02 at 94% - which is what saturation does: once nearly "
+                "every answer is destroyed in both arms, a multiplicative difference cannot express itself as an "
+                "absolute one. The 1e-5 null was diagnosed this way from its levels before the 3e-7 run existed, "
+                "and the diagnosis held. The rate choice also checked itself: the unpruned arm landed at 0.1116 "
+                "against the 12.5% the sweep predicted. The direction is the same at all three rates, and the "
+                "composition control passes at each.")])
     rich(doc, [("The practical reading, which runs the other way. ", "b"),
                ("At the matched rate a real deployment faces, pruning still cuts absolute failure from 0.3125 "
                 "to 0.1875, and the guard still removes most of what is left. Compression and robustness do "
@@ -788,10 +800,10 @@ def build(doc: Document) -> None:
                 "the metadata guard it is not measurable at either rate tested and the sign is inconsistent. "
                 "The constants are therefore unchanged, and a reviewer should read that as unresolved rather "
                 "than as safe.")
-    bullet(doc, "Section 9.5's headline rests on a SINGLE error rate. The attempt to replicate it at 1e-5 put "
-                "both arms above 94% failure, where nothing is measurable; a third rate with room was running "
-                "when this document was generated. Until it answers, the strongest structural claim in this "
-                "project has one rate behind it.")
+    bullet(doc, "Section 9.5's effect is measured at one retention ratio (24.67%) with one scorer. Whether the "
+                "risk ratio scales with how much was pruned is unmeasured, and a query-AGNOSTIC scorer should "
+                "concentrate risk less because it keeps fewer answer tokens - a prediction this project has not "
+                "tested.")
     bullet(doc, "Only ONE pair of axes has ever been varied together. Section 9.5 crosses retention with "
                 "faults; precision has never been crossed with faults at a fixed retention, and the three-way "
                 "interaction is unmeasured. Every joint claim outside 9.5 is a claim about two axes priced "
@@ -833,7 +845,7 @@ def build(doc: Document) -> None:
                 "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
-              "(D1-D44), docs/claims.md and the run manifests in outputs/; those records are the source of "
+              "(D1-D45), docs/claims.md and the run manifests in outputs/; those records are the source of "
               "truth if they disagree with this document.", size=9, italic=True, colour=GREY)
 
 
