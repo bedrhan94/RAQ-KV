@@ -132,12 +132,25 @@ def main() -> int:
     parser.add_argument("--output-root", default="outputs")
     parser.add_argument("--arms", default=None, help="Comma-separated config names; default is every complete one")
     parser.add_argument("--compare", default=None, help="Two arm names to pair, comma-separated")
+    # D46: RAQ-Probe's `tool_arg` fact type encodes Qwen's tool-call dialect -- <tool_call> tags with
+    # "arguments" -- and Llama-3.2 emits bare JSON with "parameters", so it scores 0 of 120 while retrieving the
+    # right value every time. The scorer was deliberately NOT broadened (it would change 2 of 492 stored Qwen
+    # predictions, leaving the two families scored by different code). Instead the fact type is dropped from
+    # BOTH families, because on Llama it drops itself -- every such sample has golden_correct False -- and
+    # comparing one family on six fact types against another on five would compare different compositions.
+    parser.add_argument("--exclude-fact-types", default=None,
+                        help="Comma-separated fact types to drop before pairing, e.g. tool_arg (D46)")
     args = parser.parse_args()
 
     raw_root = resolve_output_root(args.output_root) / "raw"
     names = args.arms.split(",") if args.arms else None
     print(f"M4 report — reading {raw_root}")
     df = load(raw_root, names)
+    if args.exclude_fact_types:
+        dropped = {f.strip() for f in args.exclude_fact_types.split(",") if f.strip()}
+        before = len(df)
+        df = df[~df["fact_type"].isin(dropped)]
+        print(f"  [excluded] fact types {sorted(dropped)}: {before - len(df)} of {before} records dropped (D46)")
     if df.empty:
         print("no completed retention runs found")
         return 1

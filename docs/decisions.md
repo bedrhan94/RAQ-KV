@@ -1723,3 +1723,97 @@ scorer is kept because changing it now costs more than it buys, not because it i
 
 One alternative family. Whether other families (Mistral, Gemma) emit yet other dialects is unmeasured, but the
 mechanism — a probe encoding the convention of the model it was developed against — predicts they would.
+
+## D47 — H3 on a second model family: decisive against two baselines, partial against the third, and the verdict depends on a family size nobody pre-registered (2026-09-23)
+
+D42 recorded that D41's "H3 is supported" was an overclaim, because the plan pre-registers **two model families**
+and only one had been run. Llama-3.2-3B-Instruct was run. Its KV geometry is identical to Qwen3-1.7B's — verified
+empirically, both 57344 values per token — so the allocator's cost table transfers unchanged and only the family
+varies. Per D46, `tool_arg` is excluded from **both** families, so the two are compared on the same five fact
+types; that restriction alone changes Qwen's numbers materially and is not cosmetic.
+
+Twelve contrasts: 2 families × 2 budgets × 3 baselines. Iso-budget enforced by measurement; every baseline spends
+at or above the joint arm it is compared to. `precision_only` emits nothing at either budget on either family.
+
+| family | budget | baseline | joint | baseline | p | Holm/12 | discordant | verdict |
+|---|---|---|---|---|---|---|---|---|
+| Qwen | 1.05 | retention-only | 0.0101 | 0.0707 | 0.034 | **0.10** | 8 | **fails Holm at 12** |
+| Qwen | 1.05 | magnitude-only | 0.0101 | 0.9495 | 5.2e-22 | 5.2e-21 | 93 | meets |
+| Qwen | 1.05 | recency | 0.0101 | 0.6364 | 3.4e-15 | 2.4e-14 | 62 | meets |
+| Qwen | 2.00 | retention-only | 0.0000 | 0.0000 | 1 | 1 | **0** | **bound: both at the floor** |
+| Qwen | 2.00 | magnitude-only | 0.0000 | 0.8081 | 3.7e-19 | 3.4e-18 | 80 | meets |
+| Qwen | 2.00 | recency | 0.0000 | 0.6263 | 3.4e-15 | 2.4e-14 | 62 | meets |
+| **Llama** | 1.05 | retention-only | **0.0000** | 0.1386 | 1.8e-04 | **7.3e-04** | 14 | **meets** |
+| Llama | 1.05 | magnitude-only | 0.0000 | 1.0000 | 1.5e-23 | 1.8e-22 | 100 | meets |
+| Llama | 1.05 | recency | 0.0000 | 0.6400 | 1.2e-15 | 1.0e-14 | 64 | meets |
+| Llama | 2.00 | retention-only | 0.0000 | 0.0099 | 0.32 | 0.63 | **1** | **bound: both at the floor** |
+| Llama | 2.00 | magnitude-only | 0.0000 | 0.9900 | 2.5e-23 | 2.8e-22 | 99 | meets |
+| Llama | 2.00 | recency | 0.0000 | 0.6100 | 5.7e-15 | 2.9e-14 | 61 | meets |
+
+**9 of 12 survive Holm across the whole family of 12.**
+
+### What stands
+
+**Against magnitude-only and recency-retention: 8 of 8 contrasts, two families, two budgets, all surviving Holm
+at 12.** That is as clean as this project has produced.
+
+**On Llama the joint arm is perfect** — 0 of 101 samples fail at 1.05 bits per original token, against Qwen's 1 of
+99. The cross-family replication is not marginal on the joint policy's own performance.
+
+### What does not stand, and the part that is uncomfortable
+
+**Against retention-only — the only baseline that isolates the precision axis — the rule is met on one family at
+one budget.** Llama at 1.05 meets it decisively (Holm 7.3e-04). The other three do not:
+
+* **Qwen at 1.05 fails Holm at a family of 12** (p = 0.034 → 0.10). Within a family of 3 — one model, one budget —
+  it passes at 0.034. **The plan pre-registered "Holm-corrected p < 0.05" without defining the family**, so both
+  readings are defensible and the conservative one is taken as the headline. Recording this rather than picking
+  the favourable family size is the whole point.
+* **Both 2.00 contrasts are bounds, not wins.** The joint and retention-only arms both reach the floor (0.0000 vs
+  0.0000 on Qwen, 0 discordant; 0.0000 vs 0.0099 on Llama, 1 discordant). D30's rule applies: two arms at the
+  floor are an upper bound on the difference, never a demonstrated equality *or* a win.
+
+**So H3's pre-registered refutation rule — "beats every single-signal policy at equal bits on at least two model
+families" — is NOT met as written.** It is met against two of three baselines on both families, and against the
+third on one family at one budget. H3's status becomes **partially supported, with the unmet half named**, not
+"supported".
+
+### D46's restriction is why Qwen's numbers moved, and it moved them against us
+
+On the full six fact types Qwen's 1.05 retention-only contrast was −0.1282 at p = 2.7e-04 (D42). On the five-type
+composition it is −0.0606 at p = 0.034. Dropping `tool_arg` removed a large share of where the retention-only arm
+was failing, so the contrast that carried H3 on Qwen is substantially weaker once the two families are compared
+on the same footing. The weaker number is the honest one: the stronger one was measured on a composition the
+second family cannot be scored on.
+
+### The fourteenth withdrawal: key magnitude is an anti-signal, not "no signal"
+
+D42 concluded that key magnitude selects answer-bearing tokens **at chance**, from −0.0339 (p = 0.077) and
++0.0286 (p = 0.17) on Qwen, and explicitly argued that the opposite signs supported "no signal" over
+"anti-signal". On the five-type composition, with the second family:
+
+| arm | kept_target | chance | delta | p |
+|---|---|---|---|---|
+| Llama 1.05 | 0.0709 | 0.2467 | **−0.1759** | **1.4e-08** |
+| Llama 2.00 | 0.1645 | 0.4698 | **−0.3053** | **1.4e-12** |
+| Qwen 1.05 | 0.1984 | 0.2467 | −0.0483 | **0.013** |
+| Qwen 2.00 | 0.4388 | 0.4698 | −0.0310 | 0.73 |
+
+**All four point the same way, three of four are significant, and the "opposite signs" that justified "no signal"
+were an artefact of the composition.** Key magnitude actively selects *away* from answer-bearing tokens. On Llama
+at 1.05 it keeps 7.1% of them while retaining 24.67% of the cache, and fails **100%** of samples.
+
+**A mechanism worth naming as a hypothesis, not a result:** Qwen3 applies QK-Norm and Llama does not (D1, D15).
+Normalised keys should carry less magnitude structure to be misled by, and Qwen's effect is indeed four times
+smaller. That is consistent, untested, and exactly the kind of family difference this replication existed to
+expose.
+
+**It also closes a hope.** Magnitude is the one importance signal computable at prefill, so it was the only H3
+baseline a shared prefix cache could run (D36's open problem). It is not merely useless there — it is worse than
+random.
+
+### Scope
+
+Two families, one probe, five fact types, two budgets, one retention ratio per budget, no faults injected. The
+joint arm's perfection on Llama (0 of 101) means the 1.05 comparisons are floor-limited on the joint side too: a
+better baseline could not be distinguished from it here.

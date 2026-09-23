@@ -1,7 +1,7 @@
 """Builds the RAQ-KV technical review document (.docx) for an external reviewer.
 
 Regenerate with:  python scripts/build_review_docx.py
-Content is assembled from docs/decisions.md (D1-D45), docs/claims.md and the measured campaign outputs; the
+Content is assembled from docs/decisions.md (D1-D47), docs/claims.md and the measured campaign outputs; the
 numbers here are transcribed from those records, and the record is the source of truth if they ever disagree.
 """
 
@@ -66,6 +66,15 @@ WITHDRAWN_ROWS = [
      "baseline; the campaign had one family and had not run that arm (D42)",
      "Supported on one model family against the baselines actually run, with the unmet conditions named; the "
      "general claim is not made"],
+    ["'Key magnitude selects answer tokens at chance' (D42)",
+     "Measured on one family and six fact types. On the five the second family can be scored on, and with that "
+     "family added, all four arms point the same way and three are significant (D47)",
+     "Key magnitude is an ANTI-signal: -0.1759 (p = 1.4e-08) and -0.3053 (p = 1.4e-12) below chance on Llama"],
+    ["'H3 is supported on one family against the baselines run' (D42)",
+     "Running the second family and correcting across all twelve contrasts: the retention-only contrast meets the "
+     "rule on one family at one budget, fails Holm at 12 on another, and is a floor-bound at the other budget "
+     "(D47)",
+     "Partially supported: 8 of 8 against two baselines on both families, the third unmet as written"],
     ["'The protection lookup is unconservative for aggressively pruned caches' (D43)",
      "A conclusion drawn from 4 discordant samples at p = 0.066. Repeated at 1e-5 the contrast reversed - the "
      "pruned guarded arm beats the unpruned one, and escalating to SECDED buys nothing (D44)",
@@ -77,24 +86,30 @@ WITHDRAWN_ROWS = [
 # the prose so a reviewer can diff it against the report output rather than trusting the paragraph around it.
 # The retention-only rows are the calibrated re-runs (D42); the originals spent 2.8% and 1.45% less.
 H3_ROWS = [
-    ["joint @ 1.05 (4-bit, query-aware spans)", "24.67%", "1.0401", "1.0000", "0.0342"],
-    ["retention-only @ 1.05 (bf16, query-aware spans)", "6.76%", "1.0409 (+0.07%)", "0.9487", "0.1624"],
-    ["magnitude-only @ 1.05 (4-bit, key-norm tokens)", "24.67%", "1.0539 (+1.33%)", "0.2128", "0.9573"],
-    ["recency-retention @ 1.05 (4-bit, recency tokens)", "24.67%", "1.0539 (+1.33%)", "0.3162", "0.6923"],
-    ["joint @ 2.00 (4-bit, query-aware spans)", "46.98%", "1.9849", "1.0000", "0.0000"],
-    ["retention-only @ 2.00 (bf16, query-aware spans)", "12.71%", "1.9882 (+0.17%)", "1.0000", "0.0513"],
-    ["magnitude-only @ 2.00 (4-bit, key-norm tokens)", "46.98%", "2.0011 (+0.82%)", "0.4984", "0.8376"],
-    ["recency-retention @ 2.00 (4-bit, recency tokens)", "46.98%", "2.0011 (+0.82%)", "0.3712", "0.6838"],
-    ["precision-only, either budget", "-", "floor 2.63: infeasible", "-", "not emitted"],
+    ["joint @ 1.05", "Qwen3-1.7B", "1.0384-1.0401", "1.0000", "0.0101"],
+    ["retention-only @ 1.05 (bf16 spans)", "Qwen3-1.7B", "+0.07%", "0.9487", "0.0707"],
+    ["magnitude-only @ 1.05 (key-norm)", "Qwen3-1.7B", "+1.33%", "0.1984", "0.9495"],
+    ["recency-retention @ 1.05", "Qwen3-1.7B", "+1.33%", "0.3162", "0.6364"],
+    ["joint @ 1.05", "Llama-3.2-3B", "1.0384", "1.0000", "0.0000"],
+    ["retention-only @ 1.05 (bf16 spans)", "Llama-3.2-3B", "+0.31%", "0.9208", "0.1386"],
+    ["magnitude-only @ 1.05 (key-norm)", "Llama-3.2-3B", "+1.56%", "0.0709", "1.0000"],
+    ["recency-retention @ 1.05", "Llama-3.2-3B", "+1.56%", "0.3600", "0.6400"],
+    ["precision-only, either budget", "both", "floor 2.63: infeasible", "-", "not emitted"],
 ]
 H3_PAIRS = [
-    "                                    difference                  p         Holm     discordant",
-    "1.05  vs retention-only      -0.1282 [-0.1966, -0.0684]   2.75e-04   5.5e-04      17 of 117",
-    "1.05  vs magnitude-only      -0.9231 [-0.9658, -0.8718]   2.69e-25   1.6e-24     108 of 117",
-    "1.05  vs recency-retention   -0.6581 [-0.7436, -0.5726]   1.71e-18   5.1e-18      77 of 117",
-    "2.00  vs retention-only      -0.0513 [-0.0940, -0.0171]   1.43e-02   1.4e-02       6 of 117",
-    "2.00  vs magnitude-only      -0.8376 [-0.8974, -0.7692]   4.18e-23   2.1e-22      98 of 117",
-    "2.00  vs recency-retention   -0.6838 [-0.7607, -0.5983]   3.74e-19   1.5e-18      80 of 117",
+    "fam    budget baseline          joint    base         p   Holm/12  disc  verdict",
+    "Qwen   1.05   retention-only   0.0101  0.0707     0.034      0.10     8  FAILS Holm at 12",
+    "Qwen   1.05   magnitude-only   0.0101  0.9495   5.2e-22   5.2e-21    93  meets",
+    "Qwen   1.05   recency          0.0101  0.6364   3.4e-15   2.4e-14    62  meets",
+    "Qwen   2.00   retention-only   0.0000  0.0000         1         1     0  BOUND, both at floor",
+    "Qwen   2.00   magnitude-only   0.0000  0.8081   3.7e-19   3.4e-18    80  meets",
+    "Qwen   2.00   recency          0.0000  0.6263   3.4e-15   2.4e-14    62  meets",
+    "Llama  1.05   retention-only   0.0000  0.1386   1.8e-04   7.3e-04    14  meets",
+    "Llama  1.05   magnitude-only   0.0000  1.0000   1.5e-23   1.8e-22   100  meets",
+    "Llama  1.05   recency          0.0000  0.6400   1.2e-15   1.0e-14    64  meets",
+    "Llama  2.00   retention-only   0.0000  0.0099      0.32      0.63     1  BOUND, both at floor",
+    "Llama  2.00   magnitude-only   0.0000  0.9900   2.5e-23   2.8e-22    99  meets",
+    "Llama  2.00   recency          0.0000  0.6100   5.7e-15   2.9e-14    61  meets",
 ]
 
 
@@ -232,7 +247,7 @@ def build(doc: Document) -> None:
     para(doc, "Technical review dossier - complete record of methods, formulas, measurements and corrections",
          italic=True, colour=GREY, space_after=2)
     para(doc, "Model: Qwen3-1.7B @ 70d244cc | Hardware: RTX 5060 Ti | "
-              "333 automated tests passing (7 GPU-gated, deselected) | decision records D1-D45",
+              "346 automated tests passing (7 GPU-gated, deselected) | decision records D1-D47",
          size=9, colour=GREY)
     rule(doc)
 
@@ -592,34 +607,56 @@ def build(doc: Document) -> None:
                 "are now enumerated in tests. H3's configs are also generated by the allocator rather than "
                 "written by hand, so a gap between what the policy decides and what the experiment runs cannot "
                 "hide.")])
-    doc.add_heading("9.4 H3: the joint policy against each single-signal policy at equal budget", level=2)
+    doc.add_heading("9.4 H3: the joint policy against each single-signal policy, on two model families", level=2)
     para(doc, "Six arms at two budgets, every config emitted by the allocator rather than written by hand. "
               "Precision-only emits nothing at either budget: quantization alone bottoms out at about 2.63 bits "
               "per original token, so the policy the quantization literature uses does not reach these budgets "
               "at all. That is H3's first result and it is an absence, not a number.")
-    table(doc, ["Arm (117 paired samples)", "Retention", "Measured bits / orig. token", "Kept target",
+    table(doc, ["Arm @ 1.05 bits/original token", "Family", "Bits vs joint", "Kept target",
                 "Task failure"], H3_ROWS)
-    rich(doc, [("Paired against the joint arm, task failure (Wilcoxon, bootstrap CI over samples, Holm across "
-                "the family of four):", "b")])
+    rich(doc, [("All twelve contrasts, both families, task failure (Wilcoxon, bootstrap CI over samples, Holm "
+                "across the whole family of twelve):", "b")])
     code(doc, H3_PAIRS)
-    rich(doc, [("All six contrasts survive Holm correction - and H3 still does not meet its own "
-                "pre-registration. ", "b"),
-               ("The plan requires the joint policy to beat every single-signal policy on AT LEAST TWO model "
-                "families. This is one. So the honest statement is: supported on Qwen3-1.7B against the "
-                "baselines actually run, with the general claim not made. That gap was found by re-reading the "
-                "pre-registration after the result was written up, not by a control arm, and it is the twelfth "
-                "row of section 10.")])
-    rich(doc, [("The baseline the plan called 'the strongest single-signal policy' is the weakest thing "
-                "measured. ", "b"),
-               ("Magnitude-only retention fails 95.7% at 1.05 bits - worse than recency, which was supposed to "
-                "be the trivial baseline. It was also missing from the first campaign entirely. Key magnitude "
-                "selects answer-bearing tokens at chance: against the share a uniformly random selection of "
-                "the same size would keep, it lands at -0.0339 (p = 0.077) at 1.05 and +0.0286 (p = 0.17) at "
-                "2.00 - indistinguishable at both, with the two trends pointing opposite ways, which supports "
-                "'no signal' over 'anti-signal'. This was tested rather than eyeballed; the 0.2128-against-"
-                "0.2467 gap looks like a below-chance result and is not one. It matters beyond H3, because "
-                "magnitude is computable at prefill and is therefore the only baseline here a shared prefix "
-                "cache could run.")])
+    rich(doc, [("Nine of twelve survive. Against magnitude-only and recency-retention it is 8 of 8 - two "
+                "families, two budgets - which is the cleanest result in this project. ", "b"),
+               ("On Llama the joint arm is perfect: 0 of 101 samples fail at 1.05 bits per original token, "
+                "against Qwen's 1 of 99. The cross-family replication is not marginal on the joint policy's own "
+                "performance.")])
+    rich(doc, [("But the pre-registered rule is NOT met as written, and that is the finding to take away from "
+                "this section. ", "b"),
+               ("The rule says the joint policy must beat EVERY single-signal policy on at least two families. "
+                "Against retention-only - the only baseline that isolates the precision axis, since both arms "
+                "use query-aware span retention - it is met on one family at one budget. Llama at 1.05 meets it "
+                "decisively (Holm 7.3e-04). Qwen at 1.05 gives p = 0.034, which fails Holm at a family of "
+                "twelve and passes at a family of three; the plan pre-registered 'Holm-corrected' without "
+                "defining the family, so both readings are defensible and the conservative one is the headline. "
+                "Recording that rather than choosing the favourable family size is the point. And both 2.00 "
+                "contrasts are bounds, not wins: joint and retention-only both reach the floor (0.0000 against "
+                "0.0000 on Qwen with 0 discordant samples, 0.0000 against 0.0099 on Llama with 1), which by the "
+                "rule of section 4 is an upper bound on the difference and never a win.")])
+    rich(doc, [("Putting the two families on the same footing moved Qwen's numbers AGAINST us. ", "b"),
+               ("Section 8's probe has a tool-calling fact type whose gold format encodes Qwen's convention - "
+                "<tool_call> tags with 'arguments' - and Llama emits bare JSON with 'parameters', retrieving the "
+                "right value every time and scoring 0 of 120. The scorer was deliberately not broadened: the fix "
+                "was written and tested against all 492 stored Qwen predictions first, 2 changed, so it is not a "
+                "safe superset and adopting it would leave the families scored by different code. The fact type "
+                "is dropped from both instead - and on the remaining five, Qwen's 1.05 retention-only contrast "
+                "falls from -0.1282 (p = 2.7e-04) to -0.0606 (p = 0.034). The weaker number is the honest one, "
+                "because the stronger was measured on a composition the second family cannot be scored on.")])
+    rich(doc, [("The baseline the plan called 'the strongest single-signal policy' is not merely useless - it is "
+                "worse than random. ", "b"),
+               ("Magnitude-only fails 100% of samples on Llama at 1.05 bits and 94.95% on Qwen, worse than "
+                "recency, which was supposed to be the trivial baseline. Against the share a uniformly random "
+                "selection of the same size would keep, key magnitude lands at -0.1759 (p = 1.4e-08) and "
+                "-0.3053 (p = 1.4e-12) on Llama, and -0.0483 (p = 0.013) and -0.0310 (p = 0.73) on Qwen: all "
+                "four in the same direction, three of four significant. An earlier reading of the Qwen arms "
+                "alone called this 'at chance' and argued that opposite signs favoured 'no signal' over "
+                "'anti-signal' - those opposite signs were an artefact of the composition, and that reading is "
+                "withdrawn in section 10. A mechanism worth naming as a hypothesis rather than a result: Qwen3 "
+                "applies QK-Norm and Llama does not, so normalised keys should carry less magnitude structure to "
+                "be misled by - and Qwen's effect is indeed about four times smaller. It also closes a hope, "
+                "because magnitude is the one signal computable at prefill and therefore the only baseline here "
+                "a shared prefix cache could have run.")])
     rich(doc, [("The iso-budget rule was broken on first measurement, and the fix was to re-run rather than to "
                 "argue. ", "b"),
                ("The first campaign had the joint arm spending 2.8% and 1.45% MORE than retention-only, outside "
@@ -772,8 +809,12 @@ def build(doc: Document) -> None:
 
     # ---------------------------------------------------------------- 11
     doc.add_heading("11. Limitations - stated, not discovered by the reviewer", level=1)
-    bullet(doc, "One model. Qwen3-1.7B only. Every claim in this document is single-model. Llama-3.2-3B has "
-                "identical KV geometry and is the planned replication; it has not been run.", bold=False)
+    bullet(doc, "Two models for H3 only. Llama-3.2-3B (identical KV geometry, verified) was run for section "
+                "9.4; every other claim in this document - sections 6, 7, 8, 9.1 to 9.3 and 9.5 - is still "
+                "single-model on Qwen3-1.7B.", bold=False)
+    bullet(doc, "The 1.05-bit comparisons are floor-limited on the joint side. The joint arm fails 0 of 101 "
+                "samples on Llama and 1 of 99 on Qwen, so a baseline better than retention-only could not be "
+                "distinguished from it here, and neither could a better joint policy.")
     bullet(doc, "One synthetic probe for the task metric. RAQ-Probe's facts are single sentences by "
                 "construction, which is exactly the structure the span finding (H4) exploits. The span result "
                 "must be treated as probe-dependent until it replicates on natural long-context tasks.")
@@ -845,7 +886,7 @@ def build(doc: Document) -> None:
                 "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
-              "(D1-D45), docs/claims.md and the run manifests in outputs/; those records are the source of "
+              "(D1-D47), docs/claims.md and the run manifests in outputs/; those records are the source of "
               "truth if they disagree with this document.", size=9, italic=True, colour=GREY)
 
 
