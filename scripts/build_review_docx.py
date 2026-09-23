@@ -1,7 +1,7 @@
 """Builds the RAQ-KV technical review document (.docx) for an external reviewer.
 
 Regenerate with:  python scripts/build_review_docx.py
-Content is assembled from docs/decisions.md (D1-D48), docs/claims.md and the measured campaign outputs; the
+Content is assembled from docs/decisions.md (D1-D49), docs/claims.md and the measured campaign outputs; the
 numbers here are transcribed from those records, and the record is the source of truth if they ever disagree.
 """
 
@@ -254,7 +254,7 @@ def build(doc: Document) -> None:
     para(doc, "Technical review dossier - complete record of methods, formulas, measurements and corrections",
          italic=True, colour=GREY, space_after=2)
     para(doc, "Model: Qwen3-1.7B @ 70d244cc | Hardware: RTX 5060 Ti | "
-              "346 automated tests passing (7 GPU-gated, deselected) | decision records D1-D48",
+              "348 automated tests passing (7 GPU-gated, deselected) | decision records D1-D49",
          size=9, colour=GREY)
     rule(doc)
 
@@ -802,6 +802,51 @@ def build(doc: Document) -> None:
                 "to 0.1875, and the guard still removes most of what is left. Compression and robustness do "
                 "pull the same way in practice - just not for the reason the staged design assumed.")])
 
+    doc.add_heading("9.6 Crossing the other pair: does precision change what a fault costs?", level=2)
+    rich(doc, [("Section 9.5 crossed retention with faults. This crosses precision with faults, which was the "
+                "last untested pair. ", "b"),
+               ("Four arms, full retention, unprotected, at a matched exposure of 558 flips per trial - the rate "
+                "a 4-bit block-128 cache takes at BER 1e-6, expressed per ORIGINAL token so it is comparable "
+                "across precisions and across the probe's eightfold context range. A flat flip count would give "
+                "a 512-token and a 4096-token sample the same exposure.")])
+    rich(doc, [("The confound is real here, unlike in 9.5, and the design brackets it rather than matching it. ",
+                "b"),
+               ("fp16 scales cost the same at any bit width, so metadata's share of storage RISES as precision "
+                "falls - and metadata is at least 1543x more damaging per bit (section 7). No group size makes "
+                "2-bit's composition match 4-bit block-128's, so two extra 4-bit arms vary composition at FIXED "
+                "precision and the 2-bit arm's share falls between them.")])
+    table(doc, ["Arm (matched 558 flips/trial)", "Metadata share of flips", "Task failure", "Clean accuracy"], [
+        ["4-bit block-128 (reference, reused from 9.5)", "6.10%", "0.3277", "0.9833"],
+        ["4-bit block-64", "8.88%", "0.4426", "0.9667"],
+        ["2-bit block-128", "11.46%", "0.6655", "0.6333"],
+        ["4-bit block-32", "13.50%", "0.5574", "0.9833"],
+    ])
+    rich(doc, [("The model-free half, which is what carries the claim: ", "b"),
+               ("the 2-bit arm sits at 11.46% metadata share and fails 0.6655, while 4-bit block-32 sits at "
+                "13.50% - a WORSE composition - and fails 0.5574. More metadata in the line of fire, less "
+                "damage. Composition alone cannot explain the 2-bit arm's failure. That is an ordering "
+                "violation, not an estimate. All three contrasts against the reference meet the rule: 2-bit "
+                "+0.3378 [+0.2770, +0.3986] at p = 2.1e-07.")])
+    rich(doc, [("The estimated half, reported as an estimate: ", "b"),
+               ("among the three 4-bit arms failure rises with metadata share at 0.0304 per percentage point "
+                "(r = 0.9897 - on three points, which is not evidence of linearity). Interpolating to 11.46% "
+                "predicts 0.5024 against the observed 0.6655, so of the 0.3378 gap roughly 52% is compositional "
+                "and 48% is precision proper.")])
+    rich(doc, [("The sample selection runs AGAINST the effect, which makes it conservative. ", "b"),
+               ("The shared set is 37 of 60, down from 56 in section 9.5, because the 2-bit arm answers only "
+                "63.3% of samples correctly BEFORE any faults - it loses 22 of the reference arm's 59. That is "
+                "section 6.6's finding reproduced: 2-bit destroys the task on its own. So the fault comparison "
+                "runs on the subset 2-bit handles best, and the effect survives it.")])
+    rich(doc, [("Both axis pairs involving faults now refute separability - and they are not equally urgent. ",
+                "b"),
+               ("The allocator's staged design is wrong in mechanism on two of its three stages. It is kept "
+                "because at the matched rates a deployment faces the practical orderings still hold, and because "
+                "the 4-bit floor of section 9.1 already fences the precision stage off from the regime where "
+                "this interaction bites - a floor set for a completely unrelated reason. The retention stage has "
+                "no such floor: it prunes to 16% and below, which is exactly where 9.5's effect lives. The "
+                "three-way interaction is unmeasured and no claim here rests on it. Also not measured: the "
+                "matched-RATE precision comparison, where a 2-bit cache takes about 296 flips instead of 558.")])
+
     doc.add_page_break()
 
     # ---------------------------------------------------------------- 10
@@ -857,10 +902,12 @@ def build(doc: Document) -> None:
                 "risk ratio scales with how much was pruned is unmeasured, and a query-AGNOSTIC scorer should "
                 "concentrate risk less because it keeps fewer answer tokens - a prediction this project has not "
                 "tested.")
-    bullet(doc, "Only ONE pair of axes has ever been varied together. Section 9.5 crosses retention with "
-                "faults; precision has never been crossed with faults at a fixed retention, and the three-way "
-                "interaction is unmeasured. Every joint claim outside 9.5 is a claim about two axes priced "
-                "independently.")
+    bullet(doc, "The THREE-WAY interaction is unmeasured. Sections 9.5 and 9.6 cross retention with faults and "
+                "precision with faults, and both refute separability; no experiment varies all three at once, so "
+                "any claim about the full joint space rests on two pairwise results and an assumption.")
+    bullet(doc, "9.6's matched-RATE comparison was not run. At BER 1e-6 over its own storage a 2-bit cache takes "
+                "about 296 flips rather than 558, so the deployment-condition picture for precision does not "
+                "follow from the matched-exposure result. The machinery makes it one config; it was not run.")
     bullet(doc, "Single-seed for most retention arms. The retention task is deterministic greedy decoding, so "
                 "the seed affects sample selection rather than the measurement, but multi-seed replication of "
                 "the M4 and M5 headline arms has not been done.")
@@ -898,7 +945,7 @@ def build(doc: Document) -> None:
                 "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
-              "(D1-D48), docs/claims.md and the run manifests in outputs/; those records are the source of "
+              "(D1-D49), docs/claims.md and the run manifests in outputs/; those records are the source of "
               "truth if they disagree with this document.", size=9, italic=True, colour=GREY)
 
 

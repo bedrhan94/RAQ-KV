@@ -1,0 +1,38 @@
+# Row 8 of docs/m5_exit.md: precision x faults, the last axis pair this project has never crossed.
+#
+# D43/D45 crossed retention x faults and refuted separability: at matched exposure a pruned cache fails
+# ~2x as often, because query-aware retention keeps exactly the spans the answer needs. The allocator's
+# PRECISION stage rests on the same untested independence -- its ladder picks a bit width with no reference
+# to the fault rate.
+#
+# Exposure is matched per ORIGINAL token (n_flips_per_token 0.24395), which is the rate a 4-bit g128 cache
+# takes at BER 1e-6. Without that, a 2-bit cache stores half the bits, takes half the flips at a matched
+# rate, and 'lower precision is safer' is exposure arithmetic -- the trap D43 fell into and named.
+#
+# THE CONFOUND, AND WHY THIS ARM EXISTS. Unlike pruning, changing precision DOES change composition: fp16
+# scales cost the same at any bit width, so metadata's share of storage rises as precision falls --
+#   4-bit g128  6.030%   4-bit g64  8.688%   2-bit g128 11.373%   4-bit g32 13.577%
+# and metadata is at least 1543x more damaging per bit (D25/D28). No group size makes 2-bit's composition
+# match 4-bit g128's, so matching was abandoned for BRACKETING: 2-bit g128's 11.373% sits between the two
+# 4-bit arms, which vary composition at FIXED precision. If 4-bit g32 (13.577%, a worse composition than
+# the 2-bit arm) is no worse than 4-bit g128, composition is not driving the effect and what remains is
+# precision. If it is worse, the decomposition says how much of the 2-bit gap is compositional.
+#
+# This arm: 4-bit group 32, metadata share 13.577%.
+#
+# Reference arm is the EXISTING m6_fr_unpruned_unprot (4-bit g128, BER 1e-6, 504 flips at the probe mean),
+# which is numerically this same exposure by construction -- so it is reused rather than re-run.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m9_pf_4bit_g32
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 32}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 60
+  n_flips_per_token: 0.24395
+  n_trials: 8
+  n_control: 1
+seed: 0

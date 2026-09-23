@@ -1875,3 +1875,76 @@ could not be distinguished from it here, and neither could a slightly worse one.
 *does* break needs a budget below 0.70 — the allocator holds 4-bit down to its D40 floor and buys tokens, so
 0.55 gives 12.9% retention and 0.45 about 10.6%. Two families, one probe, five fact types, three budgets, no
 faults injected; the fault interaction is D43/D45's separate result and has not been crossed with this one.
+
+## D49 — Precision × faults: lower precision costs more per flip, and about half of that is composition rather than precision (2026-09-23)
+
+Row 8 of `docs/m5_exit.md`, and the last axis pair this project had never crossed. D43/D45 crossed retention ×
+faults and refuted separability. The allocator's **precision** stage rests on the same untested independence: its
+ladder picks a bit width with no reference to the fault rate.
+
+Four arms, full retention, unprotected, **matched exposure of 558 flips per trial** via `n_flips_per_token`
+= 0.24395 — the rate a 4-bit g128 cache takes at BER 1e-6. Matching per *original token* is what makes this
+comparable across precisions and across the probe's eightfold context range; a flat `n_flips` would give a
+512-token and a 4096-token sample the same exposure, the bug D43 nearly shipped one axis over.
+
+### The confound is real this time, and the design brackets it instead of matching it
+
+Unlike pruning, changing precision **does** change composition: fp16 scales cost the same at any bit width, so
+metadata's share of storage rises as precision falls — and metadata is at least 1543× more damaging per bit
+(D25/D28). No group size makes 2-bit's composition match 4-bit g128's, so matching was abandoned for
+**bracketing**: two extra 4-bit arms vary composition at *fixed* precision, and the 2-bit arm's share falls
+between them.
+
+| arm | stored | metadata share of flips | task failure | clean accuracy |
+|---|---|---|---|---|
+| 4-bit g128 (reference, reused from D43) | 558.2 Mbit | 6.10% | 0.3277 | 0.9833 |
+| 4-bit g64 | 574.5 Mbit | 8.88% | 0.4426 | 0.9667 |
+| **2-bit g128** | 295.9 Mbit | **11.46%** | **0.6655** | **0.6333** |
+| 4-bit g32 | 607.2 Mbit | 13.50% | 0.5574 | 0.9833 |
+
+All three contrasts against the reference meet the pre-registered rule: 2-bit +0.3378 [+0.2770, +0.3986]
+(p = 2.1e-07, 35 of 37 discordant); g64 +0.1149 [+0.0541, +0.1723] (p = 0.0019, 29); g32 +0.2297
+[+0.1622, +0.2973] (p = 5.4e-06, 32).
+
+### The decomposition, and the part of it that needs no model
+
+**Model-free, and this is the solid half:** the 2-bit arm sits at **11.46%** metadata share and fails **0.6655**,
+while 4-bit g32 sits at **13.50%** — a *worse* composition — and fails **0.5574**. More metadata exposure, less
+damage. **Composition alone cannot explain the 2-bit arm's failure**, because a fixed-precision arm with more
+metadata in the line of fire does better. That is an ordering violation, not an estimate.
+
+**With a model, and this half is an estimate:** among the three 4-bit arms, failure rises with metadata share of
+flips at 0.0304 per percentage point (r = 0.9897 — *on three points*, which is not evidence of linearity).
+Interpolating to the 2-bit arm's 11.46% predicts 0.5024 against the observed 0.6655, so of the +0.3378 total gap
+roughly **52% is compositional and 48% is precision proper**. The split is a three-point interpolation and is
+reported as such; the ordering violation above is what carries the claim.
+
+### The selection runs against the effect, which makes it conservative
+
+The shared set is **37 of 60**, down from 56 in D43, because the 2-bit arm answers only **0.6333** of samples
+correctly *before any faults* — it loses 22 of the reference arm's 59. That is D16 reproduced: 2-bit destroys the
+task on its own. So the fault comparison is conditioned on the subset 2-bit can handle, i.e. its easiest samples,
+and it still fails 0.6655 under matched exposure. The conditioning flatters the 2-bit arm and the effect survives
+it.
+
+### What this means for the allocator — and why it is less urgent than D43's
+
+**The structural finding is the same shape as D43's: the reliability tax is not flat in precision either.** A
+flip in a lower-precision cache costs more, partly because there is proportionally more metadata to hit and
+partly because each surviving code carries more of the value.
+
+**But unlike the retention case, the allocator is already fenced off from this regime.** `MIN_BITS = 4` (D40) was
+set for a completely different reason — the iso-budget frontier has an interior optimum and 2-bit loses to 4-bit
+at equal budget — and it happens to keep the allocator out of the precision range where this interaction bites.
+The retention stage has no equivalent floor: it prunes to 16% and below, which is exactly where D43's
+concentration effect lives. So the two structural gaps are not equally live, and saying otherwise would overstate
+this one.
+
+**What is not measured:** the matched-*rate* comparison. At BER 1e-6 over its own storage a 2-bit cache takes ~296
+flips rather than 558, so the deployment-condition picture needs its own arm and does not follow from this one.
+The `ber_basis`/`n_flips_per_token` machinery makes it one config, but it was not run here.
+
+### Scope
+
+One model, one probe, one rate, full retention only, three precision/group configurations. The 37-sample
+denominator is small, and it is small for a reason that is itself a finding.

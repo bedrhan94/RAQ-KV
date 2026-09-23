@@ -1,13 +1,17 @@
 # M5 exit checklist — joint allocation
 
-**Status: M5 NOT CLOSED as of 2026-09-23 — seven of eight.** Row 7 closed (D48): at 0.70 bits per original
+**Status: M5 CLOSED on 2026-09-23.** All eight criteria met. Row 7 closed with D48 — at 0.70 bits per original
 token the joint policy beats every single-signal policy on both model families, all six contrasts surviving Holm
-across a family of eighteen. D47's partial verdict was diagnosed as a floor artefact and the diagnosis implied
-the fix — a tighter budget, where the baselines have room to fail.
+across a family of eighteen; D47's partial verdict was diagnosed as a floor artefact and the diagnosis implied
+the fix. Row 8 closed with D49 — precision × faults crossed at matched exposure, and the reliability tax is not
+flat in precision either.
 
-**Row 8 is the only one left: precision × faults at fixed retention has never been crossed.** Retention × faults
-was crossed in D43/D45 and refuted separability, so the allocator's precision stage rests on the same kind of
-untested independence assumption its protection stage turned out to violate. That needs runs, not analysis.
+**What M5 closing does NOT mean.** Both axis *pairs* involving faults are now crossed and **both refuted
+separability**, so the allocator's staged design is wrong in mechanism on two of its three stages. It is retained
+because (a) at the matched rates a deployment faces, the practical orderings still hold, and (b) `MIN_BITS = 4`
+already fences the precision stage off from the regime where D49's interaction bites — a floor set in D40 for an
+unrelated reason. The retention stage has no such floor and prunes into exactly the regime where D43's effect
+lives. The **three-way** interaction is unmeasured, and no claim here rests on it.
 
 Headline: **the joint point costs 1.054 bits per original token — 15.2× compression — and fails 0.85% of the
 probe's questions.** A faithful KIVI at its own published configuration costs 4.331 and fails 5.13%. Every
@@ -25,7 +29,7 @@ Criteria, from `docs/m4_m5_plan.md` §M5. M5 closes when every row is ✅ with e
 | 5 | Configs **emitted by the allocator**, not written by hand | ✅ | `scripts/emit_allocation_configs.py` generates each arm from the allocator's own `Allocation` object, carrying its rationale into the config header. A gap between what the policy decides and what the experiment runs therefore cannot hide in a YAML file — which is the thing H3 is actually testing |
 | 6 | Infeasibility reported, never papered over (plan §44) | ✅ | `single_signal("precision_only", …)` returns `None` below ~2.63 bits per original token rather than overspending and calling the result a comparison. H3's first answer is an **absence**: the policy the quantization literature uses does not exist at either budget. Separately, D42: the allocator attached its metadata guard to an unquantized policy and the schema refused it — an unquantized cache has no metadata to guard, so a retention-only policy is unprotectable by the cheapest mechanism this project has |
 | 7 | **H3 on at least two model families**, else refuted | ✅ **MET at 0.70 bits (D48)** | Eighteen contrasts, 2 families × 3 budgets × 3 baselines; 15 survive Holm across 18. **At 0.70 bits per original token all six contrasts meet the rule on both families** — retention-only at Holm 2.3e-05 (Qwen) and 4.3e-07 (Llama), magnitude-only and recency at 1e-14 or below. 22.9× compression, 0 of 101 failures on Llama and 1 of 99 on Qwen. D47's partial verdict was a floor artefact: the joint arm is essentially lossless at 1.05 and 2.00, so those retention-only contrasts are bounds with no room, not failures to win. The advantage grows monotonically as the budget tightens, which is what D37/D38's two-regime result predicts |
-| 8 | Every axis **pair** crossed, not just priced independently | ❌ **NOT MET** | D43 crossed retention × faults and refuted separability (+0.0893 at matched exposure, p = 0.016). **Precision × faults at fixed retention has never been run**, and neither has the three-way interaction. So the allocator's *precision* stage rests on the same kind of untested independence assumption that its protection stage turned out to violate |
+| 8 | Every axis **pair** crossed, not just priced independently | ✅ **done (D49)** | Precision × faults run at matched exposure (558 flips/trial via `n_flips_per_token`, the rate a 4-bit g128 cache takes at BER 1e-6). **The reliability tax is not flat in precision either:** 2-bit g128 fails 0.6655 against 4-bit g128's 0.3277, +0.3378 [+0.2770, +0.3986], p = 2.1e-07. Composition is a real confound here (fp16 scales cost the same at any bit width, so metadata's share rises as precision falls) and the design **brackets** it with two fixed-precision arms rather than matching it: 2-bit at 11.46% metadata fails **more** than 4-bit g32 at 13.50%, an ordering violation that rules out a purely compositional explanation without any model. A three-point interpolation splits the gap ~52% composition / 48% precision, reported as an estimate. Retention × faults was D43/D45; the **three-way** interaction remains unmeasured |
 
 ## What M5 learned that changed the allocator's shape
 

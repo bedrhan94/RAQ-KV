@@ -781,7 +781,11 @@ class ProtectionArm:
         # arm WOULD store unpruned and injects that many flips into the pruned cache, so exposure is held equal
         # and only the concentration of risk varies. The count is derived per sample, because a fixed number
         # would give a 512-token and a 4096-token sample the same exposure when their storage differs eightfold.
-        if self.task.n_flips is not None:
+        if self.task.n_flips_per_token is not None:
+            # Per ORIGINAL token, not per retained one: the point is an exposure two arms of different precision
+            # (or different retention) can be held to, and only the original length is common to both.
+            n_flips = max(1, round(self.task.n_flips_per_token * sample.cache_len))
+        elif self.task.n_flips is not None:
             n_flips = self.task.n_flips
         elif self.task.ber_basis == "unpruned" and self.cfg.compression is not None:
             # Quantized and protected for real rather than predicted, so this cannot drift from the encoders the
@@ -834,7 +838,8 @@ class ProtectionArm:
             "golden_correct": bool(golden_score["correct"]),
             "golden_prediction": golden_text,
             "ber": self.task.ber,
-            "exposure_mode": ("count" if self.task.n_flips is not None
+            "exposure_mode": ("per_token" if self.task.n_flips_per_token is not None
+                              else "count" if self.task.n_flips is not None
                               else f"rate:{self.task.ber_basis or 'stored'}"),
             "stored_bits": stored_bits,
             "n_flips_per_trial": n_flips,

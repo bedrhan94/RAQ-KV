@@ -205,6 +205,15 @@ class ProtectionArmTask(StrictModel):
                               description="Bit error rate over the arm's declared storage")
     n_flips: int | None = Field(default=None, ge=1,
                                 description="Absolute flips per trial instead of a rate (D43 matched-count arms)")
+    # D49: matched exposure ACROSS PRECISIONS. `ber_basis: unpruned` handles pruning, because the unpruned cache
+    # is a thing the same arm could have stored. It cannot express "the flips a 4-bit arm would take", which is
+    # what a precision comparison needs: a 2-bit cache stores half the bits, so at a matched rate it takes half
+    # the flips and "lower precision is safer" becomes exposure arithmetic again. A rate per ORIGINAL token is
+    # the general form -- it is independent of both precision and context length, where a flat `n_flips` gives a
+    # 512-token and a 4096-token sample the same exposure (the bug D43 nearly shipped).
+    n_flips_per_token: float | None = Field(
+        default=None, gt=0.0,
+        description="Flips per ORIGINAL token, so exposure matches across precisions and context lengths (D49)")
     # Defaults to None, not to "stored", and that is load-bearing rather than stylistic: `identity_dict` uses
     # `exclude_none`, so a field with a non-None default serializes into every config that never mentions it and
     # shifts its hash. Adding this with `default="stored"` moved all 14 protection-arm identities at once, which
@@ -226,9 +235,11 @@ class ProtectionArmTask(StrictModel):
         matched absolute count attributes the outcome. Both knobs therefore exist -- but an arm setting both
         would have an exposure nobody could state, so exactly one is required.
         """
-        if (self.ber is None) == (self.n_flips is None):
-            raise ValueError("a protection arm needs exactly one of `ber` (a rate) or `n_flips` (a count); "
-                             "both leaves the arm's exposure ambiguous, neither leaves it undefined")
+        exposures = [self.ber, self.n_flips, self.n_flips_per_token]
+        if sum(e is not None for e in exposures) != 1:
+            raise ValueError("a protection arm needs exactly one of `ber` (a rate over its own storage), "
+                             "`n_flips` (an absolute count) or `n_flips_per_token` (a count per original token); "
+                             "more than one leaves the arm's exposure ambiguous, none leaves it undefined")
         if self.ber_basis == "unpruned" and self.ber is None:
             raise ValueError("`ber_basis` describes what a rate is applied to, so it needs `ber`, not `n_flips`")
         return self

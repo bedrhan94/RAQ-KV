@@ -156,3 +156,30 @@ def test_the_protection_lookup_declares_what_is_and_is_not_established():
     import inspect
 
     assert list(inspect.signature(_protection).parameters) == ["ber"]
+
+
+def test_exactly_one_exposure_of_three():
+    """D49 adds a third basis, so the XOR has to widen rather than silently accept two."""
+    assert ProtectionArmTask(n_flips_per_token=0.2439).n_flips_per_token == 0.2439
+    for kwargs in ({}, {"ber": 1e-6, "n_flips": 500}, {"ber": 1e-6, "n_flips_per_token": 0.24},
+                   {"n_flips": 500, "n_flips_per_token": 0.24},
+                   {"ber": 1e-6, "n_flips": 500, "n_flips_per_token": 0.24}):
+        with pytest.raises(ValidationError, match="exactly one"):
+            ProtectionArmTask(**kwargs)
+
+
+def test_the_per_token_basis_scales_with_the_ORIGINAL_context_length():
+    """A flat count gives a 512-token and a 4096-token sample the same exposure; per-token must not.
+
+    This is the same bug D43 nearly shipped for pruning, arriving one axis over: a precision comparison needs an
+    exposure that is independent of both precision and context length, and only a rate per original token is.
+    """
+    import inspect
+
+    from raq_kv.experiments import tasks
+
+    source = inspect.getsource(tasks.ProtectionArm.run_unit)
+    assert "self.task.n_flips_per_token * sample.cache_len" in source, "the count is not scaled by context length"
+    # And it must be checked before the flat count, or a config setting only the per-token basis would fall
+    # through to flips_for_rate with ber=None.
+    assert source.index("n_flips_per_token is not None") < source.index("self.task.n_flips is not None")
