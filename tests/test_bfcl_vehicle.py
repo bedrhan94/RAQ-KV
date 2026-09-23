@@ -120,3 +120,46 @@ def test_tool_schema_spans_fill_both_the_target_and_the_span_role():
     assert roles["target"] == (0, 1, 2, 3, 4)
     assert roles["distractor"] == (5, 6, 7, 8)
     assert roles["sentence"] == roles["target"], "the gold schema is its own span"
+
+
+def test_schema_spans_partition_the_cache_without_gaps():
+    """`select_keep_spans` must be able to spend the whole budget, so the blocks have to cover [0, cache_len).
+
+    The chat template contributes tokens before, between and after the schemas. If those were dropped rather than
+    emitted as their own blocks they would be unprunable, and the realised retention ratio would drift from the
+    requested one -- the same class of error D42 had to fix by re-running every short arm.
+    """
+    from raq_kv.data.prompts import PromptSample, Span
+    from raq_kv.experiments.tasks import schema_spans
+
+    spans = (Span("tool_schema", "distractor", 0, 1, 10, 20, "a", "tool_schema"),
+             Span("tool_schema", "target", 0, 1, 30, 45, "gold", "tool_schema"))
+    sample = PromptSample("s", "t", None, 60, "bfcl_ast", {}, None, None, 8, spans, {})
+    blocks = schema_spans(sample, 60)
+
+    assert blocks[0][0] == 0 and blocks[-1][1] == 60, "the blocks must cover the whole cache"
+    for (_, end), (start, _) in zip(blocks, blocks[1:], strict=False):
+        assert end == start, "the blocks must not leave a gap"
+    assert (10, 20) in blocks and (30, 45) in blocks, "each schema must be its own block"
+    assert all(hi > lo for lo, hi in blocks), "no empty block"
+
+
+def test_a_schema_span_clips_to_the_cache_boundary():
+    """A schema straddling the cache/query split must not claim tokens the cache does not hold."""
+    from raq_kv.data.prompts import PromptSample, Span
+    from raq_kv.experiments.tasks import schema_spans
+
+    spans = (Span("tool_schema", "target", 0, 1, 40, 80, "gold", "tool_schema"),)
+    sample = PromptSample("s", "t", None, 50, "bfcl_ast", {}, None, None, 8, spans, {})
+    blocks = schema_spans(sample, 50)
+    assert blocks[-1][1] == 50 and all(hi <= 50 for _, hi in blocks)
+
+
+def test_the_schema_unit_is_a_distinct_choice_from_the_sentence_unit():
+    """A tool catalogue is JSON: punctuation-delimited spans are meaningless in it, so the units must not alias."""
+    from raq_kv.config.schema import CompressionConfig
+
+    assert CompressionConfig(scorer="recency", ratio=0.25, unit="schema").unit == "schema"
+    assert CompressionConfig(scorer="recency", ratio=0.25, unit="span").unit == "span"
+    with pytest.raises(Exception):
+        CompressionConfig(scorer="recency", ratio=0.25, unit="sentence")

@@ -366,7 +366,10 @@ class CompressionConfig(StrictModel):
     # Token or span. D34 measured that the unit matters more than the score: at 25% retention a perfect
     # token-level oracle failed 56% of questions and keeping the fact's own sentence failed 15%. Defaults to
     # None so that adding it left existing retention runs' identities intact.
-    unit: Literal["token", "span"] | None = None
+    # "schema" is M6's unit: a tool catalogue is JSON, so punctuation-delimited sentence spans are meaningless
+    # in it, and the natural all-or-nothing block is one function schema. It is the agent-shaped form of D34 --
+    # the unit the vehicle's own structure supplies, rather than one inferred from text.
+    unit: Literal["token", "span", "schema"] | None = None
     span_aggregate: Literal["mean", "sum", "max"] | None = None
 
 

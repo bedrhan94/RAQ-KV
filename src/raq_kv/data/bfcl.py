@@ -120,6 +120,20 @@ def build_bfcl(
 
                 text = render_chat(tokenizer, user_text, template_kwargs, tools=catalogue)
                 ids, offsets = tokenize_with_offsets(tokenizer, text)
+                # The cache ends where the user's question begins. Setting `cache_len = len(ids)` prefilled the
+                # whole prompt and left the decode nothing to consume -- the two-phase protocol's own guard
+                # refused it, which is what that guard is for.
+                #
+                # This split is not a workaround, it is the deployment shape: a serving system caches the tool
+                # catalogue once and reuses it across requests, while the question is per-request. So M6's
+                # vehicle is a **shared prefix cache**, which is exactly the setting D36 named as this project's
+                # largest open problem -- query-aware scoring cannot be computed before the query arrives.
+                question_at = text.rfind(user_text[:60] if len(user_text) > 60 else user_text)
+                if question_at <= 0:
+                    continue
+                cache_len, _ = char_span_to_tokens(offsets, question_at, question_at + 1)
+                if not 0 < cache_len < len(ids):
+                    continue
                 spans: list[Span] = []
                 for fn in catalogue:
                     # Locate each schema by its name in the rendered text. The template decides how the schema is
@@ -146,7 +160,7 @@ def build_bfcl(
                     sample_id=f"{category}-n{n_catalogue:03d}-{row['id']}",
                     prompt_text=text,
                     prompt_ids=torch.tensor(ids, dtype=torch.int64),
-                    cache_len=len(ids),
+                    cache_len=cache_len,
                     scorer="bfcl_ast",
                     reference={"ground_truth": ground_truth, "gold_names": sorted(gold_names)},
                     gold_text=None,
@@ -154,7 +168,8 @@ def build_bfcl(
                     max_new_tokens=cfg.max_new_tokens,
                     spans=tuple(spans),
                     meta={"category": category, "bfcl_id": row["id"], "n_catalogue": n_catalogue,
-                          "n_gold_schemas": len(gold_list), "cache_len": len(ids),
+                          "n_gold_schemas": len(gold_list), "cache_len": cache_len,
+                          "query_tokens": len(ids) - cache_len,
                           "fact_type": "tool_schema", "nominal_len": n_catalogue},
                 ))
     return samples

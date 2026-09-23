@@ -1,0 +1,40 @@
+# M6 retention on the BFCL tool catalogue: does compression break agent tool calls, and can a SHARED
+# PREFIX CACHE survive it?
+#
+# Two questions in one campaign, because this vehicle answers both.
+#
+# C4 -- do token-level metrics under-estimate agent failures? The evidence so far is retrieval only
+# (+29% perplexity coexisting with -71% probe accuracy, D16). Here the endpoint is whether the model still
+# calls the right function with acceptable arguments, scored by AST so no family's dialect is privileged.
+#
+# D36's OPEN PROBLEM -- a serving system caches a tool catalogue once and reuses it across requests, so the
+# question is not in the cache when the cache is compressed. That is exactly what this vehicle is: the
+# catalogue is the cached prefix, the user question is the per-request query. So query_attention here is the
+# arm that CANNOT be deployed on a shared prefix cache, and window_attention is the one that can. On
+# RAQ-Probe that gap was 0.026 against 0.624 -- 57 points. This measures it on an agent task.
+#
+# Budget 1.05 bits per original token, matching the H3 arms, so the allocator's own operating point is what
+# is tested: 4-bit group_token 128 at 24.67% of tokens. The gold schema is 4-8.8% of the cache, so a policy
+# keeping a quarter of it has to actually find the one schema the answer needs.
+#
+# unit: schema -- a tool catalogue is JSON, so punctuation-delimited sentence spans are meaningless in it
+# (D50). The block is one function schema, which is the agent-shaped form of D34's finding. Arms scored by
+# recency or key magnitude use token granularity, as they did in H3.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/bfcl_v3_catalogue.yaml
+name: m6_bfcl_magnitude
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_guard: range
+compression:
+  scorer: key_norm
+  ratio: 0.2467
+  unit: token
+  protect_initial: 4
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

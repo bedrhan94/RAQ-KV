@@ -625,6 +625,19 @@ class FaultQA:
         }
 
 
+def schema_spans(sample: PromptSample, cache_len: int) -> list[tuple[int, ...]]:
+    """The catalogue's own tool schemas as retention blocks, covering [0, cache_len) without gaps.
+
+    `select_keep_spans` needs a partition it can spend the whole budget on, so the template text between and
+    around schemas is emitted as its own blocks rather than dropped -- otherwise the tokens the chat template
+    contributes would be unprunable and the realised ratio would drift from the requested one.
+    """
+    bounds = sorted({0, cache_len} | {b for span in sample.spans if span.label == "tool_schema"
+                                      for b in (span.token_start, min(span.token_end, cache_len))
+                                      if 0 <= b <= cache_len})
+    return [(lo, hi) for lo, hi in zip(bounds, bounds[1:], strict=False) if hi > lo]
+
+
 def build_probe_samples(cfg: ExperimentConfig, tokenizer: Any) -> list[PromptSample]:
     """The sample builder for tasks that read cached facts, dispatched on the configured dataset.
 
@@ -699,8 +712,12 @@ def build_retention_plan(
         snapshot=snapshot, context_ids=context_ids, model=model, query_ids=query_ids,
         target_tokens=roles["target"], distractor_tokens=roles["distractor"],
         sentence_tokens=roles["sentence"], control_span_tokens=control))
-    if c.unit == "span":
-        spans = sentence_spans(tok, context_ids)
+    if c.unit in ("span", "schema"):
+        # "span" infers blocks from punctuation; "schema" takes them from the sample's own labelled tool schemas,
+        # which is the only sensible block structure inside a JSON tool catalogue (D50). Both then go through the
+        # same selector, so the two vehicles' span results are produced by one code path.
+        spans = (schema_spans(sample, sample.cache_len) if c.unit == "schema"
+                 else sentence_spans(tok, context_ids))
         plan = select_keep_spans(scores, spans, c.ratio, c.protect_recent, c.protect_initial,
                                  c.span_aggregate or "mean")
     else:
