@@ -16,6 +16,7 @@ from raq_kv.budget.bit_accounting import full_precision_kv_budget
 from raq_kv.compression.retain import apply_retention, select_keep
 from raq_kv.compression.spans import select_keep_spans, sentence_spans
 from raq_kv.config.schema import (
+    BFCLConfig,
     CachePPLTask,
     ExperimentConfig,
     FaultInjectionTask,
@@ -29,6 +30,7 @@ from raq_kv.config.schema import (
     RAQProbeConfig,
     RetentionTask,
 )
+from raq_kv.data.bfcl import build_bfcl
 from raq_kv.data.gsm8k import build_gsm8k
 from raq_kv.data.prompts import PromptSample, char_span_to_tokens, samples_fingerprint
 from raq_kv.data.raq_probe import build_raq_probe
@@ -226,6 +228,8 @@ class QAGenerate:
             samples = build_raq_probe(cfg.dataset, self.tokenizer, template_kwargs)
         elif isinstance(cfg.dataset, GSM8KConfig):
             samples = build_gsm8k(cfg.dataset, self.tokenizer, template_kwargs)
+        elif isinstance(cfg.dataset, BFCLConfig):
+            samples = build_bfcl(cfg.dataset, self.tokenizer, template_kwargs)
         else:
             raise NotImplementedError(cfg.dataset.name)
         self.samples: dict[str, PromptSample] = {s.sample_id: s for s in samples}
@@ -621,8 +625,27 @@ class FaultQA:
         }
 
 
+def build_probe_samples(cfg: ExperimentConfig, tokenizer: Any) -> list[PromptSample]:
+    """The sample builder for tasks that read cached facts, dispatched on the configured dataset.
+
+    Added when M6 gave the retention task a second vehicle (`bfcl`). Before that every such task called
+    `build_raq_probe` directly, which is why a second dataset could not be used without touching each one.
+    """
+    kwargs = dict(cfg.model.chat_template_kwargs)
+    if isinstance(cfg.dataset, BFCLConfig):
+        return build_bfcl(cfg.dataset, tokenizer, kwargs)
+    return build_raq_probe(cfg.dataset, tokenizer, kwargs)
+
+
 def role_tokens(sample: PromptSample, cache_len: int) -> dict[str, tuple[int, ...]]:
-    """The probe's own span labels, as cache positions: which tokens carry the answer, a distractor, a sentence."""
+    """The vehicle's own span labels, as cache positions: which tokens carry the answer, a distractor, a span.
+
+    Two vehicles, two labellings, one meaning. RAQ-Probe marks a fact's value tokens (`fact_value`) and the
+    sentence around it (`fact_sentence`). BFCL's catalogue marks whole tool schemas (`tool_schema`), where the
+    gold schema is the target and the other 10-50 are distractors -- and there the schema *is* the span, so it
+    fills both roles. That is what makes `kept_fraction_target` mean the same thing in M6 as in M4: the share of
+    the tokens the answer actually needs that survived pruning.
+    """
     target, distractor, sentence = [], [], []
     for span in sample.spans:
         span_tokens = range(span.token_start, min(span.token_end, cache_len))
@@ -630,6 +653,12 @@ def role_tokens(sample: PromptSample, cache_len: int) -> dict[str, tuple[int, ..
             (target if span.role == "target" else distractor).extend(span_tokens)
         elif span.label == "fact_sentence" and span.role == "target":
             sentence.extend(span_tokens)
+        elif span.label == "tool_schema":
+            if span.role == "target":
+                target.extend(span_tokens)
+                sentence.extend(span_tokens)
+            else:
+                distractor.extend(span_tokens)
     return {"target": tuple(target), "distractor": tuple(distractor), "sentence": tuple(sentence)}
 
 

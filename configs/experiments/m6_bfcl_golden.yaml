@@ -1,0 +1,16 @@
+# Can Qwen3-1.7B call the right BFCL function out of a catalogue at all? The precondition for M6.
+#
+# Same gate D46 applied to Llama on RAQ-Probe: an agent-facing retention claim is unmeasurable if the model
+# cannot do the clean task. If golden AST accuracy is low here, M6's vehicle is the problem and the honest move
+# is to say so rather than to run retention arms against a floor.
+#
+# Two catalogue sizes, so the gate also measures whether a bigger catalogue costs accuracy on its own -- at n=25
+# the gold schema is about 4% of a 3330-token cache, and a model that cannot find it unpruned will certainly not
+# find it pruned. That is a confound to know about before, not after.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/bfcl_v3_catalogue.yaml
+name: m6_bfcl_golden
+task:
+  kind: qa_generate
+seed: 0

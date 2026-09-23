@@ -87,7 +87,34 @@ class GSM8KConfig(StrictModel):
     max_new_tokens: int = Field(default=512, gt=0)
 
 
-Dataset = Annotated[WikiText2Config | RAQProbeConfig | GSM8KConfig, Field(discriminator="name")]
+class BFCLConfig(StrictModel):
+    """BFCL tool calls inside a synthetic tool catalogue, so the cache is long enough to compress.
+
+    Measured before building: BFCL's own AST categories cache 157-333 tokens at the median, an order of magnitude
+    short of the 512-4096 this project works at, so they cannot host a retention experiment (see data/bfcl.py).
+    `catalogue_sizes` is the knob that fixes it -- a real agent carries dozens of schemas, and BFCL supplies 769
+    distinct ones to draw distractors from.
+    """
+
+    name: Literal["bfcl"] = "bfcl"
+    version: Literal["v3"] = "v3"
+    generator_seed: int = 0
+    categories: tuple[Literal["simple", "multiple", "parallel", "parallel_multiple"], ...] = ("simple",)
+    questions_per_category: int = Field(default=40, gt=0)
+    catalogue_sizes: tuple[int, ...] = Field(default=(10, 25), description="Distractor schemas per prompt; sets "
+                                                                          "the cache length")
+    schema_span_chars: int = Field(default=400, gt=0, description="Fallback span width for the last schema")
+    max_new_tokens: int = Field(default=96, gt=0)
+
+    @model_validator(mode="after")
+    def _catalogue_fits_the_pool(self) -> BFCLConfig:
+        if max(self.catalogue_sizes) > 700:
+            raise ValueError("only 769 distinct BFCL schemas exist; a catalogue near that size cannot be sampled "
+                             "without near-total overlap between prompts")
+        return self
+
+
+Dataset = Annotated[WikiText2Config | RAQProbeConfig | GSM8KConfig | BFCLConfig, Field(discriminator="name")]
 
 
 class CachePPLTask(StrictModel):
@@ -254,12 +281,12 @@ Task = Annotated[
 _TASK_DATASETS: dict[str, tuple[str, ...]] = {
     "cache_ppl": ("wikitext2",),
     "latency": ("wikitext2",),
-    "qa_generate": ("raq_probe", "gsm8k"),
+    "qa_generate": ("raq_probe", "gsm8k", "bfcl"),
     "quant_sensitivity": ("wikitext2",),
     "fault_injection": ("wikitext2",),
     "fault_qa": ("raq_probe",),
     "protection_arm": ("raq_probe",),
-    "retention": ("raq_probe",),
+    "retention": ("raq_probe", "bfcl"),
 }
 
 

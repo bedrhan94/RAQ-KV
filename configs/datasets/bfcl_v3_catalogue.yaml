@@ -1,0 +1,17 @@
+# BFCL AST questions inside a synthetic tool catalogue, which is what makes the cache long enough to compress.
+#
+# Measured before this file existed: BFCL's own categories cache 157-333 tokens at the median (see
+# src/raq_kv/data/bfcl.py), against the 512-4096 this project works at. `catalogue_sizes` is the fix, and it is
+# not a synthetic crutch -- a real agent carries dozens of tool schemas in its prompt, and BFCL supplies 769
+# distinct ones to draw distractors from.
+#
+# 10 schemas gives ~1374 cache tokens, 25 gives ~3293: the probe's own range, so M4's retention findings and M6's
+# are measured over comparable cache lengths.
+dataset:
+  name: bfcl
+  version: v3
+  generator_seed: 0
+  categories: [simple]
+  questions_per_category: 60
+  catalogue_sizes: [10, 25]
+  max_new_tokens: 96

@@ -118,8 +118,94 @@ def score_gsm8k(prediction: str, reference: dict[str, Any]) -> dict[str, Any]:
             "extraction_method": method}
 
 
+_JSON_OBJECT = re.compile(r"\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}", re.DOTALL)
+
+
+def parse_any_calls(text: str) -> list[dict[str, Any]]:
+    """Every JSON object in the output, with the common argument keys normalised to ``arguments``.
+
+    Deliberately separate from :func:`parse_tool_calls`, which requires ``<tool_call>`` tags and is left exactly
+    as it was. D46 measured what happens when a tool-call scorer encodes one family's dialect: Llama-3.2 scored
+    0 of 120 on RAQ-Probe's `tool_arg` type for writing ``parameters`` instead of ``arguments``, while retrieving
+    the right value every time. Broadening the *existing* scorer was rejected there because it changed 2 of 492
+    stored Qwen predictions, which would have left the two families scored by different code. A new scorer for a
+    new vehicle has no stored results to invalidate, so it can be written the way the old one should have been:
+    scoring what was called with which arguments, not the syntax used to say it.
+    """
+    calls: list[dict[str, Any]] = []
+    for match in _JSON_OBJECT.finditer(text):
+        try:
+            obj = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        for alias in ("parameters", "args", "arguments"):
+            if isinstance(obj.get(alias), dict):
+                obj = {**obj, "arguments": obj[alias]}
+                break
+        calls.append(obj)
+    return calls
+
+
+def _value_matches(got: Any, allowed: Any) -> bool:
+    """BFCL ground truth gives each parameter a LIST of acceptable values; "" means the parameter is optional."""
+    options = allowed if isinstance(allowed, list) else [allowed]
+    for option in options:
+        if got == option:
+            return True
+        if str(got).strip().lower() == str(option).strip().lower():
+            return True
+        try:
+            if float(got) == float(option):
+                return True
+        except (TypeError, ValueError):
+            pass
+    return False
+
+
+def score_bfcl_ast(prediction: str, reference: dict[str, Any]) -> dict[str, Any]:
+    """BFCL AST match: did the model call a gold function with acceptable arguments?
+
+    ``ground_truth`` is a list of ``{func_name: {param: [acceptable, values]}}`` -- one entry per call the answer
+    requires, so a parallel question needs every entry matched. A parameter whose acceptable list contains ``""``
+    is optional and may be absent.
+    """
+    calls = parse_any_calls(prediction)
+    truths = reference.get("ground_truth") or []
+    matched_names: list[str] = []
+    for truth in truths:
+        if not isinstance(truth, dict):
+            continue
+        satisfied = False
+        for want_name, want_args in truth.items():
+            for call in calls:
+                if call.get("name") != want_name:
+                    continue
+                got_args = call.get("arguments")
+                if not isinstance(got_args, dict):
+                    continue
+                if all(_value_matches(got_args[param], allowed) if param in got_args
+                       else any(o == "" for o in (allowed if isinstance(allowed, list) else [allowed]))
+                       for param, allowed in want_args.items()):
+                    satisfied = True
+                    matched_names.append(want_name)
+                    break
+            if satisfied:
+                break
+        if not satisfied:
+            return {"correct": False, "em_strict": False, "n_calls": len(calls),
+                    "named_gold_function": bool(set(matched_names) or
+                                                {c.get("name") for c in calls} & set(reference.get("gold_names", []))),
+                    "calls_matched": len(matched_names)}
+    correct = bool(truths)
+    return {"correct": correct, "em_strict": correct and len(calls) == len(truths), "n_calls": len(calls),
+            "named_gold_function": True, "calls_matched": len(matched_names)}
+
+
 SCORERS: dict[str, Callable[[str, dict[str, Any]], dict[str, Any]]] = {
     "exact_value": score_exact_value,
     "tool_arg": score_tool_arg,
+    "bfcl_ast": score_bfcl_ast,
     "gsm8k": score_gsm8k,
 }
