@@ -1948,3 +1948,94 @@ The `ber_basis`/`n_flips_per_token` machinery makes it one config, but it was no
 
 One model, one probe, one rate, full retention only, three precision/group configurations. The 37-sample
 denominator is small, and it is small for a reason that is itself a finding.
+
+## D50 — M6: BFCL's own categories are too short to compress, and on the catalogue vehicle a shared prefix cache has no usable signal at all (2026-09-24)
+
+M6 was to test C4 on an agent task. The plan named BFCL's AST categories. **Measured before building anything,
+they cannot host a retention experiment:**
+
+| category | median cache tokens | max |
+|---|---|---|
+| simple | 166 | 262 |
+| multiple | 333 | 639 |
+| parallel | 181 | 351 |
+| **multi_turn_long_context** | **157** | 363 |
+
+Against 512–4096 in this project and a policy pruning to 16–25%, a 166-token cache leaves ~27 tokens, of which
+the attention sink pins 4. This is GSM8K's defect again (claims.md: "cached problem text averages ~62 tokens") and
+the **third** time the project has hit *the task's cache is too short to compress*. BFCL's "long_context" category
+earns its name from tool responses accumulated while **executing**, which needs the stateful harness the plan
+flagged as its own decision point — not a static prompt.
+
+### The vehicle: the scenario the benchmark leaves out
+
+A real agent carries dozens of tool schemas in its prompt. BFCL's own files supply **769 distinct schemas** at a
+median of 122 tokens, so embedding a question's gold schema in a catalogue of N real distractors gives 1442 cache
+tokens at N = 10 and 3290 at N = 25 — the probe's range. The gold schema is then **4.0–8.8% of the cache**, so a
+policy keeping a quarter of it must actually *find* the one schema the answer needs.
+
+**Golden gate, Qwen3-1.7B, 120 samples:** AST accuracy **0.8667** at N = 10 and **0.8833** at N = 25, both inside
+M0's 85–100% band, and a larger catalogue costs nothing on its own — so catalogue size is a clean cache-length
+knob rather than a confound. That was checked before the retention arms, not after.
+
+**Two pieces of machinery this needed, both consequences of earlier records.** The scorer is *new*, not adapted:
+D46 froze `score_tool_arg` because broadening it changed 2 of 492 stored Qwen predictions, so `score_bfcl_ast`
+is written the way the old one should have been — it reads what was called with which arguments, accepts
+`arguments`/`parameters`/`args` and tagged or bare JSON, and reports `named_gold_function` separately from
+`correct`, because "dropped the schema" and "kept it but got an argument wrong" are different failures. And the
+retention unit is `schema`: a tool catalogue is JSON, so punctuation-delimited spans are meaningless in it, and
+the block is one function schema — the agent-shaped form of D34, where the unit comes from the vehicle's own
+structure.
+
+### The vehicle turned out to BE a shared prefix cache, and that is the result
+
+The two-phase protocol's guard refused the first version, where `cache_len` was the whole prompt. The fix is not a
+workaround: a serving system caches the tool catalogue **once** and reuses it across requests, while the question
+is per-request. So the catalogue is the cached prefix and the question is the query — which is exactly D36's
+largest open problem, where query-aware scoring cannot be computed before the query arrives.
+
+Four arms at 1.05 bits per original token (the H3 operating point), 105 paired samples:
+
+| arm | scorer | deployable on a prefix cache? | kept_target | vs chance | task failure |
+|---|---|---|---|---|---|
+| joint | query_attention | **no** | 0.9906 | **+0.7577** (p = 6.0e-19) | **0.0286** |
+| recency | recency | yes | 0.2805 | +0.0338 (p = 0.53) | 0.7714 |
+| **prefix-cache** | window_attention | **yes** | 0.2026 | **−0.0296 (p = 0.0053)** | **0.8095** |
+| magnitude | key_norm | yes | 0.2501 | +0.0034 (p = 0.43) | 1.0000 |
+
+| contrast | difference | p | discordant |
+|---|---|---|---|
+| joint vs prefix-cache | **+0.7810 [+0.6952, +0.8571]** | **1.4e-19** | 82 |
+| joint vs recency | +0.7429 [+0.6571, +0.8190] | 1.0e-18 | 78 |
+| recency vs prefix-cache | +0.0381 [−0.0286, +0.1143] | 0.317 | 16 |
+
+- **The gap is 78 points, larger than RAQ-Probe's 57 (D36).** Query-aware retention fails 2.86% of tool calls; the
+  best arm a shared prefix cache could actually run fails **80.95%**.
+- **Query-agnostic attention is significantly BELOW chance at finding the gold schema** (−0.0296, p = 0.0053) and
+  is statistically indistinguishable from recency. It is not a weak signal here, it is no signal — a stronger
+  version of what D47 found for key magnitude, and new for `window_attention`, which on RAQ-Probe was merely weak
+  (0.624) rather than anti-correlated.
+- **A mechanism worth naming as a hypothesis:** a tool catalogue has no recency structure (the gold schema sits at
+  a random position) and no textual salience (every schema looks like every other schema). RAQ-Probe's fact
+  sentence is distinctive against WikiText filler; a function schema among function schemas is not. So the
+  query-agnostic scorers had something to latch onto there and have nothing here.
+
+### **M6 does not close C4, and saying it did would be the overclaim**
+
+C4 is that *token-level* metrics under-estimate agent failures. Its evidence remains D16's +29% perplexity
+coexisting with −71% probe accuracy — measured on retrieval, under quantization. This campaign has **no
+token-level metric on the same vehicle**: `cache_ppl` accepts WikiText only, and nothing here measures perplexity
+over a tool catalogue. What M6 establishes is a different and arguably more useful thing — that the deployable
+arm's failure is far worse on an agent task (0.8095) than on the probe (0.624) at the same budget — but that is
+an *agent-vs-retrieval* comparison, not a *metric-vs-metric* one.
+
+The one pointer the data does give runs against C4's direction in the joint arm: `answer_changed` 0.1143 against
+task failure 0.0286, i.e. four times as many answers changed as became wrong. At high damage the two converge
+(0.8286 against 0.8095). Closing C4 needs perplexity over the catalogue — one task-kind change — and is left open
+rather than declared.
+
+### Scope
+
+One model, one probe of the agent task, one budget, two catalogue sizes pooled, no faults injected. The
+`named_gold_function` split was built for this and is not yet analysed: whether the deployable arms fail by
+dropping the schema or by keeping it and mis-filling arguments is answerable from the stored records.
