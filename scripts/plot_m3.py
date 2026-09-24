@@ -20,7 +20,6 @@ four arms sit exactly there, where a normal approximation would draw zero width 
 from __future__ import annotations
 
 import argparse
-import math
 import sys
 from pathlib import Path
 
@@ -29,6 +28,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+from raq_kv.analysis.stats import wilson
 from raq_kv.utils.io import read_json, read_jsonl  # noqa: E402
 from raq_kv.utils.paths import resolve_output_root  # noqa: E402
 
@@ -46,15 +46,9 @@ BANDS = ((0, 700), (700, 1400), (1400, 2800), (2800, 10**9))
 CURVE_ARM = "m3_rate_calibration"
 
 
-def wilson(k: int, n: int, z: float = 1.959963985) -> tuple[float, float]:
-    """Finite and asymmetric at k = 0, which a normal approximation is not."""
-    if n == 0:
-        return (float("nan"), float("nan"))
-    p, d = k / n, 1 + z * z / n
-    centre = (p + z * z / (2 * n)) / d
-    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return (max(0.0, centre - half), min(1.0, centre + half))
-
+# The estimator moved to `raq_kv.analysis.stats` on 2026-09-24, when M2's checklist found its own
+# criterion unmet and needed the same interval. One definition, tested once (D-series rule: this
+# project has repaired two cases of one quantity computed twice and drifting).
 
 def wilson_bars(rows) -> tuple[list[float], list[float]]:
     """Error-bar offsets from the point estimate, never negative.

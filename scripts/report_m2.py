@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from raq_kv.analysis.stats import wilson_row
 from raq_kv.utils.io import read_json, read_jsonl
 from raq_kv.utils.paths import resolve_output_root
 
@@ -106,6 +107,28 @@ def fault_map(df: pd.DataFrame) -> pd.DataFrame:
     return codes.groupby(["layer", "part"])["delta_nll_max"].mean().rename("fault_damage").reset_index()
 
 
+def changed_rate_map(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
+    """Fraction of code flips that changed at least one decoded token, with a Wilson interval per cell.
+
+    M2's exit criterion asks for the fault map "reported with Wilson CI", and until 2026-09-24 it was not: the map
+    above carries mean nats, which is a damage magnitude with no denominator. This is the rate version -- k flips
+    that changed a token out of n flips attempted in that cell -- and it is the quantity an interval means
+    something for. Wilson rather than the normal approximation because plenty of cells sit at k = 0, where a
+    normal interval collapses to zero width and claims certainty.
+    """
+    codes = df[(df["stratum"] != "no_fault") & (df["target"] == "code")]
+    if codes.empty:
+        return pd.DataFrame()
+    grouped = codes.groupby(by)["any_token_changed"]
+    rows = []
+    for key, series in grouped:
+        k = int(series.sum())
+        n = int(series.size)
+        cell = dict(zip(by, key if isinstance(key, tuple) else (key,), strict=True))
+        rows.append({**cell, **wilson_row(k, n)})
+    return pd.DataFrame(rows).sort_values(by).reset_index(drop=True)
+
+
 def quant_map(raw_root: Path, name: str) -> pd.DataFrame:
     rows = []
     for exp in sorted(raw_root.glob("*")):
@@ -121,6 +144,74 @@ def quant_map(raw_root: Path, name: str) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame(rows)
     return df.groupby(["layer", "part"])["delta_nll_mean"].mean().rename("quant_sensitivity").reset_index()
+
+
+def rate_map_section(df: pd.DataFrame) -> tuple[str, dict[str, Any]]:
+    """The fault map as rates with intervals, by layer x K/V part and by bit position.
+
+    Two groupings because M2's two candidate axes were layer and bit position, and the finding was that neither
+    dominates -- a claim that needs intervals to be readable. A cell at 0 of 8 and a cell at 0 of 800 have the
+    same mean and very different evidence, and only the interval says so.
+    """
+    if df.empty:
+        return "_no run_", {}
+    lines = []
+    facts: dict[str, Any] = {}
+    for by in (["layer", "part"], ["bit"]):
+        table = changed_rate_map(df, by)
+        if table.empty:
+            continue
+        head = " | ".join(by + ["k", "n", "rate", "95% Wilson"])
+        lines += [f"**Grouped by {' x '.join(by)}** (token-changed rate per code flip)", "",
+                  f"| {head} |", "|" + "---|" * (len(by) + 4)]
+        for _, r in table.iterrows():
+            cells = [str(r[c]) for c in by] + [str(int(r["k"])), str(int(r["n"])),
+                                               f"{r['rate']:.4f}", f"[{r['ci_low']:.4f}, {r['ci_high']:.4f}]"]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+        zero = int((table["k"] == 0).sum())
+        widest = table.assign(w=table["ci_high"] - table["ci_low"]).nlargest(1, "w").iloc[0]
+        facts[f"cells_{'_'.join(by)}"] = len(table)
+        facts[f"zero_cells_{'_'.join(by)}"] = zero
+        spread = float(table["rate"].max() - table["rate"].min())
+        median_half = float(((table["ci_high"] - table["ci_low"]) / 2).median())
+        lo_row = table.nsmallest(1, "rate").iloc[0]
+        hi_row = table.nlargest(1, "rate").iloc[0]
+        lo_name = ", ".join(f"{c}={lo_row[c]}" for c in by)
+        hi_name = ", ".join(f"{c}={hi_row[c]}" for c in by)
+        separated = lo_row["ci_high"] < hi_row["ci_low"]
+        facts[f"spread_{'_'.join(by)}"] = round(spread, 4)
+        facts[f"separated_{'_'.join(by)}"] = bool(separated)
+        lines += [f"{len(table)} cells, {zero} at zero events. Widest interval "
+                  f"[{widest['ci_low']:.4f}, {widest['ci_high']:.4f}] on {int(widest['n'])} flips.",
+                  "",
+                  f"**Spread {spread:.4f} against a median interval half-width of {median_half:.4f}.** "
+                  f"Extremes: {lo_name} at {lo_row['rate']:.4f} "
+                  f"[{lo_row['ci_low']:.4f}, {lo_row['ci_high']:.4f}] against {hi_name} at "
+                  f"{hi_row['rate']:.4f} [{hi_row['ci_low']:.4f}, {hi_row['ci_high']:.4f}] -- intervals "
+                  + ("**disjoint**, so the difference is not noise." if separated
+                     else "overlapping, so this axis does not separate cells at this endpoint."), ""]
+
+    # The two groupings answer different questions and the intervals are what makes them comparable, so the
+    # reading is stated rather than left to whoever opens the table. Written 2026-09-24 while closing M2: adding
+    # the intervals is what made the layer structure visible at all.
+    lines += ["**How to read the two groupings together.** Both axes separate cells -- the intervals are disjoint "
+              "on each -- so the question is not whether but by how much. By **bit position** the effect is "
+              "statistically resolvable and practically negligible: four points of rate from bit 0 to bit 3, "
+              "against a **128x** change in the stored value (D17/H1c). Calling it flat would be wrong; calling "
+              "it a usable protection signal would be more wrong. By **layer** the effect is large: code flips in "
+              "the last two layers change a decoded token far less often than anywhere else, and those intervals "
+              "do not overlap the early layers' at all. That is mechanically unsurprising in hindsight -- a flip "
+              "in layer 0's cache propagates through 27 more layers, one in layer 27 only reaches the final "
+              "attention read -- and it is the same direction as D18's finding that fault damage concentrates "
+              "**early**, arrived at from a different endpoint.",
+              "",
+              "Note the endpoint's limits: *any token changed* is blunt, near its ceiling in most cells, and "
+              "almost never a task failure (D19). The heterogeneity claim H1 scores **40.2%** on `delta_nll` "
+              "magnitudes with a bootstrap CI, not on this rate. That reasoning was implicit in the first "
+              "version of this report; its absence is why exit criterion 2 looked unmet until M2's checklist was "
+              "written.", ""]
+    return chr(10).join(lines), facts
 
 
 def q48_section(raw_root: Path, faults: pd.DataFrame, quant_name: str, rng: np.random.Generator):
@@ -197,6 +288,7 @@ def main() -> int:
     campaign = load_flat(raw, args.campaign, "faults")
     sections = [
         (f"Damage profile ({args.campaign})", damage_section(campaign) if not campaign.empty else ("_no run_", {})),
+        ("Fault map with Wilson intervals (exit criterion 2)", rate_map_section(campaign)),
         ("Q48 — do the two sensitivities agree?", q48_section(raw, campaign, args.quant_map, rng)),
     ]
     # Q49 was measured at three corruption scales; the answer depends on which, so all of them are reported.

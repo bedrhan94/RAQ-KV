@@ -102,3 +102,35 @@ def test_the_retention_task_still_accepts_its_compression_block():
     src = pathlib.Path(__file__).resolve().parents[1] / "configs" / "experiments" / "m5h3_1p05_joint.yaml"
     cfg = load_experiment_configs(src)[0]
     assert cfg.task.kind == "retention" and cfg.compression is not None
+
+
+@pytest.mark.parametrize("k,n", [(0, 8), (0, 800), (5, 64), (81, 81), (1278, 1392)])
+def test_the_wilson_interval_contains_the_point_estimate_and_stays_in_range(k, n):
+    """Shared so one definition cannot drift into two, which is why it has tests at all.
+
+    It was duplicated in `scripts/plot_m3.py` until M2's checklist found that M2's own criterion -- the fault map
+    reported with Wilson CI -- had never been met. Copying the estimator into a second script would have been the
+    obvious fix; this project has already had to repair two cases of one quantity computed twice and drifting.
+    """
+    from raq_kv.analysis.stats import wilson
+
+    low, high = wilson(k, n)
+    assert 0.0 <= low <= k / n <= high <= 1.0
+
+
+def test_wilson_stays_finite_at_zero_and_narrows_with_n():
+    """The whole reason for choosing it: at k = 0 a normal interval has zero width and claims certainty."""
+    from raq_kv.analysis.stats import wilson
+
+    low_small, high_small = wilson(0, 8)
+    low_big, high_big = wilson(0, 800)
+    assert low_small == 0.0 and high_small > 0.0, "an interval at zero events must not be a point"
+    assert high_big < high_small, "0 of 800 is stronger evidence than 0 of 8 and the interval must say so"
+    # And a full count is not certainty either.
+    assert wilson(81, 81)[0] < 1.0
+
+
+def test_wilson_on_an_empty_cell_is_maximally_uninformative():
+    from raq_kv.analysis.stats import wilson
+
+    assert wilson(0, 0) == (0.0, 1.0)
