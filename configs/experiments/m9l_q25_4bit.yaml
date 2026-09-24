@@ -1,0 +1,32 @@
+# SECOND-FAMILY REPLICATION. Every claim in sections 6-9 of the review dossier except H3 is Qwen3-1.7B only, and
+# "one model" is the easiest thing for a reviewer to attack. Llama-3.2-3B has identical KV geometry (verified:
+# both 57344 values per token), so the bit-budget constants transfer unchanged and a difference is a FAMILY
+# effect, not a cache-geometry one.
+#
+# The families differ where it matters here: Qwen3 applies QK-Norm and Llama does not (D1, D15), so key
+# statistics differ -- and group_token key quantization is built around key-outlier behaviour. D47 already found
+# one consequence: key magnitude is a 4x stronger anti-signal on Llama than on Qwen.
+#
+# D40's iso-budget frontier on the second family. The allocator's ONE measured constant is MIN_BITS = 4,
+# set because on Qwen the frontier has an interior optimum: spending a budget on more tokens keeps paying
+# down to 4 bits and reverses below it (2-bit@40.5% loses to 4-bit@25% by +0.1282, p = 0.00027, with 100%
+# of answer tokens kept in both). 3-bit was indistinguishable from 4-bit (p = 0.32), so the floor is the
+# conservative end of a plateau.
+#
+# If that turning point moves on Llama, MIN_BITS is a per-family constant and the allocator says so or is
+# wrong. All five arms sit at ~1.05 bits per original token, so the comparison is iso-budget by construction.
+include:
+  - models/llama3p2_3b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m9l_q25_4bit
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+compression:
+  scorer: query_attention
+  ratio: 0.25
+  unit: span
+task:
+  kind: retention
+  n_samples: 120
+seed: 0

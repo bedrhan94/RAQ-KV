@@ -1,0 +1,33 @@
+# SECOND-FAMILY REPLICATION. Every claim in sections 6-9 of the review dossier except H3 is Qwen3-1.7B only, and
+# "one model" is the easiest thing for a reviewer to attack. Llama-3.2-3B has identical KV geometry (verified:
+# both 57344 values per token), so the bit-budget constants transfer unchanged and a difference is a FAMILY
+# effect, not a cache-geometry one.
+#
+# The families differ where it matters here: Qwen3 applies QK-Norm and Llama does not (D1, D15), so key
+# statistics differ -- and group_token key quantization is built around key-outlier behaviour. D47 already found
+# one consequence: key magnitude is a 4x stronger anti-signal on Llama than on Qwen.
+#
+# M3's headline on the second family: a range check on the quantization metadata costs +0.075% of storage
+# and removed 100% of measured fault-induced failure on Qwen (31.8% -> 0.00%, p = 6e-10, 50 of 58 samples
+# discordant). That is the project's strongest PRACTICAL recommendation and it rests on one model.
+#
+# The mechanism is arithmetic and should transfer -- a float16 scale's bit 14 multiplies it by 65536
+# regardless of family -- but the unprotected BASE RATE need not: it depends on how much a rescaled group
+# costs this model's answer. If Llama's unprotected arm fails far less, the guard has less to remove and
+# the headline number is family-specific even though the mechanism is not. Measured rather than assumed.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m9l_arm_h_guard
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_guard: range
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-6
+  n_trials: 8
+  n_control: 1
+seed: 0
