@@ -1,0 +1,31 @@
+# SECOND-FAMILY REPLICATION of H6 -- the comparison against a faithful published baseline.
+#
+# KIVI at its OWN published configuration: keys group_token 32, values group_channel 32, residual window 128. The
+# window is paid for in the budget, which review required -- a comparison against KIVI without its residual window
+# would be a weakened baseline (docs/literature.md).
+#
+# On Qwen3-1.7B: KIVI 2-bit costs 4.331 bits per original token and fails 5.13%; the joint point costs 1.054 and
+# fails 0.85% -- 4.1x cheaper and 6x fewer failures. KIVI 4-bit is lossless there at 6.13 bits. One finding runs
+# against us and is reported: the fixed window costs R/T per value, so below ~1500 tokens KIVI is dominated by plain
+# 4-bit with no window, which is about the window rather than about KIVI's own claim (made at long context).
+#
+# WRITTEN BEFORE THE RUN. D51 found Llama tolerates 2-bit about 3.5x better than Qwen, and KIVI 2-bit IS a 2-bit
+# arm -- so the most likely outcome is that KIVI looks BETTER on Llama and the margin over the joint point shrinks.
+# That would not refute H6 (the joint point is also measured on Llama: 0.0000 at 1.054 bits, D51/D53) but it would
+# show the 4.1x/6x figures are Qwen numbers. The budget arithmetic is family-independent and should transfer exactly,
+# since both models have identical KV geometry.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m9l_kivi_4bit
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 32}
+  values: {bits: 4, axis: group_channel, group_size: 32}
+  residual_window: 128
+compression:
+  scorer: recency
+  ratio: 1.0
+task:
+  kind: retention
+  n_samples: 120
+seed: 0
