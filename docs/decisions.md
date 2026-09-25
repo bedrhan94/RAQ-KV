@@ -2230,3 +2230,72 @@ Two families, one synthetic probe whose facts are single sentences **by construc
 deployable scorers, one retention ratio. The construction caveat is now the binding one: H4 replicating across
 families says nothing about whether it survives a task whose facts are not sentence-shaped, which is what
 RULER/LongBench would test.
+
+## D54 — The concentration effect does NOT replicate on the second family, with adequate power, and the family difference itself is established (2026-09-26)
+
+D43, D44 and D45 built up what those records call *the project's strongest structural result*: at matched fault
+exposure an unprotected 25%-pruned cache fails about twice as often as an unpruned one, replicated across a decade
+of error rate on Qwen3-1.7B. It is the evidence for **"protection is not separable from retention"** — the one thing
+§6's multiplicative form was credited with getting right — and the reason the allocator's protection stage carries a
+caveat about pruned caches.
+
+**On Llama-3.2-3B it is absent.** Same rate (3e-7, the one D44 established as where the effect is visible), same
+matched-exposure machinery (`ber_basis: unpruned`, 159 flips into both arms), 49 paired samples.
+
+| | **Llama-3.2-3B** | Qwen3-1.7B (D45) |
+|---|---|---|
+| unpruned, unprotected | **0.2270** | 0.1116 |
+| pruned 25%, matched exposure | **0.2168** | 0.2232 |
+| difference | **−0.0102 [−0.0510, +0.0306]** | **+0.1116 [+0.0536, +0.1719]** |
+| p / discordant | **0.694 / 37 of 49** | 4.6e-04 / 43 of 56 |
+| risk ratio | **0.955** | **2.000** |
+
+### This is a negative result with power, not a null from lack of room
+
+Three checks, because the project has twice mistaken a pinned comparison for an absent effect (D30 at the floor,
+D44 at the ceiling):
+
+* **Not saturated.** Both arms sit at 0.22, mid-range in both directions. The 1e-5 failure was both arms above 0.94;
+  this is nothing like it.
+* **Powered.** **37 of 49 samples are discordant** — more discordance than Qwen's 43 of 56 as a fraction. The test
+  had room to find a two-fold effect and found nothing.
+* **Not compositional.** Payload-metadata share of flips 6.2516% → 6.0171%, p = 0.249. Controls exactly zero on
+  both arms.
+
+**And the family difference itself is established, not merely a failure to replicate.** Qwen's interval
+[+0.0536, +0.1719] and Llama's [−0.0510, +0.0306] are **disjoint**, with a gap of 0.0230. That is a stronger
+statement than Q48's family difference (D52), where the intervals overlapped and only the verdict replicated.
+
+### What this withdraws
+
+**"Protection is not separable from retention" is a Qwen result, not a general one.** The allocator's
+retention-free protection lookup is *correct* for Llama and questionable for Qwen — the opposite of a structural
+law. Every place the records call this "structural", including D43's own framing and the M4 exit checklist's row 10,
+describes a single family. This is the **sixteenth** finding withdrawn or re-scoped in this project, and the largest
+by what rested on it.
+
+What survives unchanged: the *mechanism* is still coherent where it appears, D44's diagnosis of the 1e-5 null as
+saturation still holds on Qwen, and the matched-exposure methodology is what made both the positive and the negative
+measurable.
+
+### A mechanism the earlier records already predicted
+
+The config header for this run said a weaker effect would be *consistent* rather than contradictory, because D51
+found Llama's fault map markedly flatter — coefficient of variation **14%** against Qwen's **27%**. A flatter map
+means the cells pruning preserves are not systematically more fragile than the ones it discards, so there is nothing
+for retention to concentrate. The effect came out not weaker but **absent**, which is the same prediction taken to
+its limit.
+
+D52 adds the other half: Qwen's quantization sensitivity peaks at **layer 26 keys** while Llama's peaks at **layer
+2**. On Qwen, query-aware retention keeps the semantically important tokens *and* those happen to live where the
+late-layer sensitive keys are; on Llama the two do not coincide. So three independent measurements — flatter fault
+map, differently-located quantization sensitivity, absent concentration — all point at the same family difference,
+and all three are consistent with Qwen applying QK-Norm where Llama does not. **Still a hypothesis: nothing here
+ablates QK-Norm**, and a third family or a QK-Norm-disabled Qwen is what would test it.
+
+### Scope, and what this does not say
+
+It does not say pruning is safe in general, and it does not say Qwen's result was wrong. Llama is **2.03× more
+fragile unprotected** at this rate (0.2270 against 0.1116), so the two families differ in base rate as well as in
+the interaction, and a deployment on either should price protection from its own measurements. One rate, one
+retention ratio, one scorer, one probe.

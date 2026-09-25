@@ -97,14 +97,25 @@ def _protection(ber: float) -> tuple[str | None, str, str]:
     because the thirteen of sixteen float16 bits it cannot see accumulate. Uniform data ECC at 14% is never
     chosen: arm B matched arm G at 1e-6 and nothing has separated them since.
 
-    **This lookup takes no retention argument, and D43/D45 showed that is wrong as a mechanism.** At equal fault
-    *exposure* a cache pruned to 25% fails about twice as often at low exposure -- 0.2232 against 0.1116 at 3e-7
-    (+0.1116 [+0.0536, +0.1719], p = 4.6e-04) and 0.4018 against 0.3125 at 1e-6 (+0.0893 [+0.0223, +0.1562],
-    p = 0.016), a decade apart and both meeting the pre-registered rule. Query-aware span retention keeps exactly
-    the answer-bearing spans, so every scale that survives pruning governs a group the answer depends on, where
-    most groups in a full cache govern filler. Protection is therefore **not separable from retention**, which is
-    the one thing the brief's multiplicative form got right. (The risk ratio falls 2.00 -> 1.29 -> 1.02 as the
-    unprotected base rate rises 11% -> 31% -> 94%, so the 1e-5 null is saturation rather than absence.)
+    **This lookup takes no retention argument. On Qwen3-1.7B that is wrong; on Llama-3.2-3B it is right.** At equal
+    fault *exposure* a Qwen cache pruned to 25% fails about twice as often at low exposure -- 0.2232 against 0.1116
+    at 3e-7 (+0.1116 [+0.0536, +0.1719], p = 4.6e-04) and 0.4018 against 0.3125 at 1e-6 (+0.0893 [+0.0223,
+    +0.1562], p = 0.016), a decade apart, both meeting the pre-registered rule (D43, D45). The mechanism is that
+    query-aware span retention keeps exactly the answer-bearing spans, so every scale that survives pruning governs
+    a group the answer depends on. (The risk ratio falls 2.00 -> 1.29 -> 1.02 as the unprotected base rate rises
+    11% -> 31% -> 94%, so the 1e-5 null is saturation, not absence.)
+
+    **D54 measured the same contrast on Llama and found nothing: -0.0102 [-0.0510, +0.0306], p = 0.694 on 37 of 49
+    discordant samples** -- powered, unsaturated, composition control passing -- with a risk ratio of 0.955 against
+    Qwen's 2.000, and the two families' intervals **disjoint**. So "protection is not separable from retention" is a
+    **Qwen result, not a structural law**, and this retention-free lookup is correct for one family and questionable
+    for the other. Three independent measurements agree on where the families differ: Llama's fault map is flatter
+    (CV 14% against 27%, D51), its quantization sensitivity peaks at layer 2 rather than layer 26 (D52), and the
+    concentration effect is absent (D54). All three are consistent with Qwen applying QK-Norm where Llama does not;
+    none of them ablates it.
+
+    **What a caller should take from this:** price protection from measurements on the model being deployed. The
+    constants here came from Qwen and the interaction they do not model is Qwen's.
 
     **The constants below are unchanged, and whether they should be is open in both directions.** D43 asserted
     here that the lookup is "unconservative for aggressively pruned caches", on the strength of a 1e-6 contrast

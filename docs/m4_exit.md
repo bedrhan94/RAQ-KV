@@ -4,10 +4,13 @@
 open and nine of ten criteria met; that version is preserved in git rather than rewritten, because the reason
 the milestone stayed open for a day is part of its record.
 
-**Row 10's answer changed a structural assumption, not a constant.** At equal exposure a pruned cache is
+**Row 10's answer changed an assumption on ONE family (scoped by D54).** At equal exposure a pruned cache is
 significantly *more* fragile (+0.0893, p = 0.016): query-aware span retention keeps exactly the answer-bearing
-spans, so every surviving scale governs a group the answer needs. Protection is therefore **not separable from
-retention**, and the allocator's first stage assumes it is. The allocator's constants are unchanged — the
+spans, so every surviving scale governs a group the answer needs. **D54 then measured the same contrast on
+Llama-3.2-3B and found nothing** -- -0.0102 [-0.0510, +0.0306], p = 0.694 on 37 of 49 discordant samples, powered
+and unsaturated, with the two families' intervals disjoint. So "protection is not separable from retention" is a
+Qwen result rather than a structural law, and the allocator's retention-free first stage is correct for Llama and
+questionable for Qwen. The allocator's constants are unchanged — the
 measurement that would move them has four discordant samples — so M5 carries a stated caveat instead of a fix.
 See D43.
 

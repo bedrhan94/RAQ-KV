@@ -1,7 +1,7 @@
 """Builds the RAQ-KV technical review document (.docx) for an external reviewer.
 
 Regenerate with:  python scripts/build_review_docx.py
-Content is assembled from docs/decisions.md (D1-D52), docs/claims.md and the measured campaign outputs; the
+Content is assembled from docs/decisions.md (D1-D54), docs/claims.md and the measured campaign outputs; the
 numbers here are transcribed from those records, and the record is the source of truth if they ever disagree.
 """
 
@@ -66,6 +66,12 @@ WITHDRAWN_ROWS = [
      "baseline; the campaign had one family and had not run that arm (D42)",
      "Supported on one model family against the baselines actually run, with the unmet conditions named; the "
      "general claim is not made"],
+    ["'Protection is not separable from retention' as a STRUCTURAL result (D43-D45)",
+     "Measured on Llama-3.2-3B at the rate D44 established as where the effect is visible: -0.0102 [-0.0510, "
+     "+0.0306], p = 0.694 on 37 of 49 discordant samples - powered, unsaturated, composition control passing - "
+     "against Qwen's +0.1116, with the two intervals disjoint (D54)",
+     "A Qwen result, not a structural law. The allocator's retention-free protection lookup is correct for Llama "
+     "and questionable for Qwen"],
     ["'Key magnitude selects answer tokens at chance' (D42)",
      "Measured on one family and six fact types. On the five the second family can be scored on, and with that "
      "family added, all four arms point the same way and three are significant (D47)",
@@ -254,7 +260,7 @@ def build(doc: Document) -> None:
     para(doc, "Technical review dossier - complete record of methods, formulas, measurements and corrections",
          italic=True, colour=GREY, space_after=2)
     para(doc, "Model: Qwen3-1.7B @ 70d244cc | Hardware: RTX 5060 Ti | "
-              "378 automated tests passing (7 GPU-gated, deselected) | decision records D1-D52",
+              "378 automated tests passing (7 GPU-gated, deselected) | decision records D1-D54",
          size=9, colour=GREY)
     rule(doc)
 
@@ -865,10 +871,26 @@ def build(doc: Document) -> None:
 
     # ---------------------------------------------------------------- 11
     doc.add_heading("11. Limitations - stated, not discovered by the reviewer", level=1)
-    bullet(doc, "Two models for H3, the 4-bit floor, the metadata guard and Q48. Sections 6 (except Q48), 8, 9.2, 9.5 and "
-                "9.6 are still single-model on Qwen3-1.7B, and where the second family HAS been run it agreed on "
-                "three of four: the 4-bit floor and the guard replicate, and Q48 keeps its pre-registered verdict "
-                "but loses its sign - quantization sensitivity peaks at layer 26 in Qwen and layer 2 in Llama.", bold=False)
+    rich(doc, [("The second-family replication is in progress, and it is not uniformly reassuring. ", "b"),
+               ("Llama-3.2-3B has identical KV geometry (verified: both 57344 values per token), so a difference "
+                "is a family effect rather than a cache-geometry one. Five claims have been re-measured on it:")])
+    bullet(doc, "The 4-bit floor (section 9.1) REPLICATES - same interior optimum, both ends of the U "
+                "significant - but its depth does not: Llama tolerates 2-bit about 3.5x better, so the "
+                "magnitudes must be quoted with their model.")
+    bullet(doc, "The metadata guard (section 7) REPLICATES and removes more: 0.5250 to 0.0000 on Llama against "
+                "0.3211 to 0.0000 on Qwen, so Llama is the more fragile of the two unprotected.")
+    bullet(doc, "The span finding (section 8) REPLICATES and is stronger: a perfect token oracle fails 62% on "
+                "Llama against 56% on Qwen, and the locality control is again indistinguishable from it.")
+    bullet(doc, "Q48 (section 6.4) keeps its PRE-REGISTERED VERDICT and loses its sign: rho = +0.073 on Llama "
+                "against -0.377 on Qwen. Both are 'separate signals', so the multiplicative score is rejected on "
+                "both - but the reason given for rejecting it, that the signals are anti-correlated, is "
+                "Qwen-specific. Quantization sensitivity peaks at layer 26 in Qwen and layer 2 in Llama.")
+    bullet(doc, "The concentration effect (section 9.5) DOES NOT REPLICATE, with power: -0.0102 [-0.0510, "
+                "+0.0306], p = 0.694 on 37 of 49 discordant samples, unsaturated, against Qwen's +0.1116 - and "
+                "the two intervals are disjoint. So 'protection is not separable from retention' is a Qwen "
+                "result, not a structural law, and it is the sixteenth entry in section 10.")
+    bullet(doc, "Still single-model: the rest of section 6, section 9.2's KIVI comparison, and section 9.6's "
+                "precision-by-faults result.")
     bullet(doc, "Every section 9.4 comparison is floor-limited on the JOINT side. The joint arm never came off "
                 "the floor on Llama at any of the three budgets (0 of 101 each time) and failed 1 of 99 on Qwen, "
                 "so a policy better than this one could not be distinguished from it here - and neither could a "
@@ -946,7 +968,7 @@ def build(doc: Document) -> None:
                 "direction - something withdrawn that should have stood?")
     rule(doc)
     para(doc, "Generated by scripts/build_review_docx.py. Every number transcribed from docs/decisions.md "
-              "(D1-D52), docs/claims.md and the run manifests in outputs/; those records are the source of "
+              "(D1-D54), docs/claims.md and the run manifests in outputs/; those records are the source of "
               "truth if they disagree with this document.", size=9, italic=True, colour=GREY)
 
 
