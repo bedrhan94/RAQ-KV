@@ -2299,3 +2299,54 @@ It does not say pruning is safe in general, and it does not say Qwen's result wa
 fragile unprotected** at this rate (0.2270 against 0.1116), so the two families differ in base rate as well as in
 the interaction, and a deployment on either should price protection from its own measurements. One rate, one
 retention ratio, one scorer, one probe.
+
+## D55 — D17 and H1c replicate on the second family from data already on disk, and metadata dominance is stronger there (2026-09-26)
+
+The Llama fault campaign run for Q48 (D52) carries the bit-position and target-class strata as well, so two of M2's
+findings replicate at **zero additional GPU cost** — a reminder that a campaign designed for one question often
+already answers another, and that checking costs nothing.
+
+Computed identically on both families (mean and max `delta_nll_max` per target class, 4000 code flips and ~790
+metadata flips each):
+
+| | Qwen3-1.7B | **Llama-3.2-3B** |
+|---|---|---|
+| code, mean damage | 0.2233 | **0.1273** |
+| metadata, mean damage (scale + zero, count-weighted) | 0.6354 | **0.5659** |
+| **metadata / code ratio** | **2.845×** | **4.446×** |
+| worst-case metadata | 35.96 nats | 19.05 nats |
+| worst-case code | 0.870 nats | **0.366 nats** |
+| tail separation (worst metadata / worst code) | 41× | **52×** |
+| **bit position, LSB → MSB damage** | **1.032×** | **1.023×** |
+
+### D17's target-class finding replicates and is larger
+
+**Metadata is 4.45× more damaging than codes on Llama against 2.85× on Qwen**, and the tail separation is cleaner:
+Llama's worst code flip costs 0.366 nats where its worst metadata flip costs 19.0. This is the finding every
+protection decision in the project descends from — M3's arm design, the +0.075% guard, the allocator's protection
+stage — and it is now the **best-replicated result here**, holding on both families and stronger on the second.
+
+That matters more than usual given D54. The concentration effect turned out to be a Qwen property; *this* one is
+not. The two are easy to conflate because both concern faults and both were established in the same milestones, so:
+**where the damage lands (metadata, both families) is general; whether pruning concentrates it (Qwen only) is not.**
+
+### H1c replicates almost exactly
+
+**Bit position moves damage 1.023× on Llama against 1.032× on Qwen**, while the stored value changes **128×** from
+LSB to MSB. Two families, essentially the same number. MSB-only ECC is poor value per bit on both, and the project's
+refusal to spend a bit on it was not a single-model decision.
+
+### A discrepancy in my own citation, stated rather than smoothed
+
+D17 records the ratio as "metadata 2.4× codes in mean damage". Computed as above it is **2.845×** on the same data.
+The difference is an aggregation choice — D17 evidently pooled the two metadata classes differently — and the
+number quoted in this record is the one computed identically on both families, which is what a cross-family
+comparison requires. D17's figure is not withdrawn; it is a different statistic on the same measurement, and this
+record is the like-for-like one.
+
+### What is still single-model in M2
+
+**Q49** (the role effect: OR 7.13 once a token's whole row is destroyed) needs the `fault_qa` probe runs, not this
+WikiText campaign, so it is not free and has not been run on Llama. Given D54, it is now more interesting than it
+was: Q49 is about *which tokens* matter under faults, which is the same axis the concentration effect turned out to
+be family-specific on.
