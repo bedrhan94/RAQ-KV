@@ -1,0 +1,31 @@
+# SECOND-FAMILY REPLICATION of H4 -- the project's headline retention claim.
+#
+# H4: the unit of KV retention is the SPAN, not the token. On Qwen3-1.7B at 25% retention, a *perfect token
+# oracle* -- one that keeps every answer-bearing token -- still fails 0.5641 of questions, while the fact's own
+# sentence fails 0.1538 and a deployable query-aware span scorer fails 0.0256. A same-sized contiguous window
+# placed elsewhere scores 0.5812, indistinguishable from keeping no context at all, so what the span buys is the
+# fact's own neighbourhood and not contiguity.
+#
+# That is the finding the whole retention half of the paper rests on, and it is one model. Llama-3.2-3B has
+# identical KV geometry (verified) so the budgets transfer; what does not transfer automatically is whether a
+# model needs the *neighbourhood* of a fact or just the fact. If Llama's token oracle does fine, H4 is a Qwen
+# property and the claim has to be scoped to it.
+#
+# D51 and D52 both already found this family diverging on key statistics -- 2-bit is ~3.5x easier here and
+# quantization sensitivity peaks at layer 2 rather than 26 -- so assuming the retention story transfers would be
+# exactly the kind of assumption this project keeps having to retract.
+#
+# The SPAN ORACLE: the fact's own sentence. On Qwen it fails 15.4% against the token oracle's 56.4%.
+# **Not a ceiling** (D36 retraction): it spends its spare budget by recency, and a real query-aware method
+# beats it by 13 points.
+include:
+  - models/llama3p2_3b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m9l_gate_keep_sentence
+compression:
+  scorer: oracle_keep_sentence
+  ratio: 0.25
+task:
+  kind: retention
+  n_samples: 120
+seed: 0
