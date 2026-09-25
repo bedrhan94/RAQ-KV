@@ -1,0 +1,34 @@
+# Q48 ON THE SECOND FAMILY -- the highest-value single-model claim left, and the most expensive.
+#
+# Q48 asks whether quantization sensitivity and fault vulnerability are the same signal. Its threshold was frozen
+# before measurement (partial rho >= 0.6 = one shared signal, <= 0.3 = separate signals) and on Qwen3-1.7B the
+# answer was rho = -0.377 [-0.588, -0.128], partial -0.282: separate, and mildly NEGATIVE -- faults hurt most in
+# early layers, quantization most in late-layer keys.
+#
+# That single number is why §6's multiplicative Joint Reliability Score was never built. A score multiplying two
+# anti-correlated signals is a worse ranking than either factor alone, so the allocator became a staged rule
+# instead (D22, D30, D40). **If the correlation is positive on Llama, the brief's design was right for some
+# families and this project rejected it on one model.** That is the specific risk being checked.
+#
+# Qwen applies QK-Norm and Llama does not (D1, D15), so key statistics differ -- and Q48 is a correlation over
+# per-(layer, part) key and value sensitivity. D47 already found key magnitude a 4x stronger anti-signal on Llama,
+# and D51 found Llama tolerates 2-bit keys ~3.5x better. Both say this axis is where the families diverge, which
+# is exactly why the sign here is not safe to assume.
+#
+# Identical KV geometry (verified: both 57344 values per token), same dataset, same strata, same seeds -- so the
+# only thing varying against the Qwen campaign is the family.
+#
+# Half one: per-(layer, part) quantization sensitivity, from the same 2-bit block spec Qwen used.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/wikitext2.yaml
+name: m9l_quant_sensitivity_blocks
+task:
+  kind: quant_sensitivity
+  granularity: layer_part
+  n_chunks: 40
+  key_spec: {bits: 2, axis: group_token, group_size: 128}
+  value_spec: {bits: 2, axis: per_token}
+  null_bits: 8
+  null_regions: 8
+seed: 0
