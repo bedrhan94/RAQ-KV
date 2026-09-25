@@ -1,0 +1,43 @@
+# SECOND-FAMILY REPLICATION of the concentration effect (D43, D45) -- the project's strongest STRUCTURAL result.
+#
+# At matched fault exposure an unprotected 25%-pruned cache fails about twice as often as an unpruned one, because
+# query-aware span retention keeps exactly the answer-bearing spans and every scale that survives pruning governs
+# a group the answer depends on. On Qwen3-1.7B, across a decade of rate:
+#
+#   3e-7   0.1116 -> 0.2232   +0.1116 [+0.0536, +0.1719]  p = 4.6e-04   ratio 2.00
+#   1e-6   0.3125 -> 0.4018   +0.0893 [+0.0223, +0.1562]  p = 0.016     ratio 1.29
+#   1e-5   0.9420 -> 0.9621   +0.0201 (saturated, p = 0.097)            ratio 1.02
+#
+# That is why the record says protection is NOT separable from retention -- the one thing §6's multiplicative form
+# got right -- and the allocator's protection stage is a lookup with no retention term.
+#
+# 3e-7 is the rate to replicate at, chosen because D44 learned the lesson the hard way: 1e-5 is where the GUARD
+# breaks, which is a different question from where the EFFECT is visible, and at 1e-5 both arms saturate near 95%.
+# At 3e-7 the unprotected arm sits near 11% on Qwen, well clear of floor and ceiling.
+#
+# Exposure is matched per sample via `ber_basis: unpruned` -- the pruned cache takes the flips the SAME sample's
+# unpruned cache would take, so "fewer bits stored, fewer bits hit" cannot masquerade as a finding about importance.
+#
+# WRITTEN BEFORE THE RUN. D51 and D52 both found this family diverging on key statistics, and D51 found Llama's
+# fault map markedly flatter (CV 14% against 27%). A flatter map means less heterogeneity for pruning to
+# concentrate, so a weaker effect here would be consistent rather than contradictory -- and a null would narrow the
+# structural claim to one family.
+include:
+  - models/llama3p2_3b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: m9l_fr7_unpruned
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+compression:
+  scorer: query_attention
+  ratio: 1.0
+  unit: span
+  protect_initial: 4
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 3.0e-7
+  n_trials: 8
+  n_control: 1
+seed: 0
