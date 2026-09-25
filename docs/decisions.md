@@ -2173,3 +2173,60 @@ both are far below the 0.6 the "one shared signal" branch required.
 Two families, one dataset (WikiText-2 cache-conditioned), one quantization spec per axis, 56 cells. The QK-Norm
 attribution is inferred from where the maps peak, not from an ablation, and a third family — or a Qwen variant
 with QK-Norm disabled — is what would test it.
+
+## D53 — H4 replicates on the second family and is stronger there; the locality control replicates too (2026-09-26)
+
+H4 is the headline retention claim: **the unit of KV retention is the span, not the token.** It was one model.
+Six arms on Llama-3.2-3B at 25% retention, bf16, 100 paired samples (`tool_arg` excluded per D46).
+
+| arm | **Llama** | Qwen (D33/D34) |
+|---|---|---|
+| `oracle_drop_target` (99% kept, answer tokens removed) | **1.0000** | 0.977 |
+| recency | 0.6400 | 0.6923 |
+| **`oracle_keep_target`** (perfect token oracle) | **0.6200** | 0.5641 |
+| `oracle_keep_random_span` (locality control) | **0.6100** | 0.5812 |
+| `oracle_keep_sentence` (the fact's own span) | **0.0000** | 0.1538 |
+| query-aware attention @ span (deployable) | **0.0000** | 0.0256 |
+
+| contrast | difference | p | discordant |
+|---|---|---|---|
+| span oracle vs **perfect token oracle** | **−0.6200 [−0.7100, −0.5300]** | **3.4e-15** | 62 |
+| span oracle vs locality control | −0.6100 [−0.7000, −0.5100] | 5.7e-15 | 61 |
+| **token oracle vs locality control** | +0.0100 [+0.0000, +0.0300] | **0.317** | 1 |
+| query-aware span vs recency | −0.6400 [−0.7300, −0.5500] | 1.2e-15 | 64 |
+| query-aware span vs span oracle | 0.0000 | 1 | **0** |
+
+### What replicates, and more strongly
+
+**A perfect token oracle fails 62% of questions on Llama** — keeping *every* answer-bearing token and nothing else.
+The fact's own sentence fails **0%**. The span-over-token gap is **62 points** against Qwen's 41. So H4 is not a
+Qwen property, and the second family makes it larger rather than smaller.
+
+**The locality control replicates, which is the control that gives H4 its meaning.** A same-sized contiguous window
+placed elsewhere in the document scores 0.6100, and against the token oracle's 0.6200 that is **p = 0.317 on one
+discordant sample** — indistinguishable. So a span is not valuable because it is contiguous; it is valuable because
+it is *the fact's own* neighbourhood. Both families agree, and on Llama the two arms are within one sample of each
+other.
+
+**The precondition holds.** `oracle_drop_target` keeps 99% of the cache with the answer tokens removed and fails
+**100%** of samples, so the fact is load-bearing and importance is measurable on this probe at all (D33's gate).
+
+### What cannot be re-established on Llama, and why
+
+**D36's retraction — that the sentence oracle is *not* a ceiling — is untestable here.** On Qwen the query-aware
+span arm (0.0256) beat the sentence oracle (0.1538) by 13 points, which is what forced the word "ceiling" to be
+withdrawn. On Llama **both reach exactly 0.0000** with **zero discordant samples**, so the comparison has no room.
+By D30's rule that is a bound, not agreement: what can be said is that the deployable arm is no worse than the
+oracle here, and the 13-point margin is a Qwen measurement that this family cannot confirm or deny.
+
+This is the same floor-limitation D48 and D51 both ran into, arriving a third time: Llama is simply more tolerant
+at 25% bf16 retention, so the good arms bottom out and the interesting comparisons among them stop resolving. It
+also means the 62-point span-over-token gap is measured *against a floor on the span side* — the true gap could be
+larger and this design could not show it.
+
+### Scope
+
+Two families, one synthetic probe whose facts are single sentences **by construction**, oracles that are not
+deployable scorers, one retention ratio. The construction caveat is now the binding one: H4 replicating across
+families says nothing about whether it survives a task whose facts are not sentence-shaped, which is what
+RULER/LongBench would test.
