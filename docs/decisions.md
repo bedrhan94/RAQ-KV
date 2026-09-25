@@ -2108,3 +2108,68 @@ Q48 (ρ = −0.377, the correlation that killed §6's multiplicative score), the
 D32's attention sink, D39's KIVI comparison, and the concentration effects of D43–D45 and D49. Q48 is the highest
 value of those and the most expensive — it needs both a quantization-sensitivity campaign and a fault campaign on
 Llama — and the QK-Norm hypothesis predicts precisely that it might differ, which is what makes it worth the hours.
+
+## D52 — Q48 on the second family: the pre-registered branch replicates, the sign does not, and the reason is locatable (2026-09-25)
+
+Q48 is the correlation that decided the project's architecture. Its threshold was frozen before measurement
+(partial ρ ≥ 0.6 = one shared signal, ≤ 0.3 = separate signals), and on Qwen3-1.7B it came out **ρ = −0.377
+[−0.588, −0.128], partial −0.282**: separate signals, and mildly *anti*-correlated. That is the number cited for
+never building §6's multiplicative Joint Reliability Score. The risk this replication checks is specific: **if the
+correlation is positive on Llama, the brief's design was right for some families and this project rejected it on
+one model.**
+
+Same dataset, strata, counts and seeds; identical KV geometry; 56 (layer, part) cells each.
+
+| | **Llama-3.2-3B** | Qwen3-1.7B |
+|---|---|---|
+| Spearman ρ | **+0.0726 [−0.2372, +0.3809]** | −0.377 [−0.588, −0.128] |
+| partial ρ given KV magnitude | **+0.0466** | −0.282 |
+| pre-registered branch | **separate signals** | separate signals |
+
+### What replicates
+
+**The pre-registered verdict, which is the load-bearing part.** Both families land in the *separate signals*
+branch (partial ρ well below 0.3). §6's premise — that semantic importance, quantization sensitivity and fault
+vulnerability are facets of one signal that can be multiplied — is wrong on both families, and the frozen
+threshold says so without interpretation.
+
+### What does not replicate, and the mechanism behind it
+
+**The sign.** And the maps say exactly why:
+
+| | fault damage peak | early vs late | quant sensitivity peak | early vs late |
+|---|---|---|---|---|
+| Qwen | layer 1 | **0.2658 → 0.1764** | layer 26 (keys) | 0.0012 → **0.0023** |
+| Llama | layer 1 | **0.1395 → 0.1135** | layer **2** (keys) | **0.0033** → 0.0024 |
+
+Fault damage concentrates **early** in both families. Quantization sensitivity concentrates **late** in Qwen and
+**early** in Llama. So on Qwen the two axes point at opposite ends of the network and the correlation is negative;
+on Llama they point the same way and the opposition disappears. This is the sharpest evidence yet for the QK-Norm
+hypothesis that D47 and D51 each touched from a different direction: **Qwen normalises keys and Llama does not, and
+Qwen's sensitive keys are the late ones.** Still a hypothesis — nothing here ablates QK-Norm — but it is now a
+hypothesis with a located effect rather than a hand-wave.
+
+**Why the correlation is only +0.07 rather than strongly positive, given both peak early:** Llama's fault map is
+much flatter. Coefficient of variation across cells is **14%** (sd 0.0179 on mean 0.1278) against Qwen's **27%**
+(0.0604 on 0.2228). There is less heterogeneity to correlate with, which is a finding about H1 in its own right —
+the "top 10% of cells carry 40.2% of damage" concentration is itself family-dependent.
+
+### **The correction this forces on my own reasoning**
+
+The decision records repeatedly justify rejecting the multiplicative score with "the two signals it multiplies are
+**anti-correlated**, so their product is a worse ranking than either factor alone". **That argument is
+Qwen-specific.** On Llama the signals are *orthogonal*, where the correct statement is weaker and different:
+multiplying uncorrelated signals adds no information the factors do not already carry, and buys the cost of a
+joint search for nothing. Both families reject the multiplicative form; only one supports the reason given for it.
+Every place that reason appears should read "not one signal" rather than "anti-correlated", which is what the
+frozen threshold actually licensed.
+
+**What is NOT established:** that the sign flips between families. The intervals overlap on [−0.237, −0.128]. What
+is established is that Qwen's correlation is significantly negative, Llama's is indistinguishable from zero, and
+both are far below the 0.6 the "one shared signal" branch required.
+
+### Scope
+
+Two families, one dataset (WikiText-2 cache-conditioned), one quantization spec per axis, 56 cells. The QK-Norm
+attribution is inferred from where the maps peak, not from an ablation, and a third family — or a Qwen variant
+with QK-Norm disabled — is what would test it.

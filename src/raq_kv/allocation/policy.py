@@ -8,8 +8,12 @@ semantic importance, quantization sensitivity and fault vulnerability. Four thin
   size and protection by a few or a fraction of one, so a flat search spends itself on infeasible corners;
 * protection is **not a search dimension** (D25-D31) - it is a lookup on the deployment's error rate, and
   uniform data ECC is never worth its bits;
-* the two sensitivity signals the score would multiply are **anti-correlated** (D18, rho = -0.377), so their
-  product is not a ranking anyone should want;
+* the two sensitivity signals the score would multiply are **not one signal** on either model family measured
+  (D18, D52) -- Qwen3-1.7B rho = -0.377, Llama-3.2-3B rho = +0.073, both far inside the frozen "separate
+  signals" branch -- so their product carries no information the factors do not already carry. *(D52 corrected
+  the wording here: this used to read "anti-correlated, so their product is not a ranking anyone should want",
+  which is true of Qwen and not of Llama, where the two are simply orthogonal. Both reject the multiplicative
+  form; only one supports that reason for it.)*
 * the retention decision is over **spans, all-or-nothing across layers** (D32, D34), not over (layer, token)
   cells, so half the cells a per-cell score would rank do not exist as choices.
 
