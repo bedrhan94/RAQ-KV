@@ -52,6 +52,12 @@ _GROUPS: dict[int, tuple[tuple[int, float], ...]] = {
 # answer tokens kept in both, so the damage is per-token quantization error, not lost content. 3-bit is
 # statistically indistinguishable from 4-bit (p = 0.32), so the optimum is a plateau and the floor is the
 # conservative end of it.
+#
+# **Replicated on a second family (D51).** The minimum is 4-bit at 25% on Llama-3.2-3B too, with both ends of the U
+# significant (bf16 at 6.25% costs -0.2277, p = 1.6e-06; 2-bit at 40.5% costs -0.0396, p = 0.0455). So this
+# constant is not a Qwen artefact. What is family-specific is the *depth*: Llama tolerates 2-bit about 3.5x and
+# 8-bit about 7x better, so the magnitudes above must be quoted with their model, and the plateau is wider and
+# less resolvable there (3-bit p = 0.157, 8-bit p = 0.317, with the 4-bit arm failing 0 of 101).
 MIN_BITS = 4
 
 # D32/D34/D36: retention operates on punctuation-delimited spans, keeps an initial block because position 0 is
