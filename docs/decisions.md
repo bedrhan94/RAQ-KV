@@ -2039,3 +2039,72 @@ rather than declared.
 One model, one probe of the agent task, one budget, two catalogue sizes pooled, no faults injected. The
 `named_gold_function` split was built for this and is not yet analysed: whether the deployable arms fail by
 dropping the schema or by keeping it and mis-filling arguments is answerable from the stored records.
+
+## D51 — Second-family replication: the allocator's floor holds, the protection headline is stronger, and Llama tolerates 2-bit far better (2026-09-25)
+
+Everything in the dossier except H3 was Qwen3-1.7B only. Seven arms on Llama-3.2-3B, chosen for stakes per GPU
+hour: the five D40 frontier arms (the allocator's **one measured constant**) and the M3 protection pair (the
+project's strongest **practical** recommendation). Identical KV geometry, so a difference is a family effect.
+
+### 1. D40's interior optimum replicates in shape; the depth does not
+
+All five arms at ~1.05 bits per original token, query-aware span retention, 101 paired samples:
+
+| retention | bits | **Llama** task failure | Qwen (D40) | ratio |
+|---|---|---|---|---|
+| 6.25% | bf16 | **0.2277** | 0.1966 | 1.16× |
+| 12.5% | 8 | **0.0099** | 0.0684 | 0.14× |
+| **25%** | **4** | **0.0000** | 0.0085 | — |
+| 31.5% | 3 | **0.0198** | 0.0171 | 1.16× |
+| 40.5% | 2 | **0.0396** | 0.1368 | **0.29×** |
+
+**The minimum is 4-bit at 25% on both families, so `MIN_BITS = 4` is not a Qwen artefact.** It is a clean U on
+Llama too. Contrasts against the 4-bit arm:
+
+| against 4-bit @ 25% | difference | p | discordant |
+|---|---|---|---|
+| bf16 @ 6.25% | −0.2277 [−0.3069, −0.1485] | **1.6e-06** | 23 |
+| 2-bit @ 40.5% | −0.0396 [−0.0792, −0.0099] | **0.0455** | 4 |
+| 3-bit @ 31.5% | −0.0198 [−0.0495, +0.0000] | 0.157 | 2 |
+| 8-bit @ 12.5% | −0.0099 [−0.0297, +0.0000] | 0.317 | 1 |
+
+- **Both ends of the U are significant**, which is what makes it an interior optimum rather than a monotone curve:
+  too few tokens (bf16) and too little precision (2-bit) each cost significantly more than the 4-bit point.
+- **The plateau is wider on Llama and less resolvable.** 3-bit and 8-bit are indistinguishable from 4-bit on 2 and
+  1 discordant samples. The 4-bit arm fails **0 of 101**, so as in D48 the comparison is floor-limited on the
+  reference side — a better operating point could not be distinguished from it here.
+- **Llama tolerates 2-bit about 3.5× better than Qwen** (0.0396 against 0.1368) and 8-bit about 7× better, while
+  being slightly *worse* at bf16 with too few tokens. So the frontier's *shape* is a property of the trade and its
+  *depth* is a property of the family. A paper stating the 4-bit floor can now say it holds on two families; one
+  quoting D40's magnitudes must say which model they came from.
+- **Consistent with, and not evidence for, the QK-Norm story.** Qwen applies QK-Norm and Llama does not (D1, D15),
+  and D47 already found key magnitude a 4× stronger anti-signal on Llama. Low-precision key quantization being
+  *easier* without QK-Norm is the same axis, but the mechanism is untested and is named as a hypothesis.
+
+### 2. The protection headline replicates, and what it removes is bigger
+
+BER 1e-6, 4-bit, 50 paired samples, no-fault controls at exactly zero on both arms:
+
+| | **Llama** | Qwen (D25/D30) |
+|---|---|---|
+| unprotected task failure | **0.5250** | 0.3211 |
+| +0.075% metadata range guard | **0.0000** | 0.0000 |
+| paired difference | **−0.5250 [−0.6075, −0.4450]** | −0.3211 [−0.2629, −0.3815] |
+| p / discordant | **1.5e-09 / 48 of 50** | 6e-10 / 50 of 58 |
+
+**A range check costing 0.075% of storage removes 100% of measured fault-induced failure on both families** — and
+Llama's unprotected arm is **more** fragile (52.5 points against 32.1), so the guard has *more* to remove, not
+less. That was the specific risk this pair was run to check, written into the config header beforehand: the
+mechanism is arithmetic and should transfer (a float16 scale's bit 14 multiplies it by 65536 in any family) but the
+base rate depends on what a rescaled group costs *that model's* answer, and it could have been much smaller.
+
+The composition caveat D46 forced does not bite here: on Llama every `tool_arg` sample already fails the clean
+answer, so restricting to the other five fact types changes nothing — 0.5250 → 0.0000 either way, identical to
+four decimals.
+
+### What is still single-model after this
+
+Q48 (ρ = −0.377, the correlation that killed §6's multiplicative score), the full M2 fault map, H4's span finding,
+D32's attention sink, D39's KIVI comparison, and the concentration effects of D43–D45 and D49. Q48 is the highest
+value of those and the most expensive — it needs both a quantization-sensitivity campaign and a fault campaign on
+Llama — and the QK-Norm hypothesis predicts precisely that it might differ, which is what makes it worth the hours.
