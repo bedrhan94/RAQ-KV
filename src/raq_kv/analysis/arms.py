@@ -37,6 +37,14 @@ def sole_run(raw_root: Path, name: str) -> tuple[Path, dict, list[dict]]:
     rather than fixed in one script, because the identical loop appeared in `report_fault_retention.py` and
     `scripts/calibrate_iso_budget.py` -- and the second one decides an arm's *budget*, where reading a smoke run
     would silently recalibrate an iso-budget comparison against two samples.
+
+    **LIMIT OF THIS GUARD, found by auditing the store afterwards: "one config name, one live run" is false in this
+    repo by design.** A sweep config emits many experiments from one YAML and they all share its `name` --
+    `m1_kv_quant_ppl` is 13 experiments across bit widths and axes, `m3_rate_calibration` is 5, and `m0a_golden_ppl`
+    is three seeds. Pointed at any of those this function refuses correct data. It is safe only for
+    single-experiment configs, which is all it is currently used on (the protection, retention and D61/D62 arms),
+    and the honest disambiguator for a sweep is the `exp_id` hash, which already encodes the settings that differ.
+    A caller that needs a sweep should select on those settings rather than on the name.
     """
     found: list[tuple[Path, dict, list[dict]]] = []
     for exp in sorted(raw_root.glob("*")):

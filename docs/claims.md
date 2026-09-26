@@ -44,6 +44,31 @@ The rule this adopts: **a decision record that changes what a claim says must ch
 commit.** A retired number living on in a live claim row is the one failure mode this matrix exists to prevent,
 and it happened.
 
+**Re-audited 2026-09-26, and the matrix held.** All of D59–D63 land on `H7` and it carries them. What the audit
+found instead was outside the matrix, in three places:
+
+1. **M6 has no exit document** — M0 through M5 all do. M2's missing one hid an unmet criterion for four days
+   (`docs/m2_exit.md`), so this is the same gap in the same shape. Four M6 deliverables from the plan are
+   unbuilt: **Pass^k** (absent from the repo entirely), **deterministic multi-turn state-carrying tasks**,
+   **Qwen3-4B generalisation** (no model config exists), and **C4's closure**, which this matrix already
+   specifies as perplexity over the BFCL catalogue.
+2. **The perplexity axis is single-family.** `cache_ppl` has 27 live runs and every one is Qwen3-1.7B; it has
+   never run on Llama-3.2-3B. So M1's whole token-level metric story — and C4's evidence, which rests on D16's
+   "+29% perplexity against −71% probe accuracy" — is one model. Every *other* axis has a second family now.
+3. **`named_gold_function` is recorded and never analysed.** `evaluation/scoring.py` reports it so that a failing
+   tool call can be split into "picked the wrong function" against "filled the arguments wrong", and no report
+   reads it. Pure analysis, no GPU.
+
+Also corrected in the same pass: `analysis/arms.py::sole_run` refuses two live runs of one config name, which the
+audit showed is **false in this repo by design** — a sweep emits many experiments sharing its name
+(`m1_kv_quant_ppl` is 13, `m3_rate_calibration` 5, `m0a_golden_ppl` three seeds). Not a live break, since it is
+used only on single-experiment arms, but the limit is now written where the guard is.
+
+And one wording fix for the record: `docs/m2_exit.md` carries burst faults forward as "still not been run", which
+reads as though no burst arm exists. Two did run (`m2_fault_qa_burst` and `_2bit`, 150/150 each) — they are the
+**Q49 role** vehicle. What has not run is **H2b's burst form**, the placement comparison, because `protection_arm`
+has no burst exposure at all.
+
 ## Vehicle notes
 
 - **RAQ-Probe** is the fault-sensitivity vehicle for H1/Q49 (known token roles, facts inside the cache). Analyses of
