@@ -3640,3 +3640,63 @@ the claim is the arms' 0.000 with upper bounds under 5%.
 **Nothing here is a fault result.** These are unfaulted retention arms. Whether a *fault* can produce an argument
 error while leaving the function name intact is a different question and is unmeasured — and it is the interesting
 one for C4, because that would be exactly a case where a token-level metric moves and the tool call still parses.
+
+## D65 — Pass^k, the metric M6 asked for and nothing computed, and it restates H2d far more sharply (2026-09-26)
+
+The plan's §M6 lists "**Pass^k**: bağımsız k fault gerçekleşmesinin hepsinde başarı (güvenilirlik odaklı tanım)" and
+it existed nowhere. It needs no GPU: every protection arm already draws `n_trials` independent fault plans per
+sample, which are exactly the k realisations the metric is about. `scripts/report_pass_k.py`,
+`outputs/reports/pass_k.json`.
+
+**Estimator.** For a sample with `s` successes of `n` trials, the chance that k trials drawn without replacement all
+succeed is `C(s, k) / C(n, k)`, averaged over samples. The combinatorial form uses all n trials rather than asking
+"were the first k clean" and discarding the rest — the code-generation pass@k device applied to a conjunction.
+
+| arm | outcome | Pass^1 | Pass^2 | Pass^4 | **Pass^8** | geometric Pass^1⁸ | excess at k = 4 |
+|---|---|---|---|---|---|---|---|
+| `m3_arm_a_unprot` | task failure | 0.6822 | 0.4933 | 0.2956 | **0.1356** | 0.0469 | **+0.0790** |
+| `m3_arm_a_unprot` | answer changed | 0.6377 | 0.4340 | 0.2317 | **0.0847** | 0.0274 | **+0.0663** |
+| `m3_arm_g_meta_only` | task failure | 1.0000 | 1.0000 | 1.0000 | **1.0000** | 1.0000 | n/a — no failures |
+| `m3_arm_g_meta_only` | answer changed | 0.9831 | 0.9752 | 0.9661 | **0.9492** | 0.8722 | **+0.0322** |
+| `m3_arm_h_range_guard` | task failure | 1.0000 | 1.0000 | 1.0000 | **1.0000** | 1.0000 | n/a — no failures |
+
+### The headline, and it is the best statement of H2d in the project
+
+**Over eight independent faults, an unprotected 4-bit cache returns a correct answer 13.6% of the time; the metadata
+guard returns one 100% of the time.** Same bit budget to within +0.075% of storage. Per-trial rates said the guard
+removes "100% of measured task failure at BER 1e-6", which is true and sounds like a rounding artefact of small
+counts; Pass^8 says the same thing as a survival probability and the gap is 0.1356 against 1.0000. That is the
+number a reliability budget is actually about, and it is why the plan asked for this metric rather than another rate.
+
+The guard is not perfect on the stricter proxy — `answer_changed` Pass^8 is 0.9492, so about 1 deployment in 20
+sees *some* change across eight faults even guarded — and reporting both is the point. The answer surviving and the
+answer being right are different guarantees.
+
+### Failures cluster, in every arm that has any
+
+The excess of the measured curve over `Pass^1` to the k is positive everywhere: **+0.0790** and **+0.0663** on the
+unprotected arm, **+0.0322** on the guarded one's proxy. If each fault struck independently across samples the curve
+would follow the geometric prediction; it sits above it, so **failures repeat on the same samples**.
+
+That changes how the headline should be read. 13.6% is not "every deployment survives 13.6% of the time" — it is
+closer to "13.6% of inputs are immune and most of the rest are not". **Risk is concentrated in which inputs a
+deployment sees, not spread over how many faults it takes.** And `always_fails` is **0.0000** in every arm, so no
+input is certainly doomed either; the concentration is in the middle of the distribution, not at its ends.
+
+This is the same clustering that bit D26, which withdrew a 1.73× ratio after it turned out to be a pooled-trial
+artefact. There it was a hazard to a comparison; here it is the measured quantity.
+
+### A bug in the first version of this analysis, recorded because it was mine
+
+The script's first clustering diagnostic compared `Pass^n_max` against the share of samples that never fail — and
+those are **the same number by construction**, since `C(s, n) / C(n, n)` is 1 exactly when `s = n`. So it printed
+"CLUSTERED" for every arm including `m3_arm_g_meta_only`, which has **zero failures** and for which clustering is
+undefined. Caught by reading the output rather than by any test: an arm with no failures being told its failures live
+on a subset of samples is the kind of sentence that has to be noticed. The diagnostic is now the excess over the
+geometric curve, and the no-failure case says so explicitly.
+
+### Scope
+
+Qwen3-1.7B, BER 1e-6, the M3 probe arms, 8 trials per sample so Pass^k is measurable only to k = 8, and 59 of 60
+samples (one excluded by its own golden). Pass^k over a *larger* k needs more trials per sample, not more samples,
+and 8 was chosen for M3's purposes rather than for this metric.
