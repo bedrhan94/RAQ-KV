@@ -160,9 +160,18 @@ def test_a_group_targeted_arm_is_refused_a_rate():
 
     from raq_kv.config.schema import ProtectionArmTask
 
-    with pytest.raises(Exception, match="does not describe that draw"):
+    with pytest.raises(Exception, match="stated and real exposure differ"):
         ProtectionArmTask(ber=1e-6, fault_target="group_rank", target_group_rank=0,
                           rank_scorer="query_attention")
+    # Same rule for the metadata draw (D62), which narrows the population a different way and is refused a rate
+    # for the identical reason: `flips_for_rate` sizes its count against bits the draw never visits.
+    with pytest.raises(Exception, match="stated and real exposure differ"):
+        ProtectionArmTask(ber=1e-6, fault_target="metadata")
+    ok = ProtectionArmTask(n_flips=1, fault_target="metadata", record_perturbation=True)
+    assert ok.target_group_rank is None and ok.rank_scorer is None, (
+        "a metadata arm needs no ranking, so it must not be required to carry one")
+    with pytest.raises(Exception, match="only mean something"):
+        ProtectionArmTask(n_flips=1, fault_target="metadata", target_group_rank=0)
 
 
 def test_the_existing_protection_arms_keep_their_identities():
@@ -178,5 +187,7 @@ def test_the_existing_protection_arms_keep_their_identities():
     plain = ProtectionArmTask(ber=1e-6)
     assert plain.fault_target is None and plain.target_group_rank is None and plain.rank_scorer is None
     dumped = plain.model_dump(exclude_none=True)
-    for field in ("fault_target", "target_group_rank", "rank_scorer", "ber_basis", "n_flips"):
+    assert plain.record_perturbation is None
+    for field in ("fault_target", "target_group_rank", "rank_scorer", "ber_basis", "n_flips",
+                  "record_perturbation"):
         assert field not in dumped, f"{field} would enter the identity hash of every arm that never sets it"

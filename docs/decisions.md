@@ -2978,3 +2978,77 @@ and rank 1 are equal), so nothing in the result above depends on the sample-set 
 **What none of the three changes.** D60's 18.6% / 41.8% prediction is excluded on either sample set — the top
 cell's interval tops out at 5.7% (Qwen) and 7.0% (Llama). The actionable negative result stands: an
 attention-weighted metadata protection policy would be worse than uniform.
+
+## D62 — The graded measurement, pre-registered: is Llama's fragility per-flip severity or a thinner margin? (2026-09-26)
+
+Frozen before either arm ran. D59 asked why Llama-3.2-3B's per-metadata-flip hazard is **2.63%** against Qwen3-1.7B's
+**1.17%** on unpruned caches — a **2.25×** ratio. Three mechanisms are now eliminated and none was the answer:
+
+* **dynamic range** (D59) — Llama's values carry 500× smaller MSE at equal SQNR, and a corrupted fp16 scale
+  multiplies by up to 65536 either way, so from a smaller base that is a *smaller* excursion;
+* **attention spread** (D60) — refuted with the sign reversed; Llama attends to **fewer** groups, not more;
+* **attention-rank-conditioned severity** (D61) — no gradient at all, and the highest-attention group is the
+  **least** damaging cell in both families.
+
+### Why the previous design could not have answered it
+
+D61's contrasts were underpowered for a structural reason rather than a design error: `answer_changed` runs at
+**2–6%**, and 31 paired samples cannot resolve a 2× difference in a 3% rate whatever the pre-registration says. The
+fix is not more samples — it is to stop thresholding. **The binary break event is a threshold crossing of a
+continuous quantity**, and that quantity is measurable on the same trial for one extra forward pass on a cache
+already built: the shift in the model's distribution over the **first answer token**.
+
+`ProtectionArmTask.record_perturbation` now records, per trial, `kl_first_token` (KL(clean ‖ faulty) in nats, the
+forward direction, so mass the clean model places where the faulty one abandons it is what counts — the failure
+direction for greedy decoding), `margin_clean` and `margin_faulty` (the clean argmax token's lead over its best
+rival under each cache), and `argmax_flipped`.
+
+**The measurement has a zero baseline and it is exactly zero.** Control trials read the same fault-free cache the
+reference came from, and their KL comes back at `0.00000000` on both smoke samples. Without that check, a KL of
+1e-6 in a trial could be pipeline nondeterminism of unknown size rather than the effect of a flip; with it, every
+nonzero value is signal. The project already demands exactly zero damage from controls on the binary outcome; this
+holds the continuous one to the same standard.
+
+### The two branches, and they are not the same kind of answer
+
+The smoke run made the second one visible, which is why it is here: `margin_clean` is a property of the model's
+**fault-free** answer, so the two are separable in one run.
+
+| branch | claim | prediction | what it would mean |
+|---|---|---|---|
+| **A — per-flip severity** | the same corruption moves Llama's output distribution further | per-sample median `kl_first_token` higher on Llama, by a factor of roughly the **2.25×** hazard ratio if severity fully explains D59 | the mechanism is in the **codec**: a metadata flip does more damage there, and quantization design is the lever |
+| **B — a thinner margin** | flips move both distributions comparably, but Llama holds its answers with less confidence, so the same shift crosses the threshold more often | `kl_first_token` distributions comparable, **`margin_clean` lower on Llama** | the mechanism is **not about quantization at all**: Llama is simply a less confident model on this probe, and the fault hazard difference is downstream of that. The right fix would be nothing in the allocator |
+
+**A and B are not exclusive** and a partial split is the likely outcome; what the design buys is that they are
+separated by *which of two recorded quantities* differs, not by argument.
+
+### The frozen analysis
+
+Two arms, `configs/experiments/d62_{qwen,llama}_meta.yaml`. Per arm: **40 samples × 16 trials = 640 flips**,
+`n_flips: 1` (one flip per trial, so each outcome is one conditional), `fault_target: metadata` (uniform over the
+arm's metadata **bits**, via the new `generate_metadata_plan` — deliberately not `generate_plan(n_metadata=…)`,
+which is uniform over *regions* and induces a different distribution over bits whenever
+`group_size != head_dim`), no protection, no pruning, eager attention so D62 sits in the same implementation as
+D61 rather than straddling two.
+
+1. **PRIMARY (branch A).** Per-sample median `kl_first_token`, Llama against Qwen, paired over shared samples,
+   Wilcoxon plus a 10,000-resample bootstrap CI. D31's rule applies. Reported on the **log** scale as well as the
+   raw, because KL over 640 flips is heavy-tailed and a mean would be one outlier's report.
+2. **SECONDARY (branch B).** Per-sample `margin_clean`, which is fault-free and therefore one number per sample,
+   Llama against Qwen, paired, same rule.
+3. **ANCHOR, and it can void the whole design.** Within each family, `kl_first_token` on trials where
+   `answer_changed` against trials where it did not. **If KL does not separate them, the graded measure is not
+   measuring what breaks answers and primaries 1 and 2 are uninterpretable** — that is stated now so it cannot be
+   quietly skipped later. Reported as an AUC with a bootstrap CI and as the median in each group.
+
+`argmax_flipped` is recorded but is **not** the same event as `answer_changed`: a flip can leave the first token
+intact and derail a later step. Both are kept so the gap is visible rather than assumed away.
+
+### Scope, stated before the numbers exist
+
+Logits come back in **bf16**, so `margin_clean` is quantized to about 0.25 and very small shifts are floor-limited
+by the model's own output dtype. The KL keeps resolution because it sums over the whole vocabulary, and both
+families are measured identically, so the cross-family contrast is unaffected — but no absolute margin here should
+be read to more than two significant figures. One probe, one group size (128), 4 bits, single flips, first answer
+token only. A flip that changes nothing at all is expected and observed (one smoke trial returned KL exactly zero
+with a scale flip), consistent with D61's finding that a value whose code is 0 is invariant under scale corruption.

@@ -1,0 +1,31 @@
+# D62 cell: single metadata flips, uniform over metadata bits, with the GRADED outcome recorded. Qwen3-1.7B.
+# The next candidate after D61 eliminated the third mechanism. D59 measured a per-metadata-flip hazard of 1.17%
+# (Qwen) against 2.63% (Llama) on unpruned caches; dynamic range (D59), attention spread (D60) and
+# attention-rank-conditioned severity (D61) are all eliminated, and none was the answer.
+#
+# D61's contrasts were underpowered for a structural reason: `answer_changed` runs at 2-6% and 31 paired samples
+# cannot resolve a 2x difference in a 3% rate. So this arm records the quantity that binary event thresholds --
+# the shift in the distribution over the first answer token -- which is continuous and costs one extra forward
+# pass per trial on a cache that is already built.
+#
+# Design frozen in docs/decisions.md D62 BEFORE the run. No protection (a guard would measure the guard), no
+# pruning (the unexplained difference is on unpruned caches), one flip per trial so each outcome is one
+# conditional. Eager attention is NOT required here -- nothing ranks anything -- but it is kept so D62 sits in the
+# same implementation as D61 rather than straddling two.
+
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: d62_qwen_meta
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 40
+  n_flips: 1
+  fault_target: metadata
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0

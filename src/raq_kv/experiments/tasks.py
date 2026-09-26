@@ -54,6 +54,7 @@ from raq_kv.faults.plan import (
 from raq_kv.faults.storage import (
     flips_for_rate,
     generate_group_targeted_plan,
+    generate_metadata_plan,
     generate_storage_plan,
     plan_composition,
     storage_regions,
@@ -881,21 +882,48 @@ class ProtectionArm:
                       "rank_scorer": self.rank_scorer.name, "group_size": self.cfg.quantization.keys.group_size,
                       **concentration(shares)}
 
+        # D62's graded reference, computed once per sample: the distribution over the FIRST answer token taken
+        # through this arm's own fault-free cache, so a trial's shift is attributable to the flip rather than to
+        # quantization or pruning. `score_through_cache` requires targets shaped like its inputs and only the final
+        # position's row is used here, so the query tokens stand in as their own targets and the `token_nll` they
+        # produce is discarded. float64 because these logprobs are differenced: in float32 a confident token's
+        # logprob rounds to exactly 0 and small shifts vanish (the reason that dtype knob exists).
+        clean_logprobs = None
+        if self.task.record_perturbation:
+            clean_logprobs = score_through_cache(model, base, query_ids, query_ids, return_logprobs=True,
+                                                 logprob_dtype=torch.float64).logprobs[-1]
+
         rows = []
         for i in range(self.task.n_control):
             text = tok.decode(greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=base,
                                             eos_token_ids=eos).tokens, skip_special_tokens=True)
+            # The graded measure's zero baseline. A control reads the SAME fault-free cache the reference came
+            # from, so its KL must be exactly 0.0 -- and if it is not, the measurement floor is nondeterminism
+            # rather than signal, and every small KL in the trials below is noise of unknown size. Free to compute
+            # and the only thing that distinguishes "one flip moved the distribution by 1e-6" from "this pipeline
+            # cannot reproduce its own number". The project already demands exactly zero damage from controls on
+            # the binary outcome; this holds the continuous one to the same standard.
+            control_shift = ({} if clean_logprobs is None
+                             else _first_token_shift(model, base, query_ids, clean_logprobs))
             rows.append({"trial": -1 - i, "n_flips": 0, "answer_changed": text != golden_text,
-                         "corrected_words": 0, "due_words": 0, "detected": False,
+                         "corrected_words": 0, "due_words": 0, "detected": False, **control_shift,
                          **{f"faulty_{k}": v for k, v in SCORERS[sample.scorer](text, sample.reference).items()}})
         for trial in range(self.task.n_trials):
             trial_seed = derive_seed(seed, f"trial{trial}")
-            plan = (generate_storage_plan(qkv, guard, trial_seed, n_flips) if target is None else
-                    generate_group_targeted_plan(qkv, trial_seed, target["target_group_index"],
-                                                 target["n_token_groups"], n_flips))
+            if self.task.fault_target == "metadata":
+                plan = generate_metadata_plan(qkv, trial_seed, n_flips)
+            elif target is not None:
+                plan = generate_group_targeted_plan(qkv, trial_seed, target["target_group_index"],
+                                                    target["n_token_groups"], n_flips)
+            else:
+                plan = generate_storage_plan(qkv, guard, trial_seed, n_flips)
             reader = (injected_burst(qkv, plan, base) if guard is None
                       else guard.faulted_read(plan, base))
+            perturbation: dict[str, Any] = {}
             with reader as (faulty, info):
+                # Inside the reader, so the shift is measured on the same corrupted cache the decode then reads.
+                if clean_logprobs is not None:
+                    perturbation = _first_token_shift(model, faulty, query_ids, clean_logprobs)
                 gen = greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=faulty, eos_token_ids=eos)
             text = tok.decode(gen.tokens, skip_special_tokens=True)
             score = SCORERS[sample.scorer](text, sample.reference)
@@ -912,6 +940,7 @@ class ProtectionArm:
                 "silent_corruption": bool(changed and due == 0),
                 "detected_failure": bool(changed and due > 0),
                 "prediction": text if changed else None,
+                **perturbation,
                 "gen_margin_min_all": min(gen.margins) if gen.margins else None,
                 **{f"faulty_{k}": v for k, v in score.items()},
             })
@@ -947,6 +976,42 @@ class ProtectionArm:
             }),
             "faults": rows,
         }
+
+
+def _first_token_shift(model: Any, faulty: Any, query_ids: Any, clean: Any) -> dict[str, Any]:
+    """How far one fault moved the distribution over the first answer token. D62's graded outcome.
+
+    D61's contrasts were underpowered for a structural reason, not a design one: ``answer_changed`` runs at 2-6%,
+    and 31 paired samples cannot resolve a 2x difference in a 3% rate whatever the pre-registration says. The
+    quantity the binary event thresholds is continuous, and measuring it costs one extra forward pass per trial on
+    a cache that is already built.
+
+    Reported together on purpose:
+
+    * ``kl_first_token`` -- KL(clean || faulty) in nats. The forward direction, so mass the clean model places
+      somewhere the faulty one abandons is what gets counted; that is the failure direction for greedy decoding.
+    * ``margin_clean`` / ``margin_faulty`` -- the clean argmax token's logprob lead over its best rival, under each
+      cache. Erosion of this is what a flip has to achieve before the answer can change, so it is the mechanism
+      quantity and ``argmax_flipped`` is the threshold being crossed.
+    * ``argmax_flipped`` -- whether greedy's first token actually changed. It is the graded measure's own anchor:
+      a KL that does not predict this is not measuring the thing that breaks answers.
+
+    ``argmax_flipped`` is *not* the same event as the arm's ``answer_changed``, which compares the whole decoded
+    string. A flip can leave the first token intact and derail a later step, and the two are recorded separately so
+    the difference is visible rather than assumed away.
+    """
+    faulty_lp = score_through_cache(model, faulty, query_ids, query_ids, return_logprobs=True,
+                                    logprob_dtype=torch.float64).logprobs[-1]
+    clean_p = clean.exp()
+    kl = float((clean_p * (clean - faulty_lp)).sum())
+    top = int(clean.argmax())
+    def lead(lp: Any) -> float:
+        rival = lp.clone()
+        rival[top] = float("-inf")
+        return float(lp[top] - rival.max())
+    return {"kl_first_token": kl, "margin_clean": lead(clean), "margin_faulty": lead(faulty_lp),
+            "argmax_flipped": bool(int(faulty_lp.argmax()) != top),
+            "first_token_clean": top, "first_token_faulty": int(faulty_lp.argmax())}
 
 
 def _storage_shares(regions: list[Any]) -> dict[str, int]:

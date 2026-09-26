@@ -297,3 +297,90 @@ def test_the_top_attention_group_is_the_first_group_which_is_why_rank_zero_is_a_
     assert row["min_index"] == 5.0
     shifted = np.array([0.78, 0.02, 0.05, 0.04, 0.08, 0.03])
     assert concentration(shifted)["min_index"] == 1.0, "the minimum must be free to sit anywhere"
+
+
+def test_the_metadata_plan_draws_uniformly_over_metadata_BITS_and_nothing_else():
+    """D62's population has to be the one D59 conditioned on, or the two hazards are not comparable.
+
+    `generate_plan(..., n_metadata=n)` picks a layer-part uniformly and then splits scale/zero 50/50, which is a
+    distribution over *regions*, not over bits. At `group_size == head_dim` the two coincide -- keys' and values'
+    scale grids have equal element counts -- so the distinction is invisible in this project's own arms and would
+    have gone unnoticed until someone changed the group size.
+    """
+    import torch
+
+    from raq_kv.config.schema import QuantizationConfig, QuantSpec
+    from raq_kv.faults.storage import generate_metadata_plan, storage_regions, total_stored_bits
+    from raq_kv.kv.snapshot import KVSnapshot
+    from raq_kv.quantization.apply import quantize_to_codes
+
+    g = torch.Generator().manual_seed(11)
+    # group_size 32 against head_dim 8: keys' scale grid is (1, 2, 8, 8) = 128 elements, values' is
+    # (1, 2, 256, 1) = 512, so a bit-uniform draw must favour values 4 to 1 and a region-uniform one would not.
+    snap = KVSnapshot(keys=[torch.randn(1, 2, 256, 8, generator=g) for _ in range(2)],
+                      values=[torch.randn(1, 2, 256, 8, generator=g) for _ in range(2)],
+                      positions=torch.arange(256), next_position=256)
+    qkv = quantize_to_codes(snap, QuantizationConfig(
+        keys=QuantSpec(bits=4, axis="group_token", group_size=32), values=QuantSpec(bits=4, axis="per_token")))
+
+    regions = [r for r in storage_regions(qkv, None) if r.target in ("scale", "zero")]
+    assert {r.target for r in regions} == {"scale", "zero"}, "codes are not metadata"
+    key_bits = sum(r.n_bits for r in regions if r.part == "keys")
+    val_bits = sum(r.n_bits for r in regions if r.part == "values")
+    assert val_bits == 4 * key_bits, "fixture chosen so the two draws differ; check it before the assertion below"
+
+    sites = generate_metadata_plan(qkv, seed=0, n_flips=4000)
+    assert {s.target for s in sites} <= {"scale", "zero"}
+    val_share = sum(s.part == "values" for s in sites) / len(sites)
+    expected = val_bits / (key_bits + val_bits)
+    assert abs(val_share - expected) < 0.03, (
+        f"draw is {val_share:.3f} values against {expected:.3f} of the metadata bits -- not bit-uniform")
+
+    # Distinct bits, seeded, and refusing to over-draw: the same three guarantees the storage-wide plan carries.
+    assert len({(s.layer, s.part, s.target, s.index, s.bit) for s in sites}) == 4000
+    assert [x.to_dict() for x in generate_metadata_plan(qkv, 0, 50)] == \
+           [x.to_dict() for x in generate_metadata_plan(qkv, 0, 50)]
+    with pytest.raises(ValueError, match="cannot draw"):
+        generate_metadata_plan(qkv, 0, total_stored_bits(regions) + 1)
+
+
+def test_the_first_token_shift_reports_kl_margin_erosion_and_the_flip_together():
+    """The graded measure has to be anchored by the event it grades, computed from the same two distributions."""
+    import torch
+
+    from raq_kv.experiments.tasks import _first_token_shift
+
+    clean = torch.log_softmax(torch.tensor([5.0, 1.0, 0.5, 0.0], dtype=torch.float64), dim=-1)
+
+    class _Stub:
+        """Stands in for the model: returns whatever faulty logprobs the case wants."""
+
+        def __init__(self, logits):
+            self.logits = torch.log_softmax(torch.tensor(logits, dtype=torch.float64), dim=-1)
+
+        def __call__(self, **kw):
+            import types
+            return types.SimpleNamespace(logits=self.logits.unsqueeze(0).unsqueeze(0).expand(1, 2, 4).float())
+
+    # An identical faulty distribution: zero KL, no flip, margin unchanged.
+    same = _first_token_shift(_Stub([5.0, 1.0, 0.5, 0.0]), _Snapshot(), torch.zeros(1, 2, dtype=torch.long), clean)
+    assert same["kl_first_token"] == pytest.approx(0.0, abs=1e-9)
+    assert same["argmax_flipped"] is False
+    assert same["margin_faulty"] == pytest.approx(same["margin_clean"])
+
+    # A faulty distribution that overturns the argmax: positive KL, flip recorded, margin now negative.
+    moved = _first_token_shift(_Stub([0.0, 6.0, 0.5, 0.0]), _Snapshot(), torch.zeros(1, 2, dtype=torch.long), clean)
+    assert moved["kl_first_token"] > 0.5
+    assert moved["argmax_flipped"] is True
+    assert moved["first_token_clean"] == 0 and moved["first_token_faulty"] == 1
+    assert moved["margin_clean"] > 0 > moved["margin_faulty"], (
+        "the clean top token must lose its lead, which is what argmax_flipped thresholds")
+
+
+class _Snapshot:
+    """Minimal stand-in: `score_through_cache` only calls `to_cache()` and reads `next_position`."""
+
+    next_position = 0
+
+    def to_cache(self):
+        return None

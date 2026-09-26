@@ -254,14 +254,23 @@ class ProtectionArmTask(StrictModel):
     # "more groups are consequential" against "the groups that matter matter more" -- is P(break | attention rank
     # of the corrupted group), which no uniform plan can report. All three default to None so `exclude_none`
     # leaves all 14 existing protection-arm identities untouched (the `ber_basis` lesson).
-    fault_target: Literal["group_rank"] | None = Field(
-        default=None, description="Confine each trial's flips to the key scales of one attention-ranked token "
-                                  "group; None draws uniformly over all stored bits as before")
+    fault_target: Literal["group_rank", "metadata"] | None = Field(
+        default=None, description="Narrow the draw: 'group_rank' confines it to the key scales of one "
+                                  "attention-ranked token group (D61); 'metadata' draws uniformly over the arm's "
+                                  "quantization metadata bits (D62). None draws over all stored bits as before")
     target_group_rank: int | None = Field(
         default=None, ge=0, description="Which group to corrupt, 0 = the most-attended. Ranks past the end wrap "
                                         "to the least-attended group and the realised rank is recorded")
     rank_scorer: str | None = Field(
         default=None, description="Importance scorer supplying the ranking; needs eager attention (D5)")
+    # D62: the graded outcome beside the binary one. D61's contrasts were underpowered because `answer_changed`
+    # runs at 2-6% -- 31 samples cannot resolve a 2x difference in a 3% rate. The first-token distribution shift is
+    # continuous and measured on the same trial, so the same GPU time yields far more power. `bool | None`, not
+    # `bool = False`: `identity_dict` excludes None only, so a False default would serialize into every arm that
+    # never mentions the field and move all 14 existing identities (the `ber_basis` lesson, twice learned).
+    record_perturbation: bool | None = Field(
+        default=None, description="Per trial, record the first-token KL, margin erosion and argmax flip against "
+                                  "the arm's own fault-free distribution (D62)")
     n_trials: int = Field(default=8, ge=1, description="Independent storage-wide fault draws per sample")
     n_control: int = Field(default=1, ge=0, description="No-fault scorings; must be exactly zero damage")
 
@@ -282,20 +291,22 @@ class ProtectionArmTask(StrictModel):
                              "more than one leaves the arm's exposure ambiguous, none leaves it undefined")
         if self.ber_basis == "unpruned" and self.ber is None:
             raise ValueError("`ber_basis` describes what a rate is applied to, so it needs `ber`, not `n_flips`")
-        targeting = (self.fault_target, self.target_group_rank, self.rank_scorer)
-        if self.fault_target is not None:
+        targeting = (self.target_group_rank, self.rank_scorer)
+        if self.fault_target == "group_rank":
             if self.target_group_rank is None or self.rank_scorer is None:
                 raise ValueError("`fault_target: group_rank` needs both `target_group_rank` (which group) and "
                                  "`rank_scorer` (what ranks them); without the scorer the rank is undefined")
+        elif any(x is not None for x in targeting):
+            raise ValueError("`target_group_rank` and `rank_scorer` only mean something with "
+                             "`fault_target: group_rank`; set it or drop them")
+        if self.fault_target is not None:
             if self.n_flips is None:
                 # A *rate* over the arm's whole storage cannot describe a draw confined to one group's scales:
                 # flips_for_rate would return a count sized for all 57344 values per token while the draw sees
                 # only that group's scales, so the arm's stated exposure and its real one would differ.
-                raise ValueError("a group-targeted arm states its exposure as `n_flips` (flips inside the chosen "
-                                 "group); a rate over the arm's whole storage does not describe that draw")
-        elif any(x is not None for x in targeting):
-            raise ValueError("`target_group_rank` and `rank_scorer` only mean something with "
-                             "`fault_target: group_rank`; set it or drop them")
+                raise ValueError(f"a {self.fault_target!r}-targeted arm states its exposure as `n_flips` (flips "
+                                 f"inside the narrowed population); a rate over the arm's whole storage sizes a "
+                                 f"count against bits the draw never sees, so the stated and real exposure differ")
         return self
 
 

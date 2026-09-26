@@ -112,6 +112,41 @@ def generate_storage_plan(
     return sites
 
 
+def generate_metadata_plan(
+    qkv: QuantizedKV,
+    seed: int,
+    n_flips: int,
+    stratum: str = "metadata_uniform",
+) -> list[FaultSite]:
+    """``n_flips`` single-bit upsets uniform over the arm's **quantization metadata bits**.
+
+    Deliberately not ``generate_plan(..., n_metadata=n)``. That helper picks a layer-part uniformly and then splits
+    scale/zero 50/50, which induces a distribution over metadata *bits* quite different from the storage-wide
+    uniform draw: keys are ``group_token`` and values ``per_token``, so their scale grids differ by orders of
+    magnitude in element count, and a uniform layer-part pick over-samples the small ones.
+
+    This draws uniformly over bits, exactly as ``generate_storage_plan`` does, with the population narrowed to
+    scale and zero regions. That is what makes a per-metadata-flip rate measured here comparable to one derived
+    from a storage-wide campaign by conditioning on the flips that landed in metadata (D59) -- the same population,
+    reached from the other direction, rather than a second population with a similar name.
+    """
+    regions = [r for r in storage_regions(qkv, None) if r.target in ("scale", "zero")]
+    total = total_stored_bits(regions)
+    if total == 0:
+        raise ValueError("no metadata regions; a symmetric unquantized arm has no scales to corrupt")
+    if n_flips > total:
+        raise ValueError(f"cannot draw {n_flips} distinct metadata bits from {total}")
+    rng = random.Random(seed)
+    offsets = sorted(rng.sample(range(total), n_flips))
+    sites, start, r = [], 0, 0
+    for offset in offsets:
+        while offset >= start + regions[r].n_bits:
+            start += regions[r].n_bits
+            r += 1
+        sites.append(regions[r].site(offset - start, stratum))
+    return sites
+
+
 def generate_group_targeted_plan(
     qkv: QuantizedKV,
     seed: int,
