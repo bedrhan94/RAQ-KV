@@ -2487,3 +2487,63 @@ comparing row-destruction on the answer token against row-destruction on its nei
 Two families, one probe, two corruption scales, one quantization per scale. The distractor comparison is
 underpowered on both families and was always going to be: it needs the distractor to fail sometimes, and at these
 rates it barely does.
+
+## D58 — D49 replicates, its model-free half is stronger, its compositional half collapses, and my prediction was backwards (2026-09-26)
+
+The last single-model claim. Precision × faults on Llama-3.2-3B at matched exposure (546 flips/trial via
+`n_flips_per_token`), full retention, unprotected, 38 paired samples.
+
+| arm | metadata share of flips | **Llama** | Qwen (D49) |
+|---|---|---|---|
+| 4-bit g128 (reference) | 6.14% | **0.5362** | 0.3277 |
+| 4-bit g64 (composition control) | 8.68% | **0.4934** | 0.4426 |
+| **2-bit g128** (precision arm) | 11.53% | **0.8092** | 0.6655 |
+| 4-bit g32 (composition control) | 13.60% | **0.6053** | 0.5574 |
+
+| contrast | difference | p | discordant | verdict |
+|---|---|---|---|---|
+| 4-bit g128 → 2-bit g128 | **+0.2730 [+0.2072, +0.3389]** | **8.3e-07** | 34 of 38 | **meets** |
+| **4-bit g32 → 2-bit g128** | **+0.2039 [+0.1316, +0.2763]** | **2.8e-05** | 30 of 38 | **meets** |
+| 4-bit g128 → 4-bit g32 | +0.0691 [+0.0033, +0.1349] | 0.054 | 29 of 38 | direction only |
+| 4-bit g128 → 4-bit g64 | **−0.0428** [−0.1250, +0.0362] | 0.403 | 33 of 38 | direction only, **wrong sign** |
+
+### The model-free result replicates and is stronger than on Qwen
+
+**2-bit g128 at 11.53% metadata fails 0.8092 while 4-bit g32 at 13.60% — a *worse* composition — fails 0.6053.**
+More metadata in the line of fire, less damage. On Qwen that ordering violation was reported as an ordering only; here
+it is a **significant contrast: +0.2039, p = 2.8e-05 on 30 of 38 discordant samples.** So the claim that composition
+alone cannot explain the low-precision penalty is better evidenced on the second family than on the first.
+
+### The compositional half collapses, and my pre-run prediction was backwards
+
+The config header predicted: *"D55 found metadata dominance LARGER on Llama (4.446× against 2.845×) … a larger
+metadata penalty should make the COMPOSITIONAL half of the effect bigger here, not smaller."*
+
+It is smaller, and not merely smaller — **non-monotone**. The 4-bit g64 arm carries *more* metadata than the
+reference and fails *less* (−0.0428, wrong sign, p = 0.403), and the g32 arm only reaches p = 0.054. On Qwen these
+two were +0.1149 (p = 0.0019) and +0.2297 (p = 5.4e-06), clean and monotone, which is what licensed the three-point
+interpolation and the "≈52% compositional / 48% precision" split.
+
+**That split is therefore a Qwen number and no equivalent should be quoted for Llama.** A linear interpolation over
+three points was already reported as an estimate rather than a measurement; over three points one of which runs
+backwards it is not supportable at all. What Llama supports is the model-free statement, which is the stronger one
+anyway: the penalty is not compositional, because a worse composition at the same precision does better.
+
+**A hypothesis for why, flagged as such.** Llama's reference arm already fails 0.5362 against Qwen's 0.3277, and the
+2-bit arm reaches 0.8092. The composition controls therefore have much less room between the base rate and the
+ceiling than they did on Qwen, which is exactly the compression D44 and D45 diagnosed at 1e-5 — a multiplicative
+difference cannot express itself as an absolute one near the ceiling. So the compositional channel may be real here
+and squeezed rather than absent. Testing that needs a lower exposure, which is one config away and was not run.
+
+### Where this leaves D49's claim
+
+Both families agree on the load-bearing statement: **the reliability tax is not flat in precision, and the penalty is
+not explained by composition.** They disagree on the decomposition, and only Qwen supports one. The practical
+consequence is unchanged on both — `MIN_BITS = 4` (D40, replicated in D51) already keeps the allocator out of this
+regime, a floor set for an unrelated reason.
+
+### Scope
+
+One rate, full retention only, three precision/group configurations per family, 38 paired samples. The 2-bit arm's
+0.8092 is close enough to the ceiling that this design's power to resolve *differences among the bad arms* is
+limited, which is the same limitation on the opposite side from the floor-limits of D48, D51 and D53.
