@@ -3320,3 +3320,69 @@ First answer token only, 40 samples per cell spread across both pinned lengths, 
 "correct" means what it means everywhere else in this project. `entropy` and `top1_prob` saturate at float64 for a
 distribution at p = 1 — which is the condition being looked for, so they are ceiling readings there and `margin`,
 a difference of two finite log-probabilities, stays the quantity to read.
+
+### RESULT, 2026-09-26 — VOID by its own anchor: the knob did not make the task harder
+
+Six cells, 18 minutes, 40 samples attempted per cell. `outputs/reports/d63_difficulty_ladder.json`.
+
+**The anchor fails, and the pre-registration said this outcome exists.** A rung on which accuracy does not move did
+not make the task harder, and D63 declared in advance that its margins would then be uninterpretable.
+
+| rung | Qwen accuracy | Wilson 95% | Llama accuracy | Wilson 95% |
+|---|---|---|---|---|
+| d2 | 40/40 = 1.000 | [0.912, 1.000] | 33/40 = 0.825 | [0.681, 0.913] |
+| d10 | 39/40 = 0.975 | [0.871, 0.996] | 34/40 = 0.850 | [0.709, 0.929] |
+| d20 | 39/40 = 0.975 | [0.871, 0.996] | 31/40 = 0.775 | [0.625, 0.877] |
+
+d2 against d20: Fisher **p = 1.000** on Qwen (a one-sample change) and **p = 0.781** on Llama, whose accuracy is not
+even monotonic. **A tenfold increase in competing same-type facts did not measurably reduce accuracy for either
+family.** The margins do not move either — Kruskal over the three rungs gives p = 0.478 (Qwen) and p = 0.556
+(Llama) — which is exactly what a manipulation that did not bite should produce, and is therefore no evidence about
+saturation in either direction.
+
+| rung | Qwen margin | top-1 p | below 1 nat | Llama margin | top-1 p | below 1 nat |
+|---|---|---|---|---|---|---|
+| d2 | 16.500 | 1.0000 | 0.000 | 2.500 | 0.9140 | 0.303 |
+| d10 | 17.250 | 1.0000 | 0.026 | 3.188 | 0.9503 | 0.088 |
+| d20 | 19.500 | 1.0000 | 0.000 | 3.125 | 0.9477 | 0.161 |
+
+**So branch B is NOT supported and branch A is NOT refuted.** Qwen staying at p = 1.0000 across the ladder would
+have meant something only if the ladder had been a difficulty gradient, and it was not. D62's stated limit —
+saturation is a property of model × task — **remains untested**, and recording it as tested would be the single
+most tempting error available here: the numbers look exactly like branch B.
+
+### Why the knob was wrong, which is the useful part
+
+**Qwen answers 97.5–100% correctly at every rung.** The task is trivially easy for it whatever the distractor count,
+so there was no difficulty to vary. Llama sits at **77.5–85.0%** — the task is already much harder for it — so the
+difficulty axis this vehicle needs does exist, it just does not reach Qwen. Twenty facts of the same type and
+template with different keys is apparently not a retrieval problem for a model that can key-match.
+
+That converts the case for a harder benchmark from an assumption into a measurement: **the next vehicle has to be
+one Qwen itself finds hard**, and the probe cannot be made into one by adding distractors. LongBench (or RULER at a
+difficulty where Qwen's accuracy actually falls) is now justified by this result rather than by argument, and the
+rejected-vehicle reasoning in the pre-registration stands — GSM8K's first token is not an answer token, BFCL's is a
+tool-call opener both families emit confidently.
+
+### What the ladder does deliver: D62's cross-family gap, three more times
+
+Not what it was built for, and worth having. At pinned long lengths (2048 and 4096, mean cache ≈ 3089 against
+D62's 2204) and at three distractor counts:
+
+| rung | Qwen margin | Llama margin | Mann-Whitney | logprob spread ratio |
+|---|---|---|---|---|
+| d2 | 16.50 | 2.50 | **p = 2.7e-11** | 0.406× |
+| d10 | 17.25 | 3.19 | **p = 3.3e-09** | 0.408× |
+| d20 | 19.50 | 3.12 | **p = 3.9e-12** | 0.417× |
+
+Three independent replications of the finding D62 rests on, at longer contexts than D62 measured, with the
+margin/spread ratio at 0.391×, 0.463×, 0.401× — so the scale-free gap holds too. **The logprob spread ratio is
+stable to within 3% across the whole ladder (0.406, 0.408, 0.417)**, which makes the scale component of the gap a
+robust property of the two models rather than a feature of one measurement. And Qwen shows **0 of 40, 1 of 39, 0 of
+40** samples below 1 nat, against Llama's 30.3%, 8.8%, 16.1%.
+
+### Scope
+
+First answer token, 4-bit `group_token`/`per_token` quantization, no faults, no pruning, one probe, one seed.
+The ladder's own ceiling was measured before the run: the generator refuses more than 20 distractors even at these
+lengths, so this is the full range the vehicle offers rather than a chosen subset of it.
