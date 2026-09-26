@@ -3386,3 +3386,57 @@ robust property of the two models rather than a feature of one measurement. And 
 First answer token, 4-bit `group_token`/`per_token` quantization, no faults, no pruning, one probe, one seed.
 The ladder's own ceiling was measured before the run: the generator refuses more than 20 distractors even at these
 lengths, so this is the full range the vehicle offers rather than a chosen subset of it.
+
+### PILOT, 2026-09-26 — LongBench desaturates Qwen completely, so D62's answer is probe-specific
+
+**Status of this measurement, stated first because it decides how much weight it can carry.** A throwaway pilot, not
+a committed vehicle: 12 non-randomly chosen rows of LongBench `2wikimqa`, LongBench's own prompt template verbatim,
+its own `qa_f1_score`, **Qwen3-1.7B only**, and **sdpa rather than eager** attention. The script lives in the
+session scratchpad and is not in the repo, so this carries no exp_id and is **not** a result of the kind D62 or D63
+report. It is evidence about whether to build the vehicle, and it is decisive enough to correct a scope claim.
+
+| | RAQ-Probe ladder (d2–d20) | LongBench 2wikimqa |
+|---|---|---|
+| accuracy | **97.5–100%** exact match | F1 mean **0.071**, median **0.000**, **75%** score exactly 0, none above 0.5 |
+| cache length | 2047–4179 (median ~3089) | median **7735** |
+| margin, median | **16.50 / 17.25 / 19.50** | **2.875** (min 0.250) |
+| top-1 probability | **1.0000** at every rung | **0.9284** (min **0.5445**) |
+| share below 1 nat | 0.000 / 0.026 / 0.000 | **0.25** |
+
+**Qwen desaturates completely, and the anchor D63 demanded is satisfied here where it failed there.** The task is
+genuinely hard for it — three quarters of its answers share no token at all with any reference — and its top-1
+probability leaves the ceiling for the first time in this project: 1.0000 on every probe rung against 0.9284 here,
+with one sample at 0.5445.
+
+**So D63's branch A holds and D62's answer is probe-specific.** Saturation is a property of model × task, exactly as
+D62 said it might be, and it is now measured rather than conceded. The striking number is that **Qwen's LongBench
+margin (2.875) is essentially Llama's RAQ-Probe margin (3.27)**: on a hard task Qwen looks like Llama did on an easy
+one. That is what a shared difficulty–confidence curve would produce, with the two families sitting at different
+points on it rather than having different shapes.
+
+**What this does and does not do to D62.** It does not touch D62's internal findings — the matched-exposure control,
+the flat KL response, the non-finite collapse rate, the eliminated mechanisms all stand on their own data. What it
+narrows is the *generality* of the answer: "the fragility difference is output saturation" is a statement about a
+regime where one model saturates, and that regime is the probe. Whether the fault-hazard **ordering** reverses where
+the saturation ordering closes is a different question and is **not** measured here — it needs fault arms on this
+vehicle, and Llama's half of even the confidence measurement is still missing.
+
+### Three costs of this vehicle, measured rather than estimated
+
+1. **Eager attention is impossible.** At these lengths a single eager softmax asked for **14.45 GiB** and the run
+   died with CUDA OOM. So the attention-scorer path (D5) cannot be used on LongBench at all, which puts every
+   D60/D61-style attention-ranking experiment out of reach there and leaves only the logit-based measurements.
+2. **Roughly 2 minutes per sample** on Qwen3-1.7B at a median 7735-token cache — 12 samples took 25 minutes. A
+   40-sample two-family confidence cell is therefore a couple of hours, and fault arms with 16 trials per sample
+   would be a different order of cost than the probe's 3–6 minutes per arm.
+3. **Contexts are 2–4× the project's range.** The 12 rows span 5.2k–15.6k tokens against the probe's 512–4096. So a
+   LongBench vehicle extends the length regime as well as the difficulty, and the two cannot be separated within
+   it — though D62's length control (Qwen stays saturated to 4096) argues the difficulty is doing the work.
+
+### A trap worth recording
+
+The pilot was launched under `timeout 1500` and **Qwen alone consumed the whole 25 minutes**, so Llama never ran —
+and the shell reported **exit code 0**. A truncated run that looks successful is the same class of hazard as the
+`--set task.n_samples=2` smoke run that shared a config name with its real arm: the output is not wrong, it is
+*incomplete in a way nothing announces*. The missing half was caught by noticing the absent second block, not by
+any check.
