@@ -2405,3 +2405,85 @@ scheme*, not of the family alone — which is a more useful statement than the o
 One probe, 512–4096 tokens. KIVI's own claims are made at longer context where its fixed residual window is
 cheaper per value, and D39's finding that below ~1500 tokens the window is dominated by plain 4-bit with no window
 still applies to both families — it is arithmetic about R/T, not about either model.
+
+## D57 — Q49's scale-dependence replicates on both families; its key control does not, and D21 asserted an interval it never showed (2026-09-26)
+
+Q49 asks whether a corrupted token's **role** predicts task failure. Its threshold was frozen before measurement:
+**OR > 1 with a CI excluding 1.** On Qwen the answer came out scale-dependent across three records (D19 → D20 →
+D21). Both scales re-run on Llama-3.2-3B.
+
+### Single-bit scale: nothing, on both families
+
+| role | Qwen | **Llama** |
+|---|---|---|
+| target_value | **0 / 960** | **0 / 800** |
+| distractor_value | 0 / 720 | 0 / 600 |
+| filler | 0 / 960 | 0 / 800 |
+| **metadata** | **6 / 480 = 0.0125** | **11 / 400 = 0.0275** |
+| no-fault control | 0 / 120 ✓ | 0 / 100 ✓ |
+| OR target vs filler | 1.00 [0.02, 50.45] | 1.00 [0.02, 50.46] |
+
+**D19 replicates exactly: a single bit flip in a code costs zero answers, in every role, on both families** — 0 of
+960 and 0 of 800. And **metadata is the only thing that hurts at this scale on either model**, at 1.25% (Qwen) and
+2.75% (Llama), so Llama is 2.2× worse there — consistent with D55's finding that metadata dominance is larger on
+Llama.
+
+### Row scale (2048 bits, one layer): the effect appears, on both
+
+| role | Qwen | **Llama** |
+|---|---|---|
+| target_value | 14 / 654 = 0.0214 | 11 / 540 = **0.0204** |
+| distractor_value | 2 / 436 = 0.0046 | **0 / 360 = 0.0000** |
+| filler | 2 / 654 = 0.0031 | 1 / 540 = 0.0019 |
+| metadata | 7 / 218 = 0.0321 | 6 / 180 = 0.0333 |
+
+| contrast (Haldane-corrected OR, Woolf CI) | OR | 95% CI | frozen rule met? |
+|---|---|---|---|
+| Qwen, target vs filler | 5.91 | [1.54, 22.72] | **yes** |
+| Qwen, target vs content-matched distractor | 3.93 | **[1.02, 15.14]** | yes, **barely** |
+| **Llama, target vs filler** | **7.81** | [1.42, 43.00] | **yes** |
+| **Llama, target vs content-matched distractor** | 15.66 | **[0.92, 266.58]** | **NO** |
+
+**So the scale-dependence is general — single bits harmless, a destroyed row costly — on two families.** That is
+Q49's headline and it replicates.
+
+### But the control that gives Q49 its meaning is weaker than the records say
+
+The content-matched distractor is what makes Q49 a claim about **role** rather than about **position**: without it,
+"the answer token's row matters" could just mean "that region of the document matters". On Qwen that comparison
+**barely** clears the frozen rule (lower bound **1.02**), and on Llama it **does not clear it at all** — Llama
+recorded **zero** distractor failures, so by D30's rule the 15.66 is a bound, not an estimate, and zero events over
+360 is consistent with a large effect without establishing one.
+
+**D21 asserted this criterion was met without showing the interval it requires.** Its text reads *"The
+pre-registered Q49 criterion (OR > 1, CI excluding 1) is met at this scale"* while reporting only Fisher p values
+(0.004 and 0.036). Computed now, D21's verdict **holds** — both Qwen intervals do exclude 1 — but it was *asserted
+rather than demonstrated*, and the interval reveals the key control to be marginal. This is the same class of
+failure as the claims-matrix drift found on 2026-09-24: a frozen rule asks for one statistic and the record reports
+another.
+
+**What Q49 now supports, precisely:** destroying an answer-bearing token's row costs significantly more than
+destroying filler, on both families. That it costs more than destroying a *content-matched distractor* is
+established on Qwen at the edge of significance and is a bound on Llama.
+
+### Q49 and the concentration effect come apart, which is the structural point
+
+The config header named both branches before the run. The one that happened: **Q49 replicates while D54's
+concentration effect does not.** They are not the same phenomenon and cannot share an explanation.
+
+This **rules out** the most natural account of D54's absence: it is *not* that Llama's answer tokens fail to matter
+under faults — they matter 7.8× more than filler there, slightly more than on Qwen. So D54's absence needs its own
+cause, and the leading candidate remains D54's own: Llama's fault map is flatter (CV 14% against 27%, D51), so
+uniform injection into a retention-selected subset does not land on systematically worse cells even though the
+answer token itself is more fragile.
+
+A hypothesis that would reconcile them, untested: on Llama the fragility may be concentrated tightly on the answer
+token, while on Qwen it is spread across the token's neighbourhood — so pruning to *spans* (which keep the
+neighbourhood) captures Qwen's concentration and dilutes Llama's. That is measurable with the existing machinery by
+comparing row-destruction on the answer token against row-destruction on its neighbours.
+
+### Scope
+
+Two families, one probe, two corruption scales, one quantization per scale. The distractor comparison is
+underpowered on both families and was always going to be: it needs the distractor to fail sometimes, and at these
+rates it barely does.
