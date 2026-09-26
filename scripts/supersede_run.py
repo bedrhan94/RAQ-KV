@@ -100,8 +100,14 @@ def main() -> int:
         if args.dry_run:
             print(f"would supersede {exp.name} ({n_units(exp)} units): {args.by}")
             continue
+        # Counted BEFORE the rename. `supersede` moves the directory, after which `exp` does not exist and
+        # `n_units` returns 0 -- so this reported "0 units" for a 40-unit run, which in a provenance tool is
+        # exactly the kind of wrong statement that matters. The earlier version happened to be correct because it
+        # called n_units inside the f-string, where it evaluated before the rename; extracting `renamed` to its own
+        # line silently reversed the order.
+        units = n_units(exp)
         renamed = supersede(exp, manifest, args.by, args.replaced_by)
-        print(f"superseded {exp.name} ({n_units(exp)} units) -> {renamed.name}")
+        print(f"superseded {exp.name} ({units} units) -> {renamed.name}")
     return 0
 
 

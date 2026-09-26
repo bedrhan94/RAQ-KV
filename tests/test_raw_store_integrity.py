@@ -122,6 +122,10 @@ def test_the_supersede_helper_writes_the_shape_the_integrity_test_reads(tmp_path
     renamed = mod.supersede(d, manifest, "a 2-sample smoke run", "the_full_arm")
 
     assert ".superseded-" in renamed.name, "the rename is what makes it visible in a listing"
+    # Why the CLI must count units before calling this: once the directory is renamed, the old path is gone and
+    # any count taken from it reads zero. That produced "superseded ... (0 units)" for a 40-unit D62 arm.
+    assert mod.n_units(d) == 0 and mod.n_units(renamed) == 2, (
+        "n_units on the pre-rename path must read 0 after the move -- so the CLI has to count first")
     assert not d.exists() and (renamed / "results.jsonl").exists(), "records are kept, never deleted"
     stored = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))["superseded_by"]
     assert stored["reason"] == "a 2-sample smoke run" and stored["exp_id"] == "the_full_arm"
