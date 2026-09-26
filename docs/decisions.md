@@ -3213,3 +3213,47 @@ on `max_relative_change`, which is the largest single value change in the plan, 
 Two flips with the same maximum can differ in how many values they moved. A tighter version would match on the
 number of affected values as well; the counts per bin (221/214, 141/152, 85/69) show the *distributions* align, not
 that each pair of flips is equivalent.
+
+### Two more controls, one of which is a limitation of D62's own mechanism claim (2026-09-26)
+
+Both on D62's existing records, no GPU.
+
+**1. Context length is not the difficulty dial, so testing the saturation limit needs a harder TASK.** The obvious
+cheap route to an unsaturated Qwen was the probe's own 4096-token condition. It does not get there. The margin does
+fall with cache length in both families, in the same direction and resolvably in neither at n = 31 — Qwen
+ρ = **−0.292** (p = 0.111), Llama ρ = **−0.250** (p = 0.174):
+
+| cache_len | Qwen median margin (min) | share below 1 nat | Llama median margin (min) | share below 1 nat |
+|---|---|---|---|---|
+| 512–800 | 19.75 (9.88) | **0.00** | 5.72 (1.50) | 0.00 |
+| 800–1600 | 19.50 (17.25) | **0.00** | 3.12 (0.12) | 0.22 |
+| 1600–3000 | 16.25 (7.00) | **0.00** | 1.75 (0.38) | 0.20 |
+| 3000–5000 | 13.25 (1.00) | **0.00** | 2.50 (0.00) | **0.36** |
+
+**Qwen has no sample below 1 nat at any length.** Eight times the context costs it about 6 nats and leaves it at 13 —
+still saturated by any standard that matters here. Llama is below 1 nat on 23% of samples overall and 36% at the
+longest. So `raq_probe_v0_long` cannot serve as the desaturated condition, and the scope limit D62 stated has to be
+tested against a harder **task**, not a longer one. That settles a question that would otherwise have been answered
+by assumption.
+
+**2. LIMITATION. The margin story is strong across families and weak within them.** If a thin margin is the
+mechanism, then within a family the thin-margin samples should break more. They do, by about 2×, and it is not
+resolvable at this size:
+
+| family | break rate, thin-margin half | thick-margin half | Spearman(margin, break rate) |
+|---|---|---|---|
+| Qwen | **4.412%** | 2.232% | ρ = +0.000, p = 1 |
+| Llama | **7.031%** | 3.750% | ρ = −0.109, p = 0.558 |
+
+The ratio is in the predicted direction in both families (1.98× and 1.88×) and neither correlation approaches
+significance. **So D62's cross-family result — 17.07 against 3.27 nats at p = 1.2e-06 — is solid, and the
+within-family dose-response that would establish margin as the *mechanism* rather than a correlate is not.** The
+break rates are 2–7% on 31 samples, which is the same power wall D61 hit and the reason the graded KL exists; the
+difference is that the graded measure has no within-family analogue here, because `margin_clean` is one number per
+sample and cannot be enriched by adding trials.
+
+This is recorded as a limitation rather than folded into the result. The honest statement of D62's mechanism claim
+is: **the two families differ enormously in how confidently they hold these answers, that difference is in the
+right direction to explain the hazard gap, and the within-family dose-response is consistent with it at about 2×
+but underpowered.** A proper test needs many more samples at fixed model, which is cheap — it needs no faults, only
+`margin_clean` and a break rate — and is not run.
