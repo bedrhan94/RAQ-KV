@@ -2783,3 +2783,66 @@ Eager attention is required for the ranking (D5) and D59's arms were not eager, 
 interchangeable with D59's 1.17% / 2.63%** — every D61 comparison is internal to this set with the implementation
 held fixed. Keys only (the `group_token` grid is where a token group is a unit of stored metadata; values are
 `per_token` and their scales are a different object). One probe, one group size, one query-aware scorer, 4 bits.
+
+### AMENDMENT, 2026-09-26 — the primary contrast above is not identified, and here is the one that is
+
+**No arm had produced an outcome when this was written.** The original design and its prediction table are left
+exactly as committed in `11d1c12`, because that commit is the timestamped evidence that what follows was found
+before any result existed. Editing the table in place would destroy the only thing that separates an amendment
+from a post-hoc rationalisation.
+
+**What the check found.** Before running anything, `scripts/measure_group_attention.py` was extended to report
+*where* each rank cell sits, not only how much mass it holds. Over 40 samples per family:
+
+| cell | attention share | is group 0 | relative position, mean (sd) |
+|---|---|---|---|
+| **rank 0** — Qwen / Llama | 0.762 / 0.826 | **1.000 / 1.000** | **0.000 (0.000) / 0.000 (0.000)** |
+| rank 1 — Qwen / Llama | 0.054 / 0.038 | 0.000 / 0.000 | 0.473 (0.394) / 0.292 (0.279) |
+| tail — Qwen / Llama | 0.013 / 0.008 | 0.000 / 0.000 | 0.521 (0.247) / 0.635 (0.281) |
+
+**The most-attended group is group 0 in every one of the 80 samples, with zero variance in its position.** A rank-0
+fault cell is therefore a measurement of *corrupting the first 128 tokens' key scales*, and on this probe
+"most-attended" and "first" are the same set. Within a family they cannot be separated, so the pre-registered
+primary — rank 0 against the tail, read as an attention gradient — is **confounded with position and is withdrawn
+as the primary**. It is not a small caveat: the initial tokens are exactly what `protect_initial: 4` already
+protects, so a positional explanation was live before this measurement and remains live after it.
+
+**What survives, and why it is identified.** Two facts rescue the design:
+
+1. **Group 0 is group 0 in both families.** A *cross-family* contrast at a fixed cell holds position constant by
+   construction, so the family difference at that cell is not positional. This matters because the branches D60
+   left open differ precisely in *which family breaks more at which cell*.
+2. **Among non-first groups, share and position separate.** rank 1 carries more mass than the tail in **100%** of
+   samples (median ratio **7.24×** Qwen, **5.51×** Llama, ranges non-overlapping), while their position
+   distributions *do* overlap — every tail position falls inside the rank-1 range in both families.
+
+### The amended primaries
+
+| # | contrast | pairing | identified because | branch it tests |
+|---|---|---|---|---|
+| **1** | P(break \| group 0): **Llama against Qwen** | by sample | the cell is the same position in both families | **A** — concentration raises conditional severity. D60's arithmetic, if only the top group mattered, predicts about 41.8% against 18.6% |
+| **2** | P(break \| least-attended group): **Llama against Qwen** | by sample | same cell, same selection rule, both families | **B** — more groups load-bearing in Llama puts the family difference here rather than at cell 1 |
+| **3** | P(break \| rank 1) against P(break \| tail), **within** each family | by sample | shares separate completely (7.24× / 5.51×, no overlap) while positions overlap | whether attention mass predicts consequence **at all** among non-first groups |
+
+All three keep D31's rule (p < 0.05 **and** a bootstrap CI excluding zero) and the sample-level pairing. Contrasts
+1 and 2 pair across families on the same probe samples, which is legitimate because both arms draw the identical
+subset — same `n_samples`, same seed — and each arm's break rate is measured against *its own* fault-free golden,
+so no cross-model accuracy difference enters.
+
+**Explicitly dropped:** every within-family claim involving rank 0. Position variance there is exactly zero and no
+amount of analysis recovers an attention interpretation from a cell that is one fixed position.
+
+**Residual confound, stated rather than fixed.** In contrast 3, rank 1 sits *earlier* than the tail in 60% of Qwen
+samples and **82%** of Llama samples. So contrast 3 is share-separated but not position-balanced, and it is weaker
+in Llama for that reason. The reversed subset — samples where rank 1 is later than the tail — is n = 16 (Qwen) and
+n = 7 (Llama); the Qwen subset will be reported as a sensitivity check and the Llama one is too small to read,
+which the record will say rather than reporting it anyway.
+
+**A floor risk that follows from the same measurement.** Group 0 holds 76–83% of the mass, so every non-first cell
+holds at most 5.4%. Contrast 3 may therefore be floor against floor, and D30/D44 makes that a **bound, not
+equality** — at 320 trials the rule of three gives ≤ 0.93%. Contrasts 1 and 2 are not exposed to this, which is the
+second reason they are the primaries.
+
+**Cells changed accordingly:** the middle cell is now **rank 1** (`d61_{qwen,llama}_rank1.yaml`), replacing the
+rank-2 cell, because rank 1 is the most-attended non-first group and is the strongest share contrast available
+against the tail. Six arms, unchanged in every other respect.

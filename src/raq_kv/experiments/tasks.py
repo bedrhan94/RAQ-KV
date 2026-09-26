@@ -10,7 +10,6 @@ import random
 from dataclasses import replace
 from typing import Any, Protocol
 
-import numpy as np
 import torch
 
 from raq_kv.analysis.groups import concentration, group_at_rank, group_shares
@@ -870,11 +869,12 @@ class ProtectionArm:
                 target_tokens=(), distractor_tokens=(), sentence_tokens=(), control_span_tokens=())),
                 self.cfg.quantization.keys.group_size)
             n_groups = int(shares.size)
-            index = group_at_rank(shares, self.task.target_group_rank)
-            # The REALISED rank, not the requested one. A short sample has fewer groups than the requested rank,
-            # `group_at_rank` wraps to the least-attended group, and a cell that silently reported the rank it was
-            # asked for would pool two different conditions -- the D30/D44 mistake in a different costume.
-            realised = int(np.argsort(-shares, kind="stable").tolist().index(index))
+            # The REALISED rank comes back with the index, not re-derived from it. A short sample has fewer
+            # groups than the requested rank, `group_at_rank` wraps to the least-attended group, and a cell that
+            # silently reported the rank it was asked for would pool two different conditions -- the D30/D44
+            # mistake in a different costume. The tail cell is entirely built on that wrap, so the two numbers
+            # have to come from one place.
+            index, realised = group_at_rank(shares, self.task.target_group_rank)
             target = {"target_group_rank_requested": self.task.target_group_rank,
                       "target_group_rank": realised, "target_group_index": index,
                       "target_group_share": float(shares[index]), "n_token_groups": n_groups,

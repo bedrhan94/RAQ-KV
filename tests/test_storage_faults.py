@@ -243,3 +243,57 @@ def test_a_corrupted_bound_makes_the_guard_step_aside_rather_than_clamp_wrongly(
     assert guard.guard_invalid >= 1, "an unusable bound must be reported, not silently obeyed"
     assert stats.out_of_range == 0, "a guard that cannot be trusted does not claim catches"
     assert torch.isfinite(read.keys[key[0]]).all() or True  # the damage passes through; that is the honest outcome
+
+
+def test_group_at_rank_returns_the_realised_rank_with_the_index():
+    """The D61 tail cell asks for rank 999 and relies on the wrap, so the label has to come back with the choice.
+
+    Deriving the realised rank separately -- searching the sort order for the returned index -- is the same
+    quantity computed twice, and a disagreement would mislabel every wrapped cell as the rank it requested. That is
+    the D30/D44 error in a different costume: two conditions pooled under one name.
+    """
+    import numpy as np
+
+    from raq_kv.analysis.groups import group_at_rank
+
+    shares = np.array([0.1, 0.5, 0.2, 0.2])
+    assert group_at_rank(shares, 0) == (1, 0), "rank 0 is the largest mass"
+    assert group_at_rank(shares, 1) == (2, 1), "ties break by group index, so 2 comes before 3"
+    assert group_at_rank(shares, 3) == (0, 3), "the last rank is the smallest mass"
+    # Past the end: the group is the least-attended one and the rank reported is the real one, not 999.
+    for asked in (4, 999):
+        index, realised = group_at_rank(shares, asked)
+        assert (index, realised) == (0, 3), f"asking for rank {asked} must not report rank {asked}"
+
+
+def test_group_at_rank_refuses_an_empty_score_vector():
+    import numpy as np
+    import pytest
+
+    from raq_kv.analysis.groups import group_at_rank
+
+    with pytest.raises(ValueError, match="no attention mass"):
+        group_at_rank(np.array([]), 0)
+
+
+def test_the_top_attention_group_is_the_first_group_which_is_why_rank_zero_is_a_position_cell():
+    """Pins the identifiability fact D61's amendment rests on, so the claim is checkable from the tests.
+
+    Measured over 80 samples on both families: the most-attended `group_token` group is group 0 in 1.000 of them.
+    That makes a rank-0 fault cell a measurement of "corrupting the first 128 tokens' key scales", not of
+    "corrupting the most-attended group" -- the two are the same set on this probe and cannot be separated. The
+    arms still record `target_group_index`, so a sample that violated this would be visible rather than assumed
+    away; this test states the structural reason a synthetic case would not.
+    """
+    import numpy as np
+
+    from raq_kv.analysis.groups import concentration
+
+    # An attention-sink-shaped distribution: most mass on the first group, the rest decaying.
+    shares = np.array([0.78, 0.08, 0.05, 0.04, 0.03, 0.02])
+    row = concentration(shares)
+    assert row["rank0_is_first_group"] == 1.0 and row["rank0_position"] == 0.0
+    # And the least-attended group is NOT pinned to the end in general, which is what leaves the tail cell usable.
+    assert row["min_index"] == 5.0
+    shifted = np.array([0.78, 0.02, 0.05, 0.04, 0.08, 0.03])
+    assert concentration(shifted)["min_index"] == 1.0, "the minimum must be free to sit anywhere"

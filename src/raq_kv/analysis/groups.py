@@ -85,18 +85,23 @@ def concentration(shares: np.ndarray) -> dict[str, float]:
     }
 
 
-def group_at_rank(shares: np.ndarray, rank: int) -> int:
-    """Index of the group holding the ``rank``-th largest attention mass, 0 = the largest.
+def group_at_rank(shares: np.ndarray, rank: int) -> tuple[int, int]:
+    """``(group index, realised rank)`` for the ``rank``-th largest attention mass, 0 = the largest.
 
     Ties are broken by group index via a stable sort, so the choice is reproducible across runs rather than
     dependent on numpy's partitioning: a fault campaign that picked a different group on a replay would break the
     replay guarantee M2's criterion 3 pins for every other plan.
 
     A rank past the end wraps to the **last** group rather than raising, because samples differ in length and a
-    campaign asking for rank 15 would otherwise die on the first 512-token sample. The caller records the realised
-    rank, so a wrapped cell is visible in the analysis instead of silently pretending to be rank 15.
+    campaign asking for rank 15 would otherwise die on the first 512-token sample -- the D61 tail cell uses the
+    wrap deliberately, asking for rank 999 to mean "the least-attended group whatever the length".
+
+    Both numbers are returned together because the caller needs the realised rank in its record and deriving it
+    separately -- searching the sort order for the returned index -- is the same quantity computed twice. A
+    disagreement between the two would mislabel every wrapped cell, which is the one cell the wrap exists for.
     """
     if shares.size == 0:
         raise ValueError("no attention mass to rank; the scorer returned an all-zero or empty score vector")
     order = np.argsort(-shares, kind="stable")
-    return int(order[min(rank, shares.size - 1)])
+    realised = min(rank, shares.size - 1)
+    return int(order[realised]), realised

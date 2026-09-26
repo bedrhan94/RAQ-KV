@@ -26,13 +26,12 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 import numpy as np
 from scipy import stats
 
+from raq_kv.analysis.arms import _controls_clean, _trials, load_arm, rates, shared_samples
 from raq_kv.analysis.contrasts import contrast, contrast_rng
-from raq_kv.utils.io import read_json, read_jsonl
 from raq_kv.utils.paths import resolve_output_root
 
 # The bootstrap count and the contrast itself now live in `raq_kv.analysis.contrasts`, so D61's report and
@@ -53,56 +52,6 @@ def _classify(target: str) -> str:
     if target.startswith(("check:", "bound:")):
         return "overhead"
     return "meta" if target in ("scale", "zero") else "code"
-
-
-def load_arm(raw_root: Path, name: str) -> dict[str, dict]:
-    for exp in sorted(raw_root.glob("*")):
-        if ".superseded-" in exp.name or not (exp / "manifest.json").exists():
-            continue
-        manifest = read_json(exp / "manifest.json")
-        if manifest.get("superseded_by") or manifest["config"]["name"] != name:
-            continue
-        records = read_jsonl(exp / "results.jsonl")
-        if len(records) != manifest["unit_keys_total"]:
-            raise SystemExit(f"{name}: incomplete ({len(records)}/{manifest['unit_keys_total']})")
-        return {r["sample_id"]: r for r in records}
-    raise SystemExit(f"no complete run found for arm {name!r}")
-
-
-def shared_samples(arms: dict[str, dict[str, dict]]) -> list[str]:
-    """Samples every arm answers correctly with no faults, and that the full cache answers too."""
-    keep: set[str] | None = None
-    for data in arms.values():
-        good = {s for s, r in data.items()
-                if r["golden_correct"] and r.get("unpruned_correct") is not False}
-        keep = good if keep is None else (keep & good)
-    return sorted(keep or ())
-
-
-def _trials(record: dict) -> list[dict]:
-    return [t for t in record["faults"] if t["trial"] >= 0]
-
-
-def _controls_clean(data: dict[str, dict]) -> tuple[int, int]:
-    """No-fault scorings must show exactly zero damage, or the arm's own reference is unstable."""
-    total = changed = 0
-    for r in data.values():
-        for t in r["faults"]:
-            if t["trial"] < 0:
-                total += 1
-                changed += int(bool(t["answer_changed"]))
-    return changed, total
-
-
-def rates(data: dict[str, dict], samples: list[str], field: str) -> np.ndarray:
-    out = []
-    for s in samples:
-        trials = _trials(data[s])
-        if field == "task_failure":
-            out.append(sum(1 for t in trials if not t["faulty_correct"]) / len(trials))
-        else:
-            out.append(sum(1 for t in trials if t["answer_changed"]) / len(trials))
-    return np.array(out)
 
 
 def flip_shares(data: dict[str, dict], samples: list[str], kind: str) -> np.ndarray:
