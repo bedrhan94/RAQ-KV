@@ -3499,3 +3499,55 @@ all, so a vehicle must select rows whose context fits — roughly under 8k token
 selection is a stated condition of the result, not a convenience. It also means the vehicle cannot be used for the
 attention-scorer path at any length (eager OOMs at 7k), so retention experiments with query-aware scoring are out of
 reach on it, and only logit-based and fault work is available.
+
+### PILOT, part three — the predictions, read rather than scored, and one real caveat
+
+The pilot scored 22 predictions and discarded every string, so both of its claims were made without a single answer
+being looked at. Reading four of them (the shortest rows, both families) settles two questions the F1 number could
+not and raises one caveat that was invisible in the aggregate.
+
+| row | gold | Qwen prediction (first token) | Llama prediction (first token) |
+|---|---|---|---|
+| 11 | Marie of Hohenstaufen | *"Marie of Brabant, Queen of France's paternal grandmother was Margaret of Brabant."* (**'Mar'**, 19 tok) | *"Beatrice d'Avesnes"* (**'Beat'**, 7 tok) |
+| 8 | St Patrick's College | *"Central School"* (**'Central'**, 3 tok) | *"St Patrick's College, Dublin"* (**'St'**, 7 tok) — **correct** |
+| 2 | Cahiers du cinéma | *"The director of film Man At Bath is Christophe Honoré, and he works at the Opéra National de Lyon."* (**'The'**, 25 tok) | *"France"* (**'France'**, 2 tok) |
+| 5 | Edward Watson | *"Lewis Watson, 1st Earl of Rockingham"* (**'Lewis'**, 11 tok) | — |
+
+**1. The low F1 is genuine retrieval failure, not prompt-following.** Every prediction is short and terminated on
+EOS, and Qwen's errors are *plausible-but-wrong entities lifted from the context* — Marie of **Brabant** for Marie of
+**Hohenstaufen**, Lewis Watson for Edward Watson, Christophe Honoré for Cahiers du cinéma. That is what multi-hop
+failure looks like. The worry that `qa_f1`'s `overlap / len(pred)` precision was punishing a correct answer wrapped
+in preamble does not hold: in these four the answer is simply absent.
+
+A consistency check passed on the way: Llama's *"St Patrick's College, Dublin"* against gold *"St Patrick's College"*
+gives F1 = 0.857 by hand, exactly the value the pilot recorded for that sample.
+
+**2. The margin is measured on an answer-bearing token, mostly.** Six of the seven first tokens are content words
+('Mar', 'Central', 'Lewis', 'Beat', 'St', 'France'). So the LongBench margin is broadly the same object as the
+probe's, which the cross-task comparison needs and which had not been checked — only the *gold* answers' first-token
+diversity had been.
+
+**3. THE CAVEAT, and it is real.** Qwen answers two of four rows as a **full sentence** rather than a bare value
+(19 and 25 tokens, one of them opening with **'The'**), where all three of Llama's are bare (7, 7, 2 tokens). Two
+consequences:
+
+* **Qwen is the less compliant of the two with "only give me the answer",** and that depresses its F1 precision
+  relative to Llama's on any row where it *does* find the right entity. From four rows this cannot be sized, so
+  **the accuracy inversion (Llama F1 0.311 against Qwen 0.071) is weaker than the raw numbers suggest** and is the
+  first thing a committed vehicle must settle — with a format-insensitive score, or a compliance rate reported
+  beside it.
+* **Roughly one in four of Qwen's LongBench margins may sit on a function word.** This cuts the *conservative* way
+  for the desaturation finding: function words are highly predictable, so contamination would inflate Qwen's margin,
+  and Qwen's measured collapse from 1.0000 to 0.9284 is therefore if anything understated.
+
+**What survives unchanged and what does not.** The **confidence** half stands and is strengthened: Qwen desaturates
+(top-1 1.0000 → 0.9284), Llama further (→ 0.5350), the ordering survives, and the function-word caveat works against
+rather than for that reading. The **accuracy inversion** — and with it the "calibration, not competence" framing and
+the "the fault metric rewards overconfidence" caution — is **downgraded to a hypothesis** pending a format-robust
+accuracy measurement. It was recorded as a standing project constraint before this check; that entry now carries the
+caveat.
+
+**The lesson is the same one this project keeps relearning.** A number computed from text that nobody read is a
+number about the scorer as much as about the model. Four predictions and ten minutes were enough to find a confound
+that the aggregate hid completely, and the check happened only because the claim had already been written down and
+was noticed to be resting on nothing.
