@@ -41,3 +41,87 @@ def test_superseded_runs_explain_themselves():
         superseded = manifest.get("superseded_by")
         if superseded:
             assert superseded.get("reason"), f"{name}: superseded without a reason"
+
+
+def _fake_run(root, exp_name, config_name, n_units, superseded=None):
+    import json
+
+    d = root / exp_name
+    d.mkdir(parents=True)
+    manifest = {"exp_id": exp_name, "config": {"name": config_name}, "unit_keys_total": n_units}
+    if superseded:
+        manifest["superseded_by"] = superseded
+    (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (d / "results.jsonl").write_text(
+        "\n".join(json.dumps({"sample_id": f"s{i}", "golden_correct": True, "faults": []})
+                  for i in range(n_units)), encoding="utf-8")
+    return d
+
+
+def test_two_live_runs_of_one_arm_name_are_refused_instead_of_picked_by_hash_order(tmp_path):
+    """The defect this guards was live for one commit and would have published a 2-sample result as a 320-trial one.
+
+    `--set task.n_samples=2` produces a smoke run with the SAME config name as the real arm and a different
+    identity hash. `load_arm` returned the first match in directory order -- hash order, so arbitrary -- and
+    nothing in the report would have said which run it read.
+    """
+    import pytest
+
+    from raq_kv.analysis.arms import load_arm
+
+    raw = tmp_path / "raw"
+    _fake_run(raw, "arm_aaaa1111", "d61_qwen_tail", 2)
+    _fake_run(raw, "arm_bbbb2222", "d61_qwen_tail", 40)
+    with pytest.raises(SystemExit, match="live complete runs"):
+        load_arm(raw, "d61_qwen_tail")
+
+    # Marking the smoke run superseded is the resolution, and then the real arm loads unambiguously.
+    import json
+
+    m = json.loads((raw / "arm_aaaa1111" / "manifest.json").read_text(encoding="utf-8"))
+    m["superseded_by"] = {"exp_id": "arm_bbbb2222", "reason": "smoke run"}
+    (raw / "arm_aaaa1111" / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    assert len(load_arm(raw, "d61_qwen_tail")) == 40
+
+
+def test_an_incomplete_run_is_refused_rather_than_partially_reported(tmp_path):
+    import pytest
+
+    from raq_kv.analysis.arms import load_arm
+
+    raw = tmp_path / "raw"
+    d = _fake_run(raw, "arm_cccc3333", "some_arm", 13)
+    import json
+
+    m = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    m["unit_keys_total"] = 120  # the resumed-campaign case: died at 13 of 120
+    (d / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"incomplete \(13/120\)"):
+        load_arm(raw, "some_arm")
+
+
+def test_the_supersede_helper_writes_the_shape_the_integrity_test_reads(tmp_path):
+    """`superseded_by` is an object with `reason`, not a bare string.
+
+    The first version of the helper wrote a string, which made `test_superseded_runs_explain_themselves` raise
+    AttributeError rather than fail -- a test that cannot report the problem it exists to catch. The shape is now
+    asserted from both ends.
+    """
+    import importlib.util
+    import json
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "supersede_run", Path(__file__).resolve().parents[1] / "scripts" / "supersede_run.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    raw = tmp_path / "raw"
+    d = _fake_run(raw, "arm_dddd4444", "an_arm", 2)
+    manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    renamed = mod.supersede(d, manifest, "a 2-sample smoke run", "the_full_arm")
+
+    assert ".superseded-" in renamed.name, "the rename is what makes it visible in a listing"
+    assert not d.exists() and (renamed / "results.jsonl").exists(), "records are kept, never deleted"
+    stored = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))["superseded_by"]
+    assert stored["reason"] == "a 2-sample smoke run" and stored["exp_id"] == "the_full_arm"
