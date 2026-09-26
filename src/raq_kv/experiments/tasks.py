@@ -6,6 +6,7 @@ units *before* the model is loaded (tokenizer/data only), so a fully finished ex
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import replace
 from typing import Any, Protocol
@@ -1012,12 +1013,20 @@ def _first_token_shift(model: Any, faulty: Any, query_ids: Any, clean: Any) -> d
     # it. A `-inf` where the clean model DOES put mass is a genuinely infinite KL and is left as inf, not masked.
     mass = clean_p > 0
     kl = float((clean_p[mass] * (clean[mass] - faulty_lp[mass])).sum())
+    # A NaN that survives the mask is not a measurement artefact: it means the model's own forward pass produced
+    # non-finite activations. One corrupted fp16 metadata word can blow a key up until the attention softmax
+    # overflows, and the model then emits a degenerate repetition rather than a wrong answer. Measured at 14 of
+    # 1280 flips across the two D62 arms, every one of them answer-changing, and 8 of Llama's 8 came from a
+    # **zero-point** flip. It is the most severe failure class there is and it is invisible to a KL, so it gets its
+    # own flag: left as a bare NaN in a numeric field it would silently poison every median that reads the column.
+    nonfinite = not math.isfinite(kl)
     top = int(clean.argmax())
     def lead(lp: Any) -> float:
         rival = lp.clone()
         rival[top] = float("-inf")
         return float(lp[top] - rival.max())
-    return {"kl_first_token": kl, "margin_clean": lead(clean), "margin_faulty": lead(faulty_lp),
+    return {"kl_first_token": kl, "faulty_nonfinite": nonfinite,
+            "margin_clean": lead(clean), "margin_faulty": lead(faulty_lp),
             "argmax_flipped": bool(int(faulty_lp.argmax()) != top),
             "first_token_clean": top, "first_token_faulty": int(faulty_lp.argmax())}
 

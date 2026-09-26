@@ -3052,3 +3052,112 @@ families are measured identically, so the cross-family contrast is unaffected �
 be read to more than two significant figures. One probe, one group size (128), 4 bits, single flips, first answer
 token only. A flip that changes nothing at all is expected and observed (one smoke trial returned KL exactly zero
 with a scale flip), consistent with D61's finding that a value whose code is 0 is invariant under scale corruption.
+
+### RESULT, 2026-09-26 — branch B, and the answer is not in the codec at all
+
+Two arms, 31 samples shared, 496 flips each. `scripts/report_d62.py`,
+`outputs/reports/d62_flip_severity.json`; the scale control is `scripts/measure_answer_confidence.py` and
+`outputs/reports/answer_confidence.json`.
+
+**The zero baseline is exactly 0.0** on all 80 control trials in both families, so every nonzero KL below is the
+effect of a flip and not pipeline nondeterminism.
+
+**The anchor holds, decisively.** KL separates the flips that broke the answer from the flips that did not:
+Qwen **AUC 0.999** [0.998, 1.000], p = 1.4e-08; Llama **AUC 0.885** [0.774, 0.978], p = 5.5e-09. On
+`argmax_flipped` instead, 1.000 and 0.999. The graded measure is measuring what breaks answers, so the primaries
+are interpretable — which is what the pre-registration said had to be true first.
+
+#### A finding the pre-registration did not anticipate: about 1.3% of single metadata flips make the model output NaN
+
+| family | non-finite | rate | Wilson 95% | share of all breaks | from a zero-point |
+|---|---|---|---|---|---|
+| Qwen3-1.7B | 6 / 496 | **1.210%** | [0.556%, 2.614%] | **35.3%** | 3 / 6 |
+| Llama-3.2-3B | 7 / 496 | **1.411%** | [0.685%, 2.884%] | **25.9%** | **7 / 7** |
+
+One corrupted fp16 metadata word can blow a key up until the attention softmax overflows. Every one of the 13
+changed the answer, and in every case the prediction is a degenerate repetition (`""""""…`) rather than a wrong
+answer. So **roughly a third of what "the answer changed" counts in every fault arm in this project is total
+numerical collapse, not a subtly wrong answer** — a distinction no binary outcome could show, and one that matters
+because a collapse is trivially detectable at runtime while a wrong answer is not. All 7 of Llama's came from a
+**zero-point** flip against 3 of 6 on Qwen; with these counts that is a suggestion, not a result.
+
+This class was invisible until the KL was computed, and it is what the first campaign's NaNs turned out to be.
+
+#### PRIMARY 1 (branch A, per-flip severity) — significant, and **not** evidence for branch A
+
+| | mean of per-sample medians | median over all finite flips | 10% | 90% | 99% | max | exactly zero |
+|---|---|---|---|---|---|---|---|
+| Qwen | 2.782e-03 | **3.085e-11** | — | 6.599e-06 | 6.301e-01 | 25.15 | **10.6%** |
+| Llama | 1.740e-04 | **2.216e-05** | — | 1.770e-03 | 1.803e+00 | 13.59 | 2.7% |
+
+The raw contrast and the log contrast point opposite ways, and **the log one is right**: raw
+−2.608e-03 [−8.082e-03, +1.692e-04] fails D31 because Qwen's *mean* is carried by a handful of enormous flips
+(its max, 25.15 nats, is nearly twice Llama's). On log10 the difference is **+4.503 dex [+3.480, +5.464],
+p = 1.0e-07**, meeting D31 — the **typical** flip moves Llama's distribution about **3.2e4×** further than Qwen's.
+
+**That is far past branch A's prediction of ~2.25×, and that is the reason to distrust it.** A ratio four and a
+half orders of magnitude larger than the hazard ratio it is supposed to explain is not a stronger version of the
+hypothesis; it is a sign the quantity is measuring something else. The scale control says what.
+
+#### PRIMARY 2 (branch B, a thinner margin) — supported, and it survives the scale control
+
+Fault-free margin: Qwen **17.07** against Llama **3.27**, difference **−13.80 [−16.13, −11.44]**, p = 1.2e-06,
+**31 of 31** samples moved. Meets D31.
+
+The scale control (`measure_answer_confidence.py`, 40 correctly-answered samples per family, medians):
+
+| | margin | logprob spread | **margin / spread** | entropy | top-1 probability |
+|---|---|---|---|---|---|
+| Qwen3-1.7B | 21.000 | 4.515 | **4.657** | **0.0000** | **1.0000** |
+| Llama-3.2-3B | 5.062 | 1.861 | **2.709** | 0.0970 | 0.9880 |
+| ratio | 0.241× | 0.412× | **0.582×** | — | — |
+
+About **40% of the raw margin gap is scale** — Llama's log-probabilities simply live on a narrower spread. But the
+scale-free margin is still **0.582×**, so branch B survives: on this probe Llama holds its answers with a
+materially thinner margin even after the units are removed.
+
+#### What unifies the two, and it is the actual answer
+
+**Qwen's first-token distribution is saturated: top-1 probability 1.0000 and entropy 0.0000 at float64.** Llama's
+is not (0.9880, 0.0970). A distribution already at p = 1 has nowhere to move, so a small perturbation produces a
+KL of ~1e-11 — until the perturbation is large enough to unseat the top token, at which point the KL jumps to tens
+of nats. That is exactly the shape of Qwen's distribution: **10.6% of its flips produce a KL of exactly zero**
+against Llama's 2.7%, its median is 1e-11, and its maximum is the largest in either family.
+
+So **primary 1 does not establish branch A.** Qwen's small typical KL is a consequence of having no room to move,
+not evidence that a metadata flip does less damage there, and the KL comparison cannot separate the two. Branch A
+is recorded as **not established**, not as refuted.
+
+One more piece of the same picture, from the descriptive table: on Qwen, **11 breaks and 11 first-token flips** —
+every break is the first token being unseated. On Llama, **20 breaks but only 7 first-token flips** — 13 of 20
+derail later, with the first token intact. A saturated first token cannot be nudged, only overturned; an
+unsaturated answer can come apart anywhere.
+
+#### The answer to D59's question, stated at the confidence it has earned
+
+**The fragility difference is a property of how confidently each model holds these answers, not of what
+quantization does to their caches.** Four mechanisms have now been tested: dynamic range (eliminated, D59),
+attention spread (refuted with the sign reversed, D60), attention-rank-conditioned severity (no gradient, D61),
+and per-flip severity (**not established** here, confounded by saturation). What is left standing and measured is
+that Qwen answers this probe at p = 1.0000 and Llama at 0.9880, and a flip has to do far more work to change the
+first than the second.
+
+**This is a claim about this probe, and that is a real limit.** A saturated output distribution is a property of
+model × task, not of the model; on a harder benchmark Qwen would not sit at p = 1 and the whole difference could
+vanish or reverse. RULER or LongBench is the test, and it is not run. **What it does settle for the allocator is
+negative and useful: there is no codec-side lever here.** Nothing in D62 suggests a quantization or protection
+policy that would close the gap, because the gap is not made by the codec.
+
+#### Scope and corrections
+
+* The control's margins (Qwen 21.000, Llama 5.062) are medians over each family's own first 40 correctly-answered
+  samples; the arms' (17.07, 3.27) are means over the 31 samples **both** families answer cleanly. Different sets,
+  same direction, and neither is the other's replication.
+* `entropy` and `top1_prob` **saturate** at float64 for Qwen, so its 0.0000 and 1.0000 are floor and ceiling
+  rather than measurements. The margin does not saturate — it is a difference of two finite log-probabilities —
+  so it stays the quantity to read.
+* bf16 logits quantize the margin to about 0.25; two significant figures at most.
+* The first campaign returned NaN for most trials and was superseded, not deleted. Its `margin_clean` and outcome
+  flags were correct and unaffected — primary 2 already read the same result off them — but a record carrying a
+  NaN in a field the report reads is not something to leave live.
+* One probe, one group size, 4 bits, single flips, first answer token, 496 flips per family.

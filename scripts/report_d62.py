@@ -32,6 +32,7 @@ from scipy import stats
 
 from raq_kv.analysis.arms import _controls_clean, _trials, load_arm, shared_samples
 from raq_kv.analysis.contrasts import contrast, contrast_rng
+from raq_kv.analysis.stats import wilson
 from raq_kv.utils.paths import resolve_output_root
 
 ARMS = {"qwen": "d62_qwen_meta", "llama": "d62_llama_meta"}
@@ -56,7 +57,7 @@ def controls_are_exactly_zero(data: dict[str, dict]) -> tuple[int, int, float]:
 
 
 def flip_kls(data: dict[str, dict], samples: list[str]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Every flip's KL, flattened, with its trial-level outcome flags beside it."""
+    """Every flip's KL, flattened, with its trial-level outcome flags beside it. May contain NaN -- see below."""
     kl, changed, flipped = [], [], []
     for s in samples:
         for t in _trials(data[s]):
@@ -66,13 +67,31 @@ def flip_kls(data: dict[str, dict], samples: list[str]) -> tuple[np.ndarray, np.
     return np.array(kl), np.array(changed, dtype=bool), np.array(flipped, dtype=bool)
 
 
+def nonfinite_mask(kl: np.ndarray) -> np.ndarray:
+    """Trials where the model's own forward pass went non-finite -- a result, not missing data.
+
+    One corrupted fp16 metadata word can blow a key up until the attention softmax overflows; the model then emits
+    a degenerate repetition instead of a wrong answer. `faulty_nonfinite` records this directly for runs made after
+    it was added, and a NaN KL identifies it exactly for the runs made before, which is why this derives the mask
+    rather than reading the field: re-running two campaigns to add a boolean that is already recoverable would be
+    GPU time spent on nothing.
+
+    These trials are excluded from the KL statistics because a NaN propagates through every median that touches the
+    column, and reported as **their own rate** because they are the most severe failure class there is. Excluding
+    them makes the anchor conservative: all of them changed the answer and all carry effectively infinite KL, so
+    leaving them out can only weaken KL's apparent discrimination, never inflate it.
+    """
+    return ~np.isfinite(kl)
+
+
 def per_sample_median_kl(data: dict[str, dict], samples: list[str]) -> np.ndarray:
     """One number per sample, so the contrast is paired at the sample level like every other in this project.
 
     The median over a sample's 16 flips, not the mean: KL over hundreds of single-bit flips is heavy-tailed, most
     flips move the distribution by ~1e-6 and a few by ~1e-1, and a mean would be one outlier's report.
     """
-    return np.array([float(np.median([float(t["kl_first_token"]) for t in _trials(data[s])])) for s in samples])
+    return np.array([float(np.nanmedian([float(t["kl_first_token"]) for t in _trials(data[s])]))
+                     for s in samples])
 
 
 def per_sample_clean_margin(data: dict[str, dict], samples: list[str]) -> np.ndarray:
@@ -131,7 +150,31 @@ def main() -> int:
         if bad:
             print("         every small KL below is noise of unknown size rather than the effect of a flip")
 
-    # The anchor, first, because it can void the two primaries and printing them above it would invite reading
+    # The catastrophic class, before anything that excludes it. A third of all break events are this, not a subtle
+    # answer change, and a report that dropped them into a NaN would have said nothing about the worst thing a
+    # single metadata flip can do.
+    print("\n" + "=" * 100)
+    print("\nNON-FINITE COLLAPSE -- flips after which the model's own forward pass produced NaN/inf\n")
+    print(f"{'family':8s}{'k':>5s}{'n':>7s}{'rate':>9s}{'95% CI':>22s}{'all changed':>13s}{'zero-point':>12s}")
+    for fam, data in arms.items():
+        kl, changed, _ = flip_kls(data, samples)
+        bad = nonfinite_mask(kl)
+        # Which metadata word did it: a scale or a zero-point. Recorded per trial by `plan_composition`.
+        targets = [t.get("by_target", {}) for s in samples for t in _trials(data[s])]
+        zeros = sum(1 for t, b in zip(targets, bad, strict=True) if b and t.get("zero"))
+        lo, hi = wilson(int(bad.sum()), int(len(kl)))
+        print(f"{fam:8s}{int(bad.sum()):5d}{len(kl):7d}{bad.mean():9.3%}   [{lo:.3%}, {hi:.3%}]"
+              f"{str(bool(changed[bad].all()) if bad.any() else '-'):>13s}{f'{zeros}/{int(bad.sum())}':>12s}")
+        out.setdefault("nonfinite", {})[fam] = {
+            "k": int(bad.sum()), "n": int(len(kl)), "rate": float(bad.mean()), "ci": (lo, hi),
+            "all_answer_changed": bool(changed[bad].all()) if bad.any() else None,
+            "from_zero_point": int(zeros), "share_of_all_breaks":
+                float(bad.sum() / changed.sum()) if changed.sum() else None}
+        if bad.any():
+            print(f"{'':8s}  that is {bad.sum() / max(1, changed.sum()):.1%} of this family's break events, and "
+                  f"the prediction is a degenerate repetition rather than a wrong answer")
+
+    # The anchor, next, because it can void the two primaries and printing them above it would invite reading
     # them before knowing whether they mean anything.
     print("\n" + "=" * 100)
     print("\nANCHOR -- does KL separate the flips that broke the answer from the flips that did not?")
@@ -140,6 +183,8 @@ def main() -> int:
     anchor_ok = True
     for fam, data in arms.items():
         kl, changed, flipped = flip_kls(data, samples)
+        ok = ~nonfinite_mask(kl)
+        kl, changed, flipped = kl[ok], changed[ok], flipped[ok]
         a = auc_with_ci(kl, changed, args.seed)
         out.setdefault("anchor", {})[fam] = a
         if a["auc"] is None:
@@ -189,11 +234,13 @@ def main() -> int:
     out["primary2_clean_margin"] = c2
 
     print("\n" + "=" * 100)
-    print("\nDESCRIPTIVE -- the KL distribution per family, over every flip (no verdict attaches)\n")
+    print("\nDESCRIPTIVE -- the KL distribution per family, over the FINITE flips (no verdict attaches)\n")
     print(f"{'family':8s}{'flips':>7s}{'zero KL':>9s}{'p50':>11s}{'p90':>11s}{'p99':>11s}{'max':>11s}"
           f"{'broke':>7s}{'flip1st':>8s}")
     for fam, data in arms.items():
         kl, changed, flipped = flip_kls(data, samples)
+        ok = ~nonfinite_mask(kl)
+        kl, changed, flipped = kl[ok], changed[ok], flipped[ok]
         print(f"{fam:8s}{len(kl):7d}{np.mean(kl == 0):9.3f}{np.median(kl):11.3e}"
               f"{np.percentile(kl, 90):11.3e}{np.percentile(kl, 99):11.3e}{kl.max():11.3e}"
               f"{changed.sum():7d}{flipped.sum():8d}")
