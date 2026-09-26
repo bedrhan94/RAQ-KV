@@ -23,19 +23,22 @@ import numpy as np
 from raq_kv.utils.io import read_json, read_jsonl
 
 
-def load_arm(raw_root: Path, name: str) -> dict[str, dict]:
-    """The one live, complete run of the arm called ``name``.
+def sole_run(raw_root: Path, name: str) -> tuple[Path, dict, list[dict]]:
+    """The one live, complete run of the arm called ``name``, with its directory, manifest and records.
 
-    **Two live runs of one name is an error, not a choice.** This used to return the first match in directory
-    order, which is hash order and therefore arbitrary. A `--set task.n_samples=2` smoke run of a D61 arm carries
-    the *same config name* as the real 40-sample arm and a different identity hash, so the reader could silently
-    summarise the smoke run -- a 2-sample result reported as a 320-trial one, with nothing in the output saying so.
-    Found while smoke-testing D61's wrapping tail cell, before any report had been written against it.
+    **Two live runs of one name is an error, not a choice.** Every reader in this project used to take the first
+    match in directory order, which is hash order and therefore arbitrary. A `--set task.n_samples=2` smoke run of
+    a D61 arm carries the *same config name* as the real 40-sample arm and a different identity hash, so a reader
+    could silently summarise the smoke run -- a 2-sample result reported as a 320-trial one, with nothing in the
+    output saying so. Found while smoke-testing D61's wrapping tail cell, before any report existed against it.
 
-    Marking the older run superseded is the project's own mechanism for this and remains the right fix; the raise
-    is here because a reader that picks arbitrarily cannot tell the operator that the mechanism was not used.
+    Marking the older run superseded is the project's own mechanism and remains the right fix; the raise is here
+    because a reader that picks arbitrarily cannot tell the operator that the mechanism was not used. Shared,
+    rather than fixed in one script, because the identical loop appeared in `report_fault_retention.py` and
+    `scripts/calibrate_iso_budget.py` -- and the second one decides an arm's *budget*, where reading a smoke run
+    would silently recalibrate an iso-budget comparison against two samples.
     """
-    found: list[tuple[Path, dict]] = []
+    found: list[tuple[Path, dict, list[dict]]] = []
     for exp in sorted(raw_root.glob("*")):
         if ".superseded-" in exp.name or not (exp / "manifest.json").exists():
             continue
@@ -45,16 +48,21 @@ def load_arm(raw_root: Path, name: str) -> dict[str, dict]:
         records = read_jsonl(exp / "results.jsonl")
         if len(records) != manifest["unit_keys_total"]:
             raise SystemExit(f"{name}: incomplete ({len(records)}/{manifest['unit_keys_total']})")
-        found.append((exp, {r["sample_id"]: r for r in records}))
+        found.append((exp, manifest, records))
     if not found:
         raise SystemExit(f"no complete run found for arm {name!r}")
     if len(found) > 1:
-        listing = "\n  ".join(f"{e.name} ({len(d)} units)" for e, d in found)
+        listing = "\n  ".join(f"{e.name} ({len(r)} units)" for e, _, r in found)
         raise SystemExit(
             f"{name!r} has {len(found)} live complete runs and no way to choose between them:\n  {listing}\n"
-            f"mark the ones that are not the result superseded (manifest `superseded_by` + the `.superseded-` "
-            f"rename) rather than leaving a reader to pick by hash order")
-    return found[0][1]
+            f"mark the ones that are not the result superseded (scripts/supersede_run.py) rather than leaving a "
+            f"reader to pick by hash order")
+    return found[0]
+
+
+def load_arm(raw_root: Path, name: str) -> dict[str, dict]:
+    """The arm's records keyed by sample id."""
+    return {r["sample_id"]: r for r in sole_run(raw_root, name)[2]}
 
 
 def shared_samples(arms: dict[str, dict[str, dict]]) -> list[str]:

@@ -34,7 +34,7 @@ import re
 import sys
 from pathlib import Path
 
-from raq_kv.utils.io import read_json, read_jsonl
+from raq_kv.analysis.arms import sole_run
 from raq_kv.utils.paths import configs_dir, resolve_output_root
 
 SUFFIX = "_isocal"
@@ -47,21 +47,16 @@ def realised_bits(raw_root: Path, name: str) -> tuple[float, int]:
     record's `avg_kv_bits` is the per-value width actually stored and `tokens_retained / tokens_original` is
     what pruning realised on that sample, not what was asked for.
     """
-    for exp in sorted(raw_root.glob("*")):
-        if ".superseded-" in exp.name or not (exp / "manifest.json").exists():
-            continue
-        manifest = read_json(exp / "manifest.json")
-        if manifest.get("superseded_by") or manifest["config"]["name"] != name:
-            continue
-        records = read_jsonl(exp / "results.jsonl")
-        if len(records) != manifest["unit_keys_total"]:
-            raise SystemExit(f"{name}: incomplete ({len(records)}/{manifest['unit_keys_total']}) -- finish it first")
-        ok = [r for r in records if r["golden_correct"]]
-        if not ok:
-            raise SystemExit(f"{name}: no samples answered correctly without pruning")
-        bits = [r["avg_kv_bits"] * r["tokens_retained"] / r["tokens_original"] for r in ok]
-        return sum(bits) / len(bits), len(ok)
-    raise SystemExit(f"no complete run found for arm {name!r}")
+    # `sole_run` refuses a name matching two live complete runs rather than taking the first in hash order. That
+    # matters more here than anywhere else: this function decides whether an arm's budget needs correcting, so
+    # reading a 2-sample smoke run would recalibrate an iso-budget comparison against two samples and the emitted
+    # config would carry that number as its justification.
+    _, _, records = sole_run(raw_root, name)
+    ok = [r for r in records if r["golden_correct"]]
+    if not ok:
+        raise SystemExit(f"{name}: no samples answered correctly without pruning")
+    bits = [r["avg_kv_bits"] * r["tokens_retained"] / r["tokens_original"] for r in ok]
+    return sum(bits) / len(bits), len(ok)
 
 
 def decide(deviation: float, tolerance: float) -> str:
