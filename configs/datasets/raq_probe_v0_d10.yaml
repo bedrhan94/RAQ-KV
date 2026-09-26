@@ -1,0 +1,29 @@
+# RAQ-Probe difficulty rung: 10 same-type distractors, lengths fixed at 2048 and 4096.
+#
+# D63's ladder. D62 found Qwen3-1.7B answering the standard probe at top-1 probability 1.0000 with entropy 0.0000
+# -- saturated -- and Llama-3.2-3B at 0.9880, and argued that this, not anything about the codec, is why Llama's
+# per-metadata-flip hazard is 2.25x higher. The stated limit was that saturation is a property of model x task.
+#
+# Context length was measured and is NOT the dial: Qwen has no sample below 1 nat at any length, and eight times
+# the context costs it about 6 nats. So difficulty is varied the one way this vehicle can vary it while holding
+# everything else identical -- generator seed, filler corpus and revision, fact types, depths, answer format and
+# scorer are all unchanged from raq_probe_v0.yaml. Only the number of competing same-type facts moves.
+#
+# Lengths are pinned to [2048, 4096] because the generator cannot place more than a handful of distractors in a
+# 512-token filler ("too few sentences for distinct depths and distractors"), and 20 is its ceiling even here.
+# Measured, not guessed: 6 and 10 fit at 1024; 14 and 20 need 2048; 30 fails everywhere.
+
+dataset:
+  name: raq_probe
+  version: v0
+  generator_seed: 0
+  fact_types: [number, id, date, entity, constraint, tool_arg]
+  context_lengths: [2048, 4096]
+  depths: [0.1, 0.5, 0.9]
+  groups_per_cell: 10
+  n_distractors: 10
+  filler_hf_id: Salesforce/wikitext
+  filler_subset: wikitext-2-raw-v1
+  filler_split: train
+  filler_revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  max_new_tokens: 64

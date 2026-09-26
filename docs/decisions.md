@@ -3257,3 +3257,66 @@ is: **the two families differ enormously in how confidently they hold these answ
 right direction to explain the hazard gap, and the within-family dose-response is consistent with it at about 2×
 but underpowered.** A proper test needs many more samples at fixed model, which is cheap — it needs no faults, only
 `margin_clean` and a break rate — and is not run.
+
+## D63 — Does difficulty desaturate Qwen? The limit D62 stated, pre-registered as a controlled ladder (2026-09-26)
+
+Frozen before the run. D62 answered why Llama-3.2-3B's per-metadata-flip hazard is 2.25× Qwen3-1.7B's: **Qwen holds
+these answers at top-1 probability 1.0000 with entropy 0.0000 and Llama at 0.9880**, so a fault must do far more
+work to unseat the first. It stated its own limit plainly — *saturation is a property of model × task, so on a
+harder task the whole difference could vanish or reverse* — and this tests it.
+
+### Why not LongBench, and why not length
+
+**Length is not the dial, and that is measured rather than assumed** (D62's controls): Qwen has **no sample below 1
+nat at any context length**, and eight times the context costs it about 6 nats and leaves it at 13. So
+`raq_probe_v0_long` cannot serve as the desaturated condition.
+
+**LongBench was the plan and is deferred, for a reason that is about the measurement and not the cost.** It changes
+difficulty, domain, answer format and scorer all at once, so a desaturation observed there could not be attributed
+to difficulty. Two existing vehicles were considered and rejected on the same grounds, one of them decisively:
+**GSM8K's first generated token is not an answer token at all** — it opens a reasoning chain, and the answer arrives
+300 tokens later — so the quantity D62 measured does not transfer to it. BFCL's first token is a tool-call opener
+(`<tool_call>`, `<|python_tag|>`), which both families emit with high confidence regardless of whether they get the
+call right, so it would likely be *more* saturated for a reason unrelated to task difficulty.
+
+What this vehicle can vary while holding everything else identical is the number of competing **same-type**
+distractor facts. Generator seed, filler corpus and revision, fact types, depths, answer format and scorer are
+unchanged across rungs; only the number of facts of the same type and template with different keys moves. That is
+the manipulation, and it is the one a confidence claim needs: more plausible candidates for the same query.
+
+### The ladder, and the ceiling it ran into
+
+`configs/datasets/raq_probe_v0_d{2,10,20}.yaml`: **2, 10 and 20** distractors, context lengths pinned to
+**[2048, 4096]** for both rungs so length is held fixed.
+
+The ceiling was measured, not guessed. The generator refuses when the filler cannot host the facts at distinct
+depths (`filler has too few sentences for distinct depths and distractors`): at 512 tokens even **6** fails; at
+[1024, 2048, 4096] **10** works and **14** fails; at [2048, 4096] **20** works and **30** fails. Hence the pinned
+lengths and the 20-distractor top rung — a tenfold range, which is what the ladder gets.
+
+### The anchor, which can void the comparison
+
+**Accuracy per rung.** A rung on which accuracy does not move did not make the task harder, and a flat margin there
+would say nothing about saturation. It is printed beside every cell and stated here so it cannot be skipped later —
+the same role the AUC plays in D62. If accuracy is unchanged from d2 to d20 on a family, that family's margins
+across the ladder are uninterpretable and will be reported as such rather than as a null.
+
+### Pre-registered predictions
+
+| branch | prediction | what it would mean |
+|---|---|---|
+| **A — saturation is task-driven** (D62's own stated limit, so the expected outcome) | Qwen's margin falls monotonically with distractors and its top-1 probability drops below 1.0; some Qwen samples appear below 1 nat, where currently **none** do at any length | D62's answer is **probe-specific**. The fragility ordering could vanish or reverse on a harder task, and the honest scope of D62 narrows to "on tasks where this model saturates" |
+| **B — saturation is model-driven** | Qwen stays at p = 1.0000 with no sample below 1 nat even at 20 competing facts, while accuracy falls (so the rung did bite) | D62's answer **generalises further than it claimed**. A model that answers at p = 1 whatever the difficulty is structurally more fault-tolerant, and that is a property worth naming |
+| **void** | accuracy does not move from d2 to d20 | the manipulation failed; nothing about saturation is learned and a harder *vehicle* is then unavoidable |
+
+**Both A and B are informative and neither is the result I want**, which is the point of writing them down first.
+Branch A narrows a conclusion I committed to two hours ago; branch B widens it. The measurement is the same either
+way.
+
+### Scope
+
+First answer token only, 40 samples per cell spread across both pinned lengths, the same 4-bit `group_token`/
+`per_token` quantization the D62 arms used, no faults, no pruning. Accuracy is scored by the probe's own scorer, so
+"correct" means what it means everywhere else in this project. `entropy` and `top1_prob` saturate at float64 for a
+distribution at p = 1 — which is the condition being looked for, so they are ceiling readings there and `margin`,
+a difference of two finite log-probabilities, stays the quantity to read.
