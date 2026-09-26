@@ -3787,3 +3787,82 @@ One model on the task side (Qwen3-1.7B; the second family has the perplexity hal
 `simple`+`multiple`+`parallel`+`parallel_multiple` schema pool for the corpus against `simple` questions for the
 task, 120 tool calls, unpruned throughout. The C4 comparison is precision-only: whether *compression* shows the same
 mismatch is unmeasured, and it cannot be read off the M6 retention arms because `cache_ppl` does not prune.
+
+## D67 — H2b's burst form: SECDED is decisively defeated and the answer still never moves (2026-09-27)
+
+H2b asks whether the fault-sensitivity map predicts *where* protection belongs. Its single-bit resolution (D31) was
+**0 of 1416 task failures in both** arms D and E — a floor-to-floor comparison, which D30/D44 makes a bound rather
+than an equality — and the claim row has said since then that *"the live version of the question belongs to the burst
+regime"*. The arms' own headers pre-registered the crossover: **D18** (single-bit faults hurt early layers) predicts
+E beats D under uniform SEUs, which it does on the proxy (0.64% against 1.77%); **D21** (whole-row bursts hurt late
+layers) predicts the opposite sign under bursts. Both holding would mean no single static map suffices.
+
+`ProtectionArmTask.burst_bits` delivers the arm's `n_flips` as `n_flips / burst_bits` bursts, each confined to one
+(layer, part, token, head) slot — one corrupted memory word.
+
+**The burst arms are deliberately not matched on bits to the single-bit arms, and that is an argument.** 64-bit
+SECDED corrects one error per word. 11,457 single flips spread over ~1.79 × 10⁷ words leave almost every word with at
+most one error, so they are nearly all corrected. A 16-bit burst inside one slot spans ~8 of those words and puts 2+
+errors in several, which SECDED detects and cannot correct. The same bit count is a different exposure once grouped,
+so matching on it would saturate the comparison rather than make it fair — hence a calibration, the way
+`m3_rate_calibration` sized the rate.
+
+### The calibration answered the question it was only meant to scope
+
+`d67_burst_calibration`, arm D's protection map, 4096-token probe, 28 usable samples × 8 trials = 224 trials per rung.
+
+| bits | bursts | trials | answers changed | Wilson upper bound | task failures | ECC **corrected** / trial | ECC **DUE** / trial |
+|---|---|---|---|---|---|---|---|
+| 16 | 1 | 224 | **0** | ≤ 0.0169 | **0** | 2.4 | **2.4** |
+| 160 | 10 | 224 | **0** | ≤ 0.0169 | **0** | 24.7 | **24.4** |
+| 1600 | 100 | 224 | **0** | ≤ 0.0169 | **0** | 124.9 | **127.0** |
+
+**The machinery works and is doing exactly what it was built to do.** Corrected and uncorrectable word counts scale
+linearly with the burst count (2.4 → 24.7 → 124.9 and 2.4 → 24.4 → 127.0), so at every rung about **half the ECC
+words a burst touches are beyond SECDED's reach**. This is not a case of protection quietly absorbing the damage.
+
+**And the answer never changes.** At the top rung the codec reports **127 uncorrectable 64-bit data words per
+trial** — roughly **8,100 bits of unrecoverable data corruption** — and 0 of 224 trials produced a different answer,
+let alone a wrong one. The bound is ≤ 1.69% at every rung.
+
+### So H2b closes, and for a stronger reason than before
+
+The single-bit answer was "placement does not matter for task outcomes", and a fair objection was that SECDED had
+simply corrected everything, leaving nothing for placement to matter *to*. **That objection is now answered by
+measurement: SECDED is decisively defeated and placement still has nothing to matter to.** Data corruption at this
+operating point is task-irrelevant whether or not the codec recovers it.
+
+**The pre-registered crossover is not observed**, and the reason is not that the sign came out the other way — there
+is no signal in either direction to have a sign. D21's prediction is not refuted either; it is untested by this
+design, for the reason below.
+
+### Why two burst results in this project point different ways
+
+`m2_fault_qa_burst` **did** produce task failures. It differs in two ways that matter more than the burst unit:
+it aims at the **answer token's** KV, and it uses `layer_token` scope — the token's whole row in one layer. These
+bursts are `head` scope at **uniformly drawn** tokens.
+
+So the consistent reading across both: **a burst matters when it is aimed at the tokens the answer depends on, and
+does not matter when it lands where a memory error would actually land.** The first is Q49's finding (role, D19–D21,
+replicated on Llama in D57); the second is H2b's. They are not in tension — they are the same fact seen from the
+targeting axis rather than the placement axis, and it is consistent with everything else: D19 (single code flips
+harmless), D25/D30 (uniform data ECC buys nothing), D64 (agent failures are tool *selection*, never argument
+transcription).
+
+### What this does not establish
+
+**Placement is untested at an exposure where random data corruption does hurt, because no such exposure was found
+below 100 bursts.** Whether one exists is open; the linear DUE scaling suggests it would need orders of magnitude
+more, at which point the arm is no longer modelling a memory error rate anyone deploys against.
+
+**One model, one protection map, 28 samples, `head` scope only.** A `layer_token`-scope placement comparison is the
+obvious next design and would test D21's prediction properly — it is the scope that produced damage — but it
+targets whole rows, so it is closer to Q49's vehicle than to H2b's and would need its own pre-registration.
+
+### A trap found by being caught in it
+
+The calibration was launched as `--set task.n_samples=2`, believing it a smoke run. **It ran all 30 samples.**
+`apply_overrides` runs on the raw config and `expand_sweep` then rewrites each swept key with `set_dotted`, so an
+override under a swept key is applied and silently overwritten — and this config sweeps whole `task` dicts. Fifteen
+minutes of GPU, and the output gives no sign: the run that happens is a perfectly valid one nobody asked for, which
+is worse than an error. `load_experiment_configs` now refuses such an override by name, with the reason.
