@@ -1,0 +1,22 @@
+# Third model, and a SIZE axis rather than a family one (plan §M6 "Genelleme: Qwen3-4B"). Revision verified
+# 2026-09-27.
+#
+# Qwen3-4B shares Qwen3-1.7B's architecture choices, QK-Norm included, so this separates "does the finding depend on
+# scale" from "does it depend on the family" -- which the Llama-3.2-3B work already answers. Where a result differs
+# between 1.7B and 4B it is a scale effect; where it differs between Qwen and Llama and NOT between the two Qwens,
+# the QK-Norm account gains its first real support instead of merely being consistent (D52 noted nothing ablates it).
+#
+# KV GEOMETRY DIFFERS and that is not cosmetic: 36 layers against 28, so kv_values_per_token is 73,728 against the
+# 57,344 that Qwen3-1.7B and Llama-3.2-3B happen to share. Consequences, all of which have to be honoured by any
+# config using this model: the same BER delivers ~1.29x more flips per token; per-value quantities (bits_per_value,
+# metadata share) stay comparable; and layer-indexed protection maps such as `data_layers: [9..27]` do NOT transfer,
+# because they were written for a 28-layer network.
+model:
+  hf_id: Qwen/Qwen3-4B
+  revision: 1cfa9a7208912126459214e8b04321603b3df60c
+  short_name: qwen3-4b
+  dtype: bfloat16
+  attn_implementation: sdpa
+  device: cuda
+  chat_template_kwargs:
+    enable_thinking: false

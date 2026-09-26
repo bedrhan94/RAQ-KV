@@ -1,0 +1,37 @@
+# D68: Q48 and the metadata-vs-code damage ratio on a THIRD model, and the first test of the QK-Norm account.
+#
+# Q48 asks whether quantization sensitivity and fault vulnerability are one signal. Frozen threshold: partial
+# rho >= 0.6 = shared, <= 0.3 = separate. Qwen3-1.7B gave rho = -0.377 [-0.588, -0.128], partial -0.282 (D18);
+# Llama-3.2-3B gave +0.0726 [-0.2372, +0.3809], partial +0.0466 (D52). Both landed in the "separate signals" branch,
+# which is why the multiplicative Joint Reliability Score of the brief was never built -- but the SIGN differs, and
+# the standing explanation is QK-Norm: Qwen normalises keys, Llama does not, so key statistics diverge.
+#
+# PRE-REGISTERED PREDICTION, and this is the point of running a third model: Qwen3-4B applies QK-Norm like
+# Qwen3-1.7B. If QK-Norm is the mechanism, its correlation should be NEGATIVE like Qwen3-1.7B's and unlike Llama's.
+# If it comes out positive or near zero, QK-Norm is not doing the work and D52's account -- which the records have
+# always flagged as consistent-but-unablated -- is wrong. Either way the frozen branch (separate signals) is
+# expected to hold, since it has on both models so far; it is the sign that is at stake.
+#
+# This run also delivers H2d's metadata-vs-code damage ratio on a third model at no extra cost, the way D55
+# recomputed it from the Llama campaign: 2.845x on Qwen3-1.7B, 4.446x on Llama-3.2-3B, the project's
+# best-replicated finding and the one every protection decision descends from.
+#
+# Same strata, counts, dataset and seed as the Qwen3-1.7B and Llama campaigns, so the cells are comparable one by
+# one. KV geometry is NOT the same (73,728 values per token against 57,344), so per-chunk flip counts differ; every
+# quantity compared here is per-value or a within-model ratio, which is why that is admissible.
+include:
+  - models/qwen3_4b.yaml
+  - datasets/wikitext2.yaml
+name: d68_fault_campaign_4b
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: fault_injection
+  n_chunks: 40
+  n_uniform: 60
+  n_msb: 20
+  n_metadata: 20
+  n_lsb: 20
+  n_control: 2
+seed: 0

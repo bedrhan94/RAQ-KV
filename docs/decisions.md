@@ -3866,3 +3866,70 @@ The calibration was launched as `--set task.n_samples=2`, believing it a smoke r
 override under a swept key is applied and silently overwritten — and this config sweeps whole `task` dicts. Fifteen
 minutes of GPU, and the output gives no sign: the run that happens is a perfectly valid one nobody asked for, which
 is worse than an error. `load_experiment_configs` now refuses such an override by name, with the reason.
+
+## D68 — A third model, and the first falsifiable test of the QK-Norm account (2026-09-27, pre-registered)
+
+Frozen before either campaign finished. The plan's §M6 lists "Genelleme: Qwen3-4B", and it is the last unbuilt
+generalisation. Unlike Llama-3.2-3B it varies **scale, not family**: Qwen3-4B shares Qwen3-1.7B's architecture
+choices, QK-Norm included. That is the whole reason it is worth running.
+
+### Why this is not just a third data point
+
+Three findings differ between Qwen3-1.7B and Llama-3.2-3B, and one explanation has been offered for all three:
+**Qwen applies QK-Norm to keys and Llama does not** (D1, D15), so key statistics diverge.
+
+* **Q48's sign.** Qwen3-1.7B: ρ = **−0.377** [−0.588, −0.128], partial −0.282 (D18). Llama-3.2-3B: **+0.0726**
+  [−0.2372, +0.3809], partial +0.0466 (D52). Both land in the frozen *separate signals* branch (partial ≤ 0.3) — the
+  finding that killed §6's multiplicative Joint Reliability Score — but the sign differs.
+* **Key-magnitude as a signal.** A 4× stronger anti-signal on Llama (D47).
+* **The concentration effect.** Present on Qwen, absent on Llama (D54), with the mechanism later relocated (D59).
+
+Every record says the same thing about the QK-Norm account: *consistent with it, and nothing ablates it.* D52 wrote
+exactly that. **Qwen3-4B is the first configuration where it makes a prediction that can fail**, because it holds
+QK-Norm fixed while changing everything else about the model's size.
+
+### Pre-registered predictions
+
+| outcome | what it means |
+|---|---|
+| **Q48's ρ is negative on Qwen3-4B**, like Qwen3-1.7B and unlike Llama | the QK-Norm account gains its first real support: the sign tracks the architecture feature, not the model |
+| **Q48's ρ is positive or near zero** | **QK-Norm is not doing the work.** D52's account is wrong, and the Qwen/Llama sign difference needs a different explanation — scale, training data, or something unmeasured |
+| the frozen *separate signals* branch (partial ≤ 0.3) holds | expected, since it has on both models; the branch is not what is at stake here |
+| the frozen branch **fails** (partial ≥ 0.6) on a third model | the multiplicative score was rejected on evidence that does not generalise, and D18's consequence for the allocator would have to be reopened |
+
+The sign is the live question. The branch has replicated twice and a third replication would be confirmation rather
+than news; a *failure* of the branch would be the most consequential result in the project, which is why it is
+written down even though it is unlikely.
+
+**H2d comes free.** The same campaign yields the metadata-vs-code damage ratio, the way D55 recomputed it from the
+Llama campaign at zero extra cost: **2.845×** on Qwen3-1.7B, **4.446×** on Llama-3.2-3B. It is the project's
+best-replicated finding and the one every protection decision descends from, so a third model is worth having on it
+whatever Q48 does.
+
+### What the geometry change forces, and what it does not
+
+Qwen3-4B has **36 layers** against 28, so `kv_values_per_token` is **73,728** against the 57,344 that Qwen3-1.7B and
+Llama-3.2-3B happen to share. Verified in the smoke run: a 1536-token prefix at 4.25 bits/value records 60,162,048
+analytic bytes, which is exactly 1536 × 73,728 × 4.25 / 8.
+
+Consequences, honoured in the configs:
+
+* The same BER delivers **~1.29× more flips per token**, so absolute flip counts are not comparable across models.
+  Every quantity compared here is either **per value** or a **within-model ratio**, which is what makes it admissible.
+* **Layer-indexed protection maps do not transfer.** `data_layers: [9..27]` was written for a 28-layer network; a
+  Qwen3-4B protection arm would need its own map, and none is run here.
+* Q48's correlation runs over each model's own layers. Nothing assumes layer index *k* is the same depth in a
+  36-layer network as in a 28-layer one.
+
+### One process note
+
+`d68_quant_sensitivity_4b` was first produced by search-and-replacing the include path in
+`m9l_quant_sensitivity_blocks.yaml`, which left a header reading "ON THE SECOND FAMILY" and "Identical KV geometry
+(verified: both 57344 values per token)" — **both false for this model, and neither touched by the replacement.** A
+config whose comment describes a different experiment than it runs is the D24/D42 failure mode, and the header was
+rewritten from scratch. Copying a config copies its claims.
+
+### Scope
+
+WikiText-2, 40 chunks, the same strata and counts and seed as both earlier campaigns so the cells are comparable one
+by one. This is a scale axis within one family; it says nothing new about Llama, and a third *family* remains unrun.

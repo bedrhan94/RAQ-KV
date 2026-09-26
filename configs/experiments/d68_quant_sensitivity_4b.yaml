@@ -1,0 +1,30 @@
+# D68 half one: per-(layer, part) quantization sensitivity on Qwen3-4B -- the other axis of Q48's correlation.
+#
+# Header written fresh rather than copied from m9l_quant_sensitivity_blocks, because that file's own header says
+# "ON THE SECOND FAMILY" and "Identical KV geometry (verified: both 57344 values per token)" -- both false here.
+# Qwen3-4B has 36 layers and 73,728 values per token, and it is the same family as Qwen3-1.7B, not a second one.
+# A config whose comment describes a different experiment than it runs is the D24/D42 failure mode, and a
+# search-and-replace on an include path does not touch it.
+#
+# What this is for: Q48 asks whether quantization sensitivity and fault vulnerability are one signal, and its
+# threshold was frozen before any measurement (partial rho >= 0.6 shared, <= 0.3 separate). Qwen3-1.7B: -0.377,
+# partial -0.282. Llama-3.2-3B: +0.0726, partial +0.0466. Both in the "separate" branch, opposite signs, and the
+# standing account for the sign is QK-Norm -- which Qwen3-4B also applies, so this is the first configuration in
+# which that account makes a falsifiable prediction (see d68_fault_campaign_4b for the frozen statement).
+#
+# Same 2-bit block spec, granularity, chunk count and seed as both earlier campaigns, so the per-(layer, part)
+# cells are comparable. The layer COUNT differs (36 against 28), so the correlation is computed over each model's
+# own layers rather than matched layer by layer; nothing here assumes a layer index means the same depth.
+include:
+  - models/qwen3_4b.yaml
+  - datasets/wikitext2.yaml
+name: d68_quant_sensitivity_4b
+task:
+  kind: quant_sensitivity
+  granularity: layer_part
+  n_chunks: 40
+  key_spec: {bits: 2, axis: group_token, group_size: 128}
+  value_spec: {bits: 2, axis: per_token}
+  null_bits: 8
+  null_regions: 8
+seed: 0
