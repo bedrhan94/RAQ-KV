@@ -3551,3 +3551,36 @@ caveat.
 number about the scorer as much as about the model. Four predictions and ten minutes were enough to find a confound
 that the aggregate hid completely, and the check happened only because the claim had already been written down and
 was noticed to be resting on nothing.
+
+### PILOT, part four — the accuracy inversion survives a format-insensitive score, and stays underpowered
+
+Part three found Qwen answering two of four rows as a full sentence where Llama's were bare, and downgraded the
+accuracy inversion on the grounds that `qa_f1`'s `overlap / len(pred)` precision would punish that. The test of
+whether that confound explains the inversion is a score with no denominator in the prediction at all: **does any
+gold answer appear verbatim in the output.** Eight shortest rows, both families.
+
+| | containment (format-insensitive) | Wilson 95% | bare answers (≤ 8 tokens) | median prediction |
+|---|---|---|---|---|
+| Qwen3-1.7B | **0 / 8 = 0.000** | [0.000, 0.324] | 2 / 8 = **0.250** | 11 tokens |
+| Llama-3.2-3B | **2 / 8 = 0.250** | [0.071, 0.591] | 6 / 8 = **0.750** | 7 tokens |
+
+**The confound is confirmed and it does not explain the inversion.** Qwen is indeed the less compliant model —
+bare on 25% of rows against Llama's 75%, Fisher p = 0.132 — but a containment score has no prediction-length
+denominator, and Qwen still scores **zero**. Verbosity cannot turn a found answer into an absent one. Qwen's errors
+are uniformly wrong entities drawn from the context: *West…* for Bob Jones University, *January…* for 16 September
+1360, *Her…* for Ozalj, *2…* for 1510.
+
+**And it stays underpowered, as it must at this size.** Fisher on 0/8 against 2/8 gives **p = 0.467**, and Qwen's
+zero is a **bound** — rule of three ≤ 0.375, Wilson [0.000, 0.324] — not a demonstrated floor (D30/D44). So the
+status is unchanged in kind and stronger in support: **the inversion is still a hypothesis, but the specific
+mechanism that would have explained it away has been tested and does not.**
+
+**What this settles and what it does not.** The "calibration, not competence" framing and the caution that "answer
+changed under fault" rewards overconfidence both rest on Qwen being *less accurate while more confident* on a hard
+task. That pattern now survives the one confound identified against it, at n = 8, with no interval separating the
+families. It needs a committed vehicle with enough rows, and until then it should be cited as a direction with its
+n attached — which is how the project memory entry now carries it.
+
+The confidence half is untouched and remains the solid part: Qwen top-1 probability 1.0000 on the probe against
+0.9284 here, Llama 0.914–0.950 against 0.5350, ordering preserved, and the function-word caveat from part three
+cutting conservatively against the desaturation reading rather than for it.
