@@ -1,0 +1,41 @@
+# SECOND-FAMILY REPLICATION of Q49 -- does the corrupted token's ROLE predict task failure?
+#
+# Q49's threshold was frozen before measurement (odds ratio > 1 with a CI excluding 1). On Qwen3-1.7B the answer
+# turned out SCALE-DEPENDENT, across three decision records that each overturned the previous reading:
+#
+#   D19  a single bit flip            -> no effect, OR 1.00
+#   D20  a whole 16-bit word          -> still no effect, OR 1.00
+#   D21  the token's whole row in one layer (2048 bits) -> OR 7.13 vs filler, 4.75 vs a content-matched
+#        distractor, Fisher p = 0.0040 / 0.036, and only in late layers
+#
+# The content-matched distractor is what makes that a claim about role rather than about position.
+#
+# WRITTEN BEFORE THE RUN, and D54 is why this is now worth the GPU. D54 found the concentration effect -- pruning
+# making faults costlier because retention keeps the answer-bearing spans -- is a Qwen property that does NOT
+# replicate on Llama. Q49 asks a closely related question with a different instrument: whether the tokens that
+# matter semantically are the tokens whose corruption matters. If Q49 also fails to replicate, the two negatives
+# share a cause and "which tokens matter under faults" is family-specific. If Q49 DOES replicate while the
+# concentration effect does not, they come apart and the concentration effect's absence needs its own explanation
+# rather than borrowing this one.
+#
+# Both outcomes are named now so neither can be reframed after the fact.
+#
+# The INFORMATIVE arm: the token's whole row in one layer, 2048 bits. This is where the effect appeared.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m9l_fault_qa_row
+quantization:
+  keys: {bits: 2, axis: group_token, group_size: 32}
+  values: {bits: 2, axis: per_token}
+task:
+  kind: fault_qa
+  n_samples: 120
+  burst_bits: 2048
+  burst_scope: layer_token
+  n_target: 6
+  n_distractor: 4
+  n_filler: 6
+  n_metadata: 2
+  n_control: 1
+seed: 0
