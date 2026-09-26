@@ -10,8 +10,10 @@ import random
 from dataclasses import replace
 from typing import Any, Protocol
 
+import numpy as np
 import torch
 
+from raq_kv.analysis.groups import concentration, group_at_rank, group_shares
 from raq_kv.budget.bit_accounting import full_precision_kv_budget
 from raq_kv.compression.retain import apply_retention, select_keep
 from raq_kv.compression.spans import select_keep_spans, sentence_spans
@@ -52,6 +54,7 @@ from raq_kv.faults.plan import (
 )
 from raq_kv.faults.storage import (
     flips_for_rate,
+    generate_group_targeted_plan,
     generate_storage_plan,
     plan_composition,
     storage_regions,
@@ -754,6 +757,10 @@ class ProtectionArm:
         # Only the fault x retention arms carry a scorer; a plain M3 arm prunes nothing and builds none.
         self.scorer = (build_scorer(cfg.compression.scorer, cfg.compression.window)
                        if cfg.compression is not None else None)
+        # Separate from `self.scorer` on purpose. That one decides what to PRUNE; this one decides which group a
+        # fault lands in, and an arm can want the second without pruning at all -- D61's arms are unpruned,
+        # because the hazard difference D60 left unexplained is on unpruned caches.
+        self.rank_scorer = build_scorer(self.task.rank_scorer) if self.task.rank_scorer else None
 
     def unit_keys(self) -> list[str]:
         return list(self.samples)
@@ -763,9 +770,17 @@ class ProtectionArm:
 
     def setup(self) -> dict[str, Any]:
         self.lm = load_model(self.cfg.model)
-        if self.scorer is not None and self.scorer.needs_model and self.cfg.model.attn_implementation != "eager":
-            raise ValueError(f"scorer '{self.scorer.name}' needs attention weights, which require eager "
-                             f"attention (D5); this config asks for '{self.cfg.model.attn_implementation}'")
+        for role, scorer in (("compression", self.scorer), ("rank", self.rank_scorer)):
+            if scorer is not None and scorer.needs_model and self.cfg.model.attn_implementation != "eager":
+                raise ValueError(f"{role} scorer '{scorer.name}' needs attention weights, which require eager "
+                                 f"attention (D5); this config asks for "
+                                 f"'{self.cfg.model.attn_implementation}'")
+        if self.rank_scorer is not None:
+            keys = self.cfg.quantization.keys if self.cfg.quantization else None
+            if keys is None or keys.axis != "group_token":
+                raise ValueError(f"group-targeted faults address a `group_token` key scale grid; this arm "
+                                 f"quantizes keys as {keys.axis if keys else None!r}, where a token group is not "
+                                 f"a unit of the stored metadata")
         info: dict[str, Any] = {"model_memory": self.lm.memory, "kv_geometry": self.lm.geometry.to_dict()}
         if self.scorer is not None and self.cfg.compression is not None:
             info |= {"scorer": self.scorer.name, "scorer_is_oracle": self.scorer.is_oracle,
@@ -844,6 +859,28 @@ class ProtectionArm:
             n_flips = flips_for_rate(qkv, guard, self.task.ber)
         seed = derive_seed(self.cfg.seed, unit_key, "protection_arm")
 
+        # D61: which group gets corrupted, chosen by attention rank rather than drawn. Scored on the cache the
+        # faults will actually hit -- pruned if this arm prunes, quantized never matters because the scorer reads
+        # attention, not the codes -- so the rank names the group the flips land in and not a group that existed
+        # in some earlier version of the cache.
+        target = None
+        if self.rank_scorer is not None:
+            shares = group_shares(self.rank_scorer.score(ScoreContext(
+                snapshot=snapshot, context_ids=context_ids, model=model, query_ids=query_ids,
+                target_tokens=(), distractor_tokens=(), sentence_tokens=(), control_span_tokens=())),
+                self.cfg.quantization.keys.group_size)
+            n_groups = int(shares.size)
+            index = group_at_rank(shares, self.task.target_group_rank)
+            # The REALISED rank, not the requested one. A short sample has fewer groups than the requested rank,
+            # `group_at_rank` wraps to the least-attended group, and a cell that silently reported the rank it was
+            # asked for would pool two different conditions -- the D30/D44 mistake in a different costume.
+            realised = int(np.argsort(-shares, kind="stable").tolist().index(index))
+            target = {"target_group_rank_requested": self.task.target_group_rank,
+                      "target_group_rank": realised, "target_group_index": index,
+                      "target_group_share": float(shares[index]), "n_token_groups": n_groups,
+                      "rank_scorer": self.rank_scorer.name, "group_size": self.cfg.quantization.keys.group_size,
+                      **concentration(shares)}
+
         rows = []
         for i in range(self.task.n_control):
             text = tok.decode(greedy_decode(model, query_ids, sample.max_new_tokens, snapshot=base,
@@ -852,7 +889,10 @@ class ProtectionArm:
                          "corrected_words": 0, "due_words": 0, "detected": False,
                          **{f"faulty_{k}": v for k, v in SCORERS[sample.scorer](text, sample.reference).items()}})
         for trial in range(self.task.n_trials):
-            plan = generate_storage_plan(qkv, guard, derive_seed(seed, f"trial{trial}"), n_flips)
+            trial_seed = derive_seed(seed, f"trial{trial}")
+            plan = (generate_storage_plan(qkv, guard, trial_seed, n_flips) if target is None else
+                    generate_group_targeted_plan(qkv, trial_seed, target["target_group_index"],
+                                                 target["n_token_groups"], n_flips))
             reader = (injected_burst(qkv, plan, base) if guard is None
                       else guard.faulted_read(plan, base))
             with reader as (faulty, info):
@@ -884,12 +924,14 @@ class ProtectionArm:
             "golden_correct": bool(golden_score["correct"]),
             "golden_prediction": golden_text,
             "ber": self.task.ber,
+            "fault_target": self.task.fault_target or "uniform",
             "exposure_mode": ("per_token" if self.task.n_flips_per_token is not None
                               else "count" if self.task.n_flips is not None
                               else f"rate:{self.task.ber_basis or 'stored'}"),
             "stored_bits": stored_bits,
             "n_flips_per_trial": n_flips,
             "storage_composition": _storage_shares(regions),
+            **({} if target is None else target),
             # Present only on the fault x retention arms (D43). `unpruned_correct` separates a sample that
             # pruning alone broke from one the faults broke; `kept_fraction_target` is the D32 diagnostic that
             # says whether the arm kept the tokens the answer needs at all.

@@ -1,0 +1,31 @@
+# D61 cell: ONE metadata flip into the most-attended key-scale group, Qwen3-1.7B.
+# Settles what D60 left open. D59 measured a per-metadata-flip hazard of 1.17% (Qwen) against 2.63% (Llama) on
+# unpruned caches and could not say why; D60 ruled out dynamic range and attention spread, the latter with the
+# sign reversed -- Llama's attention is MORE concentrated (top-1 share 0.826 against 0.762). What survives is that
+# concentration raises the CONDITIONAL severity of the flips that land somewhere consequential, and the only thing
+# that separates that from "more groups are load-bearing" is P(break | rank of the corrupted group).
+#
+# Design frozen in docs/decisions.md D61 BEFORE the run: three rank cells per family, n_flips = 1 so each trial is
+# one conditional observation, no protection (a guard that corrected the flip would measure the guard), and no
+# pruning (the unexplained hazard difference is on unpruned caches).
+#
+# Eager attention is required for the ranking (D5). D59's arms were not eager, so this arm's ABSOLUTE rates are not
+# interchangeable with D59's; every D61 comparison is internal to this set, where the implementation is held fixed.
+
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: d61_qwen_top
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 40
+  n_flips: 1
+  fault_target: group_rank
+  rank_scorer: query_attention
+  target_group_rank: 0
+  n_trials: 8
+  n_control: 1
+seed: 0

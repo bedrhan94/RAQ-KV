@@ -30,13 +30,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from typing import Any
 
 import numpy as np
-import torch
 
+from raq_kv.analysis.groups import concentration, group_shares
 from raq_kv.config.loader import load_yaml
 from raq_kv.config.schema import ModelConfig, RAQProbeConfig
 from raq_kv.data.raq_probe import build_raq_probe
@@ -44,49 +43,6 @@ from raq_kv.evaluation.protocol import prefill
 from raq_kv.importance.scorers import ScoreContext, build_scorer
 from raq_kv.models.loader import load_model, load_tokenizer
 from raq_kv.utils.paths import configs_dir, resolve_output_root
-
-
-def group_shares(scores: torch.Tensor, group_size: int) -> np.ndarray:
-    """Attention mass per `group_token` group, normalised to sum to 1.
-
-    Scores are non-negative attention weights summed over heads and layers, so they are already a mass; the only
-    work here is folding them into the groups a scale actually covers and renormalising so two samples of
-    different length are comparable.
-    """
-    v = scores.detach().float().reshape(-1).clamp_min(0.0).cpu().numpy()
-    if v.sum() <= 0:
-        return np.array([])
-    n_groups = -(-len(v) // group_size)
-    padded = np.zeros(n_groups * group_size, dtype=np.float64)
-    padded[: len(v)] = v
-    per_group = padded.reshape(n_groups, group_size).sum(axis=1)
-    return per_group / per_group.sum()
-
-
-def concentration(shares: np.ndarray) -> dict[str, float]:
-    """Four views of the same distribution, because no single number is obviously the right one.
-
-    `effective_groups` is exp(Shannon entropy) -- the number of equally-weighted groups that would carry the same
-    entropy, which is the quantity a "fraction of groups that matter" story is about. The top-k shares and the
-    90%-mass fraction are reported beside it so a reader can see whether they agree rather than trusting the
-    entropy alone.
-    """
-    if shares.size == 0:
-        return {}
-    p = shares[shares > 0]
-    entropy = float(-(p * np.log(p)).sum())
-    order = np.sort(shares)[::-1]
-    cumulative = np.cumsum(order)
-    n90 = int(np.searchsorted(cumulative, 0.90) + 1)
-    return {
-        "n_groups": float(shares.size),
-        "effective_groups": float(math.exp(entropy)),
-        "effective_fraction": float(math.exp(entropy) / shares.size),
-        "top1_share": float(order[0]),
-        "top5_share": float(order[:5].sum()),
-        "groups_for_90pc": float(n90),
-        "fraction_for_90pc": float(n90 / shares.size),
-    }
 
 
 def measure(model_stem: str, probe: RAQProbeConfig, group_size: int, n_samples: int) -> list[dict[str, Any]]:
@@ -151,6 +107,26 @@ def main() -> int:
         m = {k: float(np.mean([r[k] for r in sub])) for k in keys}
         print(f"{model:22s}{m['n_groups']:8.1f}{m['effective_groups']:12.2f}{m['effective_fraction']:10.3f}"
               f"{m['top1_share']:8.3f}{m['top5_share']:8.3f}{m['fraction_for_90pc']:9.3f}")
+
+    # The confound check D61 needs before it spends GPU time. If the most-attended group is always group 0, then
+    # targeting faults "by attention rank" is targeting them by position, and the result cannot be read as
+    # attention-mediated. Printed as a fraction of samples, not a mean index, because the question is categorical.
+    print("\nwhere the extremes sit -- the D61 identifiability check\n")
+    print(f"{'model':22s}{'cell':>8s}{'share':>9s}{'is group 0':>12s}{'is last':>9s}{'rel.pos':>9s}"
+          f"{'n':>5s}")
+    for model in dict.fromkeys(r["model"] for r in rows):
+        sub = [r for r in rows if r["model"] == model]
+        for label, pre in (("rank0", "rank0"), ("rank1", "rank1"), ("rank2", "rank2"), ("tail", "min")):
+            have = [r for r in sub if f"{pre}_position" in r]
+            if not have:
+                continue
+            def mean(suffix, have=have, pre=pre):
+                return float(np.mean([r[f"{pre}_{suffix}"] for r in have]))
+            first = mean("is_first_group") if pre != "min" else float(
+                np.mean([r["min_index"] == 0 for r in have]))
+            last = mean("is_last_group") if pre != "min" else mean("is_last_group")
+            print(f"{model if label == 'rank0' else '':22s}{label:>8s}{mean('share'):9.3f}{first:12.3f}"
+                  f"{last:9.3f}{mean('position'):9.3f}{len(have):5d}")
     print(f"\nwrote {out}")
     return 0
 

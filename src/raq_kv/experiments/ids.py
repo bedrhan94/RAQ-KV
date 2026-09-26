@@ -101,6 +101,16 @@ def slug(cfg: ExperimentConfig) -> str:
         cfg.task.kind,
         _quant_token(cfg),
         _protection_token(cfg),
+        # KNOWN WRONG, AND DELIBERATELY NOT FIXED. This literal dates from M0, when no config had a fault
+        # section, and it is still emitted for every config -- including the protection arms whose entire
+        # purpose is fault injection. So `outputs/raw/` holds fault campaigns whose directory names say
+        # "nofault", which is the D24/D42 failure mode: a manifest that misdescribes what ran.
+        #
+        # It stays because the slug is part of `experiment_id`, and making this token honest would change the
+        # id of every completed fault experiment, orphaning their raw records. The authoritative fault
+        # description lives in each record's `exposure_mode`, `ber`, `n_flips_per_trial` and `fault_target`
+        # fields, which are correct. `tests/test_experiment_ids.py` pins the literal so it is not silently
+        # "fixed" into a history-breaking rename, and docs/decisions.md D61 records the defect.
         "nofault",
         _pruning_token(cfg),
         device,

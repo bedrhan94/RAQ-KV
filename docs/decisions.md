@@ -2691,3 +2691,95 @@ One probe, one group size, 40 samples per family, query-aware attention only. A 
 a different distribution and is the right control if this is pursued — the fault arms are query-agnostic in the
 sense that the flips are placed without reference to the question, so what should predict the hazard is arguably
 attention as the *model* ends up using it, which is what is measured here.
+
+## D61 — The group-targeted fault path, and D60's design frozen before the run (2026-09-26)
+
+D60 ended with an experiment described and not built. This record is the build plus the **pre-registration**: the
+rank cells, the trial counts, the primary contrast and which outcome supports which branch, all fixed before any
+arm ran. GATE-1 got this treatment and it is why D18 is citable; eight cells inspected after the fact would not be.
+
+### First, three corrections to what D60 said
+
+**1. The granularity D60 implied is off by three orders of magnitude, and this *explains* its arithmetic rather
+than breaking it.** D60 speaks of "corrupting a group" as though a group had one scale. Measured: for T = 2048 with
+`group_token 128`, the key scale grid is `(1, H_kv = 8, 16, head_dim = 128)`, so one scale covers **128 tokens × 1
+channel × 1 head × 1 layer** and there are **1024 scales per token group per layer-part**. A single flip therefore
+corrupts 1/1024 of a group's metadata, not the group. P(a flip lands in the top *group*) is still 1/16 = 6.3%, so
+D60's table stands as written — and the dilution is exactly why the implied conditional break probabilities are
+18.6% and 41.8% rather than near 1. The arithmetic was right; the mental picture behind it was not.
+
+**2. A corrupted scale does not damage every value in its group.** Reconstruction is `code × scale + zero`, so a
+value whose code is **0** is *exactly* invariant under any corruption of its scale. Found by writing the
+containment test, not by reasoning: in the fixture, one of the four tokens sharing the corrupted scale is
+bit-for-bit unchanged and its code is 0. A second dilution on top of the 1024, and it applies to the real arms.
+`tests/test_faults.py::test_group_targeted_faults_are_reversible_and_move_only_their_group` pins both the
+containment (nothing outside the group moves) and this exception.
+
+**3. `outputs/raw/` labels every fault campaign "nofault".** The slug's fault token is a hardcoded literal from M0,
+when no config had a fault section; protection arms carry their fault model in `task`, which the token never reads.
+All 14 existing arms and all 6 below are named `..._noecc_nofault_...` while injecting faults — D24's and D42's
+failure mode, found while checking these configs. **Not repaired**, because the slug is part of `experiment_id` and
+an honest token would change the id of every completed fault experiment and orphan its raw records. The record
+fields (`exposure_mode`, `ber`, `n_flips_per_trial`, `fault_target`) are correct and are what the reports read;
+the literal is pinned with its reason in `ids.py` and `tests/test_config_ids.py`.
+
+### Why this is not the measurement D60 already refuted
+
+D60 measured the **distribution** of attention mass over groups and refuted the spread prediction with the sign
+reversed. This measures P(break | rank of the corrupted group), which is a different object and not implied by the
+first: **a group can hold little mass and still be load-bearing.** The distribution says where attention *is*; the
+conditional says what happens when a given group's metadata is destroyed. One is about mass, the other about
+consequence, and the surviving hypothesis after D60 is precisely that the two diverge — that concentration raises
+the *conditional severity* of a hit without changing how many groups get hit.
+
+### What was built
+
+`generate_group_targeted_plan` in `faults/storage.py` draws single-bit upsets confined to the key scale/zero grid
+of one chosen token group, and `protection_arm` gained three fields — `fault_target`, `target_group_rank`,
+`rank_scorer` — all defaulting to `None` so `exclude_none` leaves the 14 existing arm identities untouched (the
+`ber_basis` lesson; `tests/experiment_identities.json` is unchanged). The rank fold (`analysis/groups.py`) is
+shared with `scripts/measure_group_attention.py`, so "group 3" cannot mean two things.
+
+Two guards worth naming, because the first version had the bug the second one describes:
+
+* The helper checks `shape[2] == n_token_groups`, not `len(shape) == 4`. A `per_token` values grid is `(1, H, T, 1)`
+  — also 4-D — and a rank check would have accepted it and silently reinterpreted `token_group` as a *token index*,
+  returning sites for a different unit than the function's name. Caught in review before it ran.
+* A group-targeted arm must state `n_flips`, never `ber`: `flips_for_rate` sizes a count against the arm's entire
+  storage while the draw sees one group's scales, so the arm's stated exposure and its real one would differ.
+
+### The frozen design
+
+Six arms, `configs/experiments/d61_{qwen,llama}_{top,rank2,tail}.yaml`. Per arm: 40 probe samples × 8 trials =
+**320 conditional observations**, `n_flips: 1` so each trial is one flip and each outcome one conditional, **no
+protection** (a guard that corrected the flip would measure the guard) and **no pruning** (the unexplained hazard
+difference is on unpruned caches). Ranks: **0** (most attended), **2**, and **999**, which wraps to the
+least-attended group — the wrap is deliberate, because every fixed rank above 3 would be past the end for the
+512-token samples, and the **realised** rank is recorded per sample so a wrapped cell is visible rather than
+pooled with a rank it was not.
+
+**Primary contrast:** rank 0 against the least-attended cell, within each family, paired at the sample level,
+Wilcoxon signed-rank plus a 10,000-resample bootstrap CI over samples. D31 applies: a difference needs p < 0.05
+**and** a CI excluding zero. **Secondary, descriptive only:** break rate against the corrupted group's recorded
+attention share, which is length-independent where an absolute rank is not.
+
+**Expect floor cells.** At a ~2% uniform hazard the tail cells may return 0/320, and D30/D44 makes that a **bound,
+not a zero** — the rule of three gives ≤ 0.93% at 320 trials and the record will say so rather than reporting 0.
+
+### Pre-registered predictions
+
+| branch | prediction | what would confirm it |
+|---|---|---|
+| **A — concentration raises conditional severity** (survives D60) | P(break \| rank 0) is high in both families and **higher in Llama**, whose top group carries 0.826 of the mass against Qwen's 0.762; tail cells near the floor in both | rank-0 rate materially above the tail rate in both families, **and** Llama's rank-0 rate above Qwen's. D60's arithmetic, if only the top group mattered, predicts about 41.8% and about 18.6% |
+| **B — more groups are load-bearing in Llama** | rank-0 rates **similar** across families, while Llama's rank-2 and tail rates exceed Qwen's | the family difference living in the non-top cells rather than the top one |
+| **neither** | the rank gradient is flat in both families | tail and rank-0 intervals overlapping within each family, which would mean the hazard is not attention-mediated at all and would send the question back to the codec |
+
+**A and B are not exclusive** and the honest outcome may be both; what the design buys is that the two are
+separated by *which cells* carry the family difference, which no uniform plan can report.
+
+### Scope, stated before the numbers exist
+
+Eager attention is required for the ranking (D5) and D59's arms were not eager, so **D61's absolute rates are not
+interchangeable with D59's 1.17% / 2.63%** — every D61 comparison is internal to this set with the implementation
+held fixed. Keys only (the `group_token` grid is where a token group is a unit of stored metadata; values are
+`per_token` and their scales are a different object). One probe, one group size, one query-aware scorer, 4 bits.

@@ -11,6 +11,7 @@ from raq_kv.faults.injector import inject, injected
 from raq_kv.faults.plan import FaultSite, describe_site, generate_plan, load_plan, save_plan
 from raq_kv.kv.snapshot import KVSnapshot
 from raq_kv.quantization.apply import quantize_to_codes
+from raq_kv.quantization.uniform import dequantize
 
 
 def _qkv(bits: int = 4, tokens: int = 12):
@@ -188,3 +189,78 @@ def test_describe_site_labels_codes_and_metadata():
     assert code["significance"] == "msb" and code["head"] == 1 and code["token"] == 2 and code["channel"] == 3
     meta = describe_site(FaultSite(0, "keys", "scale", (0, 1, 0, 5), 14, "metadata"), qkv)
     assert meta["significance"] == "exponent"
+
+
+def _group_qkv(tokens: int = 16, group_size: int = 4):
+    """Keys on ``group_token``, values on ``per_token`` -- the mix the targeting helper has to tell apart."""
+    g = torch.Generator().manual_seed(7)
+    keys = [torch.randn(1, 4, tokens, 8, generator=g) for _ in range(2)]
+    values = [torch.randn(1, 4, tokens, 8, generator=g) for _ in range(2)]
+    snap = KVSnapshot(keys=keys, values=values, positions=torch.arange(tokens), next_position=tokens)
+    cfg = QuantizationConfig(keys=QuantSpec(bits=4, axis="group_token", group_size=group_size),
+                             values=QuantSpec(bits=4, axis="per_token"))
+    return quantize_to_codes(snap, cfg)
+
+
+def test_group_targeted_sites_all_land_in_the_requested_group():
+    """The whole point of the helper: the group is chosen, not drawn, so P(break | group) is measurable."""
+    from raq_kv.faults.storage import generate_group_targeted_plan
+
+    qkv = _group_qkv()
+    sites = generate_group_targeted_plan(qkv, seed=1, token_group=2, n_token_groups=4, n_flips=25)
+    assert len(sites) == 25
+    assert {s.index[2] for s in sites} == {2}, "a targeted plan that leaks outside its group measures nothing"
+    assert {s.target for s in sites} <= {"scale", "zero"}, "codes are not metadata and are not what D60 is about"
+    assert {s.part for s in sites} == {"keys"}
+    # Head and channel must still vary: one flip corrupts one (layer, head, channel) scale of the 1024 a real
+    # group holds, and a plan that fixed them would measure one scale repeatedly rather than the group.
+    assert len({(s.layer, s.index[1], s.index[3]) for s in sites}) > 1
+
+
+def test_a_per_token_grid_is_refused_rather_than_reindexed():
+    """The guard that matters. ``(1, H, T, 1)`` is 4-D too, so a shape-rank check would accept it and silently
+    reinterpret ``token_group`` as a token index -- the function would then return sites for a different unit than
+    its name, which is D24's and D42's failure mode rather than a bug that shows up in a number."""
+    from raq_kv.faults.storage import generate_group_targeted_plan
+
+    qkv = _group_qkv(tokens=16, group_size=4)
+    with pytest.raises(ValueError, match="per_token grid"):
+        generate_group_targeted_plan(qkv, seed=1, token_group=2, n_token_groups=4, part="values", n_flips=1)
+    # And a group_token grid asked for the wrong number of groups is refused for the same reason.
+    with pytest.raises(ValueError, match="group_token grid"):
+        generate_group_targeted_plan(qkv, seed=1, token_group=2, n_token_groups=8, n_flips=1)
+
+
+def test_group_targeted_plans_are_seeded_and_drawn_without_replacement():
+    from raq_kv.faults.storage import generate_group_targeted_plan
+
+    qkv = _group_qkv()
+    a = generate_group_targeted_plan(qkv, seed=3, token_group=1, n_token_groups=4, n_flips=40)
+    b = generate_group_targeted_plan(qkv, seed=3, token_group=1, n_token_groups=4, n_flips=40)
+    assert [s.to_dict() for s in a] == [s.to_dict() for s in b]
+    assert len({(s.layer, s.part, s.target, s.index, s.bit) for s in a}) == 40, "two flips in one bit would cancel"
+    assert generate_group_targeted_plan(qkv, seed=4, token_group=1, n_token_groups=4, n_flips=40) != a
+
+
+def test_group_targeted_faults_are_reversible_and_move_only_their_group():
+    """Reversibility is the same guarantee criterion 1 pins for uniform plans; the containment is new.
+
+    A corrupted scale rescales its group, so the *effect* has to be confined to the same tokens the site was --
+    otherwise a rank-conditioned measurement would attribute damage to the wrong group.
+    """
+    from raq_kv.faults.storage import generate_group_targeted_plan
+
+    qkv = _group_qkv(tokens=16, group_size=4)
+    site = generate_group_targeted_plan(qkv, seed=5, token_group=3, n_token_groups=4, n_flips=1)[0]
+    before = dequantize(qkv.part(site.layer, "keys")).clone()
+    with injected(qkv, site):
+        after = dequantize(qkv.part(site.layer, "keys"))
+        changed = (after != before).any(dim=1).any(dim=-1).reshape(-1)  # per token
+        assert changed.any(), "a metadata flip that changes nothing is not an exposure"
+        assert not changed[:12].any(), "damage escaped the targeted token group"
+        # Inside the group it is `any`, not `all`, and the exception is exact rather than numerical: reconstruction
+        # is ``code * scale + zero``, so a value whose code is **0** is invariant under any scale corruption. In
+        # this fixture token 12 has code 0 at the corrupted (head, channel) and is untouched while 13-15 change.
+        # A second dilution on top of the 1024 scales per group, and it applies to the real arms too.
+        assert changed[12:16].any()
+    assert torch.equal(dequantize(qkv.part(site.layer, "keys")), before), "injection was not reversible"

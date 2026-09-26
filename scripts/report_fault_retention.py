@@ -25,17 +25,19 @@ findings for treating the second kind as the first.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 from pathlib import Path
 
 import numpy as np
 from scipy import stats
 
+from raq_kv.analysis.contrasts import contrast, contrast_rng
 from raq_kv.utils.io import read_json, read_jsonl
 from raq_kv.utils.paths import resolve_output_root
 
-BOOTSTRAP = 10_000
+# The bootstrap count and the contrast itself now live in `raq_kv.analysis.contrasts`, so D61's report and
+# this one cannot disagree about what D31's rule means. A constant left here would read as if it still
+# controlled the interval.
 
 # Region names as `faults/storage.py` emits them: `code`, `scale`, `zero`, plus `check:<region>` for ECC check
 # bits and `bound:<region>` for the range guard's own stored limits.
@@ -125,29 +127,7 @@ def stored_shares(data: dict[str, dict], samples: list[str]) -> dict[str, float]
     return {k: v / total for k, v in agg.items()}
 
 
-def _contrast_rng(x_name: str, y_name: str, seed: int) -> np.random.Generator:
-    """A generator keyed by the pair, so a contrast's interval does not depend on what was asked alongside it.
-
-    With one shared generator, requesting three contrasts in one invocation gave the third a different bootstrap
-    draw than requesting it alone -- so the same comparison had two intervals depending on the command line, which
-    is not a reproducible number. Keying on the arm names makes each contrast's interval a function of the data
-    and the ``--seed`` alone.
-    """
-    digest = hashlib.sha256(f"{seed}|{x_name}|{y_name}".encode()).digest()
-    return np.random.default_rng(int.from_bytes(digest[:8], "big"))
-
-
-def contrast(x_name: str, y_name: str, xv: np.ndarray, yv: np.ndarray, seed: int) -> dict:
-    d = yv - xv
-    discordant = int((d != 0).sum())
-    p = 1.0 if discordant == 0 else float(stats.wilcoxon(xv, yv).pvalue)
-    rng = _contrast_rng(x_name, y_name, seed)
-    boot = np.array([d[rng.integers(0, len(d), len(d))].mean() for _ in range(BOOTSTRAP)])
-    lo, hi = (float(v) for v in np.percentile(boot, [2.5, 97.5]))
-    return {"x": x_name, "y": y_name, "x_mean": float(xv.mean()), "y_mean": float(yv.mean()),
-            "difference": float(d.mean()), "ci": (lo, hi), "p": p, "discordant": discordant,
-            # D31's rule, both halves. A difference meeting one and not the other is a direction, not a result.
-            "meets_rule": bool(p < 0.05 and lo * hi > 0)}
+_contrast_rng = contrast_rng  # the name this script's own tests import
 
 
 def main() -> int:

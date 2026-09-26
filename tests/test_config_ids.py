@@ -104,3 +104,79 @@ def test_protection_token_describes_the_arm():
     # D and E are bit-identical but must never collide in storage.
     assert _protection_token(base.model_copy(update={"protection": late})) \
         != _protection_token(base.model_copy(update={"protection": early}))
+
+
+def test_the_nofault_slug_token_is_known_wrong_and_pinned_on_purpose():
+    """A fault campaign whose directory name says "nofault" -- documented, not repaired, and pinned so it stays
+    that way.
+
+    The literal dates from M0, when no config had a fault section. Protection arms put their fault model in
+    `task`, which this token never reads, so all 14 of them are labelled "nofault" while injecting faults. That is
+    exactly the defect D24 and D42 were about, and the reason it is not fixed is that the slug is part of
+    `experiment_id`: an honest token would change the id of every completed fault experiment and orphan its raw
+    records. This test exists so the next reader who spots the defect finds the reason attached to it rather than
+    "fixing" it into a history-breaking rename.
+    """
+    import pathlib
+
+    from raq_kv.config.loader import load_experiment_configs
+    from raq_kv.experiments.ids import slug
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "configs" / "experiments"
+    cfg = load_experiment_configs(root / "d61_qwen_top.yaml")[0]
+    assert cfg.task.n_flips == 1, "this arm injects one fault per trial"
+    assert "nofault" in slug(cfg), (
+        "the token is wrong and pinned; see the comment in ids.py before changing it, because making it honest "
+        "renames every completed fault experiment")
+    # The record's own fields are the honest description, and they are what the reports read.
+    assert cfg.task.fault_target == "group_rank" and cfg.task.target_group_rank == 0
+
+
+def test_a_group_targeted_arm_needs_its_rank_and_its_scorer():
+    """Three fields that only mean something together, so the schema refuses any two of them."""
+    import pytest
+
+    from raq_kv.config.schema import ProtectionArmTask
+
+    ok = ProtectionArmTask(n_flips=1, fault_target="group_rank", target_group_rank=0,
+                           rank_scorer="query_attention")
+    assert ok.fault_target == "group_rank"
+
+    with pytest.raises(Exception, match="needs both"):
+        ProtectionArmTask(n_flips=1, fault_target="group_rank", target_group_rank=0)
+    with pytest.raises(Exception, match="needs both"):
+        ProtectionArmTask(n_flips=1, fault_target="group_rank", rank_scorer="query_attention")
+    with pytest.raises(Exception, match="only mean something"):
+        ProtectionArmTask(n_flips=1, target_group_rank=0, rank_scorer="query_attention")
+
+
+def test_a_group_targeted_arm_is_refused_a_rate():
+    """`flips_for_rate` sizes a count against the arm's whole storage while the draw sees one group's scales.
+
+    An arm setting both would state an exposure it does not have -- the same class of defect as D43's matched-rate
+    confound, reached from the configuration side instead of the analysis side.
+    """
+    import pytest
+
+    from raq_kv.config.schema import ProtectionArmTask
+
+    with pytest.raises(Exception, match="does not describe that draw"):
+        ProtectionArmTask(ber=1e-6, fault_target="group_rank", target_group_rank=0,
+                          rank_scorer="query_attention")
+
+
+def test_the_existing_protection_arms_keep_their_identities():
+    """The `ber_basis` lesson, as a standing check: three new fields defaulting to None must move nothing.
+
+    Adding `ber_basis` with `default="stored"` shifted all 14 protection-arm identities at once, because
+    `identity_dict` uses `exclude_none` and a non-None default serializes into every config that never mentions
+    the field. `tests/experiment_identities.json` is the pinned baseline; this asserts the mechanism directly so a
+    failure says *why* rather than only *that* the hashes moved.
+    """
+    from raq_kv.config.schema import ProtectionArmTask
+
+    plain = ProtectionArmTask(ber=1e-6)
+    assert plain.fault_target is None and plain.target_group_rank is None and plain.rank_scorer is None
+    dumped = plain.model_dump(exclude_none=True)
+    for field in ("fault_target", "target_group_rank", "rank_scorer", "ber_basis", "n_flips"):
+        assert field not in dumped, f"{field} would enter the identity hash of every arm that never sets it"

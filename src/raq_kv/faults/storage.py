@@ -112,6 +112,75 @@ def generate_storage_plan(
     return sites
 
 
+def generate_group_targeted_plan(
+    qkv: QuantizedKV,
+    seed: int,
+    token_group: int,
+    n_token_groups: int,
+    n_flips: int = 1,
+    part: str = "keys",
+    stratum: str = "group_targeted",
+) -> list[FaultSite]:
+    """Single-bit upsets confined to the **key scales covering one token group**.
+
+    Built for D60's open question. The uniform plan above cannot answer it: two candidate mechanisms for why one
+    model sits at the metadata hazard ceiling -- "more groups are consequential" and "the groups that matter matter
+    more" -- predict the same *average* hazard and differ only in P(break | which group was hit). Measuring that
+    needs the group chosen rather than drawn.
+
+    Restricted to ``group_token`` scale grids on purpose, and the restriction is **checked** rather than described:
+    ``n_token_groups`` is the group count the caller derives from its own config, and a grid whose axis 2 is not
+    that length is refused. Without that check the guard would be ``len(shape) == 4``, which a ``per_token`` grid
+    ``(1, H, T, 1)`` also satisfies -- ``token_group`` would then be silently reinterpreted as a token index and the
+    function would return sites for a different unit than its name. That is D24's and D42's failure mode: a
+    manifest internally consistent with itself and wrong about what ran.
+
+    One flip corrupts one (layer, head, channel) scale within the group, not the group as a whole: at H_kv = 8 and
+    head_dim = 128 there are 1024 such scales per group per layer-part. That dilution is exactly why the
+    conditional break probability D60 derived sits near 20-40% rather than near 1, and it is preserved here so the
+    measured conditional is comparable to the derived one.
+    """
+    if part not in ("keys", "values"):
+        raise ValueError(f"part must be 'keys' or 'values', got {part!r}")
+    if not 0 <= token_group < n_token_groups:
+        raise ValueError(f"token_group {token_group} outside the {n_token_groups} groups requested")
+    candidates: list[Region] = []
+    for region in storage_regions(qkv, None):
+        if region.part != part or region.target not in ("scale", "zero"):
+            continue
+        if len(region.shape) != 4 or region.shape[2] != n_token_groups:
+            raise ValueError(
+                f"layer {region.layer} {region.part} {region.target} has grid {region.shape}, which is not a "
+                f"group_token grid of {n_token_groups} groups -- this helper is defined only for those (a "
+                f"per_token grid is (1, H, T, 1) and would reindex token_group as a token)")
+        candidates.append(region)
+    if not candidates:
+        raise ValueError(f"no {part} scale regions found; the arm may be unquantized on that part")
+
+    rng = random.Random(seed)
+    sites: list[FaultSite] = []
+    seen: set[tuple[Any, ...]] = set()
+    # Drawn without replacement over (region, head, channel, bit), matching the uniform generator's guarantee:
+    # two flips in one scale would partially cancel and the trial would understate its own exposure.
+    attempts, budget = 0, 1000 * max(1, n_flips)
+    while len(sites) < n_flips and attempts < budget:
+        attempts += 1
+        region = rng.choice(candidates)
+        head = rng.randrange(region.shape[1])
+        channel = rng.randrange(region.shape[3])
+        bit = rng.randrange(region.bits_per_element)
+        key = (region.layer, region.part, region.target, head, channel, bit)
+        if key in seen:
+            continue
+        seen.add(key)
+        sites.append(FaultSite(region.layer, region.part, region.target,
+                               (0, head, token_group, channel), bit, stratum))
+    if len(sites) < n_flips:
+        raise ValueError(f"could not draw {n_flips} distinct sites in group {token_group} of {len(candidates)} "
+                         f"regions after {attempts} attempts")
+    return sites
+
+
 def flips_for_rate(qkv: QuantizedKV, guard: ProtectedKV | None, rate: float) -> int:
     """Number of flips realising a bit error rate on this arm's storage (at least one, so a rate is never a no-op)."""
     if not 0.0 < rate < 1.0:
