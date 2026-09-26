@@ -32,7 +32,7 @@ from raq_kv.config.schema import (
     RAQProbeConfig,
     RetentionTask,
 )
-from raq_kv.data.bfcl import build_bfcl
+from raq_kv.data.bfcl import bfcl_corpus_ids, build_bfcl, corpus_fingerprint
 from raq_kv.data.gsm8k import build_gsm8k
 from raq_kv.data.prompts import PromptSample, char_span_to_tokens, samples_fingerprint
 from raq_kv.data.raq_probe import build_raq_probe
@@ -120,16 +120,35 @@ class CachePPL:
         assert isinstance(cfg.task, CachePPLTask)
         self.cfg = cfg
         self.tokenizer = load_tokenizer(cfg.model)
-        self.chunks: dict[str, PPLChunk] = {
-            c.sample_id: c for c in make_chunks(tokenize_wikitext2(cfg.dataset, self.tokenizer), cfg.dataset)
-        }
+        # Two corpora, one chunker and one protocol (D66). WikiText measures perplexity on general text; the BFCL
+        # catalogue measures it on the agent vehicle's own domain, which is what C4 needs -- its evidence has always
+        # been a WikiText perplexity set against a probe task metric, so the mismatch could have been a domain
+        # difference rather than a metric one.
+        if isinstance(cfg.dataset, BFCLConfig):
+            if cfg.dataset.n_chunks is None:
+                raise ValueError("cache_ppl on bfcl needs n_chunks, prefix_len and continuation_len in the dataset "
+                                 "config; the retention configs omit them because they chunk nothing")
+            ids = bfcl_corpus_ids(cfg.dataset, self.tokenizer)
+            chunks = make_chunks(ids, cfg.dataset, prefix="bfcl")
+            self._fingerprint_key, self._fingerprint = "bfcl_catalogue_sha256", corpus_fingerprint(ids)
+        else:
+            chunks = make_chunks(tokenize_wikitext2(cfg.dataset, self.tokenizer), cfg.dataset)
+            self._fingerprint_key, self._fingerprint = "wikitext2_chunks_sha256", chunks_fingerprint(chunks)
+        self.chunks: dict[str, PPLChunk] = {c.sample_id: c for c in chunks}
         self.lm: LoadedModel | None = None
 
     def unit_keys(self) -> list[str]:
         return list(self.chunks)
 
     def data_fingerprint(self) -> dict[str, Any]:
-        return {"wikitext2_chunks_sha256": chunks_fingerprint(list(self.chunks.values()))}
+        """One key, and for WikiText it is **byte-identical to what it always was**.
+
+        The runner refuses to touch an experiment whose stored fingerprint differs (`_check_existing`), so adding a
+        second key here -- `n_chunks`, which was tempting and useless -- would make every completed WikiText
+        perplexity experiment raise `ExperimentConflictError` on any re-run. The chunk count is already implied by
+        the hash, since the hash covers exactly the chunks that exist.
+        """
+        return {self._fingerprint_key: self._fingerprint}
 
     def setup(self) -> dict[str, Any]:
         self.lm = load_model(self.cfg.model)

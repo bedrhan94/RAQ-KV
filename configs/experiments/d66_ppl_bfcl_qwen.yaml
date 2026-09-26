@@ -1,0 +1,23 @@
+# D66: cache-conditioned perplexity over the BFCL tool catalogue, Qwen3-1.7B.
+#
+# Closes the gap docs/claims.md names for C4 ("perplexity over the catalogue") and, on the Llama runs, the gap the
+# 2026-09-26 audit found: cache_ppl had 27 live runs and every one was Qwen3-1.7B, so the whole token-level metric
+# axis was single-family while every other axis had a second.
+#
+# The sweep is the subset of M1's that the later work actually uses: bf16 passthrough (the control, which must
+# reproduce the golden), 4-bit group_token/per_token (every M3-M6 arm's operating point) and 2-bit (D49's refutation
+# arm). Not M1's full 13 variants -- those answered the granularity question already settled.
+
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/bfcl_v3_ppl.yaml
+name: d66_ppl_bfcl_qwen
+task:
+  kind: cache_ppl
+  store_token_nll: true
+seed: 0
+sweep:
+  quantization:
+    - null
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 128}, values: {bits: 2, axis: per_token}}

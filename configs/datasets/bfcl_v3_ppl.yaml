@@ -1,0 +1,21 @@
+# BFCL tool catalogue as a perplexity corpus (D66), for C4.
+#
+# C4 says token-level metrics under-estimate agent failures, and its evidence has always been D16's "+29% perplexity
+# alongside -71% probe accuracy" -- a perplexity measured on WikiText against a task measured on the probe. Two
+# corpora, two vehicles, so the mismatch could have been a domain difference rather than a metric one. This config
+# puts perplexity on the AGENT vehicle's own text.
+#
+# The geometry is WikiText's unchanged (prefix_len 1536, continuation_len 512) because that is what makes the two
+# perplexities comparable rather than merely both being perplexities. n_chunks is 23 rather than 40 because the
+# corpus is what it is: all 769 distinct schemas in name order tokenize to 48,487 tokens, which is 23 chunks of
+# 2049. Measured before this file existed, not chosen.
+dataset:
+  name: bfcl
+  version: v3
+  generator_seed: 0
+  categories: [simple, multiple, parallel, parallel_multiple]
+  questions_per_category: 40
+  catalogue_sizes: [10]
+  n_chunks: 23
+  prefix_len: 1536
+  continuation_len: 512

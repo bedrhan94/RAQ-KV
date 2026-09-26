@@ -105,6 +105,22 @@ class BFCLConfig(StrictModel):
                                                                           "the cache length")
     schema_span_chars: int = Field(default=400, gt=0, description="Fallback span width for the last schema")
     max_new_tokens: int = Field(default=96, gt=0)
+    # D66: the same vehicle as a perplexity corpus, so C4's token-level metric and its task metric finally sit on one
+    # domain. Only `cache_ppl` reads these; they default to None so `exclude_none` leaves every existing BFCL
+    # retention identity untouched (the `ber_basis` lesson, now applied without being relearned). The names match
+    # WikiText2Config's on purpose -- `make_chunks` reads them structurally, and matching the geometry is what makes
+    # the two perplexities comparable rather than merely both being perplexities.
+    n_chunks: int | None = Field(default=None, gt=0, description="Perplexity chunks over the schema catalogue")
+    prefix_len: int | None = Field(default=None, gt=0, description="Catalogue tokens cached per chunk")
+    continuation_len: int | None = Field(default=None, gt=0, description="Catalogue tokens scored through the cache")
+
+    @model_validator(mode="after")
+    def _ppl_fields_travel_together(self) -> BFCLConfig:
+        present = [self.n_chunks, self.prefix_len, self.continuation_len]
+        if any(x is not None for x in present) and not all(x is not None for x in present):
+            raise ValueError("a BFCL perplexity corpus needs n_chunks, prefix_len and continuation_len together; "
+                             "some given and some missing leaves the chunk geometry undefined")
+        return self
 
     @model_validator(mode="after")
     def _catalogue_fits_the_pool(self) -> BFCLConfig:
@@ -317,7 +333,9 @@ Task = Annotated[
 ]
 
 _TASK_DATASETS: dict[str, tuple[str, ...]] = {
-    "cache_ppl": ("wikitext2",),
+    # bfcl added by D66: the agent vehicle doubles as a perplexity corpus so C4's token-level metric and its task
+    # metric finally sit on one domain, instead of a WikiText perplexity being compared with a probe task rate.
+    "cache_ppl": ("wikitext2", "bfcl"),
     "latency": ("wikitext2",),
     "qa_generate": ("raq_probe", "gsm8k", "bfcl"),
     "quant_sensitivity": ("wikitext2",),

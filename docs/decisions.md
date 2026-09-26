@@ -3700,3 +3700,90 @@ geometric curve, and the no-failure case says so explicitly.
 Qwen3-1.7B, BER 1e-6, the M3 probe arms, 8 trials per sample so Pass^k is measurable only to k = 8, and 59 of 60
 samples (one excluded by its own golden). Pass^k over a *larger* k needs more trials per sample, not more samples,
 and 8 was chosen for M3's purposes rather than for this metric.
+
+## D66 — C4 closed: token-level metrics do under-estimate agent damage, and by less than the cross-vehicle version said (2026-09-26)
+
+C4 has been `PROPOSED` since M0 and open after M6 — the last unresolved claim in the matrix. Its evidence was always
+D16's **"+29% perplexity alongside −71% probe accuracy"**, and the weakness was never the numbers: that perplexity
+was measured on **WikiText** and that accuracy on the **probe**, two corpora and two vehicles, so the gap could have
+been a domain difference rather than a metric one. `docs/claims.md` named the fix — perplexity over the catalogue —
+and this is it.
+
+### What was built
+
+`cache_ppl` now accepts the BFCL vehicle: `bfcl_corpus_ids` serialises all 769 distinct schemas as JSON in the pool's
+deterministic name order, tokenizes them as **raw text with no chat template** (applying it would score control
+tokens and the result would stop being a perplexity over tool schemas), and hands them to WikiText's own
+`make_chunks`. The geometry is WikiText's unchanged — prefix 1536, continuation 512 — because that is what makes the
+two perplexities comparable rather than merely both being perplexities. The corpus is 48,487 tokens, which is 23
+chunks of 2049; measured, not chosen.
+
+Two details that are provenance rather than plumbing. The new `BFCLConfig` fields default to `None` so
+`exclude_none` leaves every existing BFCL retention identity untouched. And `data_fingerprint` keeps **exactly** the
+one key it always had for WikiText: the runner refuses any experiment whose stored fingerprint differs
+(`_check_existing`), so the `n_chunks` key that was briefly added there would have made every one of the 27 completed
+WikiText perplexity experiments raise `ExperimentConflictError` on any re-run. Caught by checking the runner before
+committing, and verified against a stored manifest.
+
+### The result, on one vehicle and one axis
+
+The perturbation is quantization precision, because it is the axis D16 used and the only one both metrics can read.
+The M6 retention arms vary the *scorer* at a fixed 4 bits, which is a different axis and would have reintroduced the
+confound C4 needs removed.
+
+| precision | catalogue perplexity | Δ | tool calls correct | accuracy | Δ | Wilson 95% | Fisher vs bf16 |
+|---|---|---|---|---|---|---|---|
+| bf16 | 2.3630 | — | **105/120** | 0.8750 | — | [0.804, 0.923] | — |
+| 4-bit | 2.3624 | **−0.03%** | 104/120 | 0.8667 | **−0.95%** | [0.794, 0.916] | p = 1 |
+| 2-bit | 2.6799 | **+13.41%** | 80/120 | 0.6667 | **−23.81%** | [0.578, 0.745] | **p = 1.9e-04** |
+
+**The control reproduced exactly:** the bf16 variant returns 105/120, the same as `m6_bfcl_golden`, which is what
+makes the other two rows trustworthy rather than merely plotted.
+
+**C4 is supported.** At 2 bits the token-level metric moves **+13.41%** and the task metric **−23.81%** — task damage
+is **1.8×** the perplexity damage in relative terms, and the task effect is significant where the perplexity rise is
+the sort of number a quantization paper reports as acceptable. A reader who budgeted by catalogue perplexity would
+have accepted a 13% rise and lost a quarter of their tool calls.
+
+**And the cross-vehicle version overstated it.** D16's pairing implies a ratio of about **2.4×** (+29% against −71%);
+within one vehicle it is **1.8×**. So part of D16's gap was the domain difference, exactly as the objection to it
+supposed — and the effect survives removing that part. This is the honest shape of the closure: the claim holds, and
+the number that made it striking was inflated by the comparison it was drawn from.
+
+**At 4 bits the two metrics agree that nothing happened** (−0.03% and −0.95%, p = 1). That is the control behaviour a
+mismatch claim needs: the metrics diverge under real damage, not everywhere.
+
+### The perplexity axis now has a second family, and D16's magnitude replicates
+
+The audit found `cache_ppl` had 27 live runs and every one was Qwen3-1.7B — the whole token-level axis was
+single-family while every other axis had a second. Fixed in the same campaign:
+
+| corpus / family | bf16 | 4-bit | 2-bit | 4-bit Δ | 2-bit Δ |
+|---|---|---|---|---|---|
+| WikiText-2, **Llama-3.2-3B** | 9.4557 | 9.4749 | 12.0617 | +0.20% | **+27.56%** |
+| BFCL catalogue, Qwen3-1.7B | 2.3630 | 2.3624 | 2.6799 | −0.03% | +13.41% |
+| BFCL catalogue, Llama-3.2-3B | 2.1022 | 2.1042 | 2.3706 | +0.09% | +12.77% |
+
+**D16's "+29%" replicates on the second family at +27.56%** — measured on the same corpus with the same geometry, so
+this is a replication rather than an echo. **4-bit is free on perplexity in every corpus and both families** (−0.03%
+to +0.20%), which replicates M1's granularity conclusion outside the model it was found on.
+
+**And the agent corpus is roughly twice as robust to precision loss as general text**: +13% against +28% at 2 bits.
+The catalogue's perplexity is 2.1–2.4 against WikiText's 9.5, so JSON schemas are far more predictable and there is
+less for quantization to destroy. That is worth stating beside the C4 result, because it means the *perplexity* side
+of the mismatch is domain-dependent in a way the task side need not be — and it is the mechanism by which a
+cross-vehicle comparison like D16's inflates the gap.
+
+### A reporting bug of mine, in the table of the claim this exists to settle
+
+The first version formatted the deltas as `{value:+.2f}%` on a **fraction**, so the headline table printed
+**"+0.13%"** for a 13.41% perplexity rise while the contrast lines below it printed the same number correctly. A
+hundredfold error, in the one table a reader of C4 would look at. Caught by reading the output against the lines
+underneath it; nothing else would have.
+
+### Scope
+
+One model on the task side (Qwen3-1.7B; the second family has the perplexity half but no BFCL task arms), the
+`simple`+`multiple`+`parallel`+`parallel_multiple` schema pool for the corpus against `simple` questions for the
+task, 120 tool calls, unpruned throughout. The C4 comparison is precision-only: whether *compression* shows the same
+mismatch is unmeasured, and it cannot be read off the M6 retention arms because `cache_ppl` does not prune.

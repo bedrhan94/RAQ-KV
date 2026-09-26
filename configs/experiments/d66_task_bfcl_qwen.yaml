@@ -1,0 +1,29 @@
+# D66: the AGENT task metric across the same three precisions as the perplexity runs, so C4 finally has both of its
+# metrics on one vehicle and one axis.
+#
+# C4 says token-level metrics under-estimate agent failures. Its evidence has always been D16's "+29% perplexity
+# alongside -71% probe accuracy" -- but that perplexity was WikiText and that accuracy was the probe, two corpora and
+# two vehicles, so the mismatch could have been a domain difference rather than a metric one. The fix needs the same
+# perturbation applied to the same vehicle and read by both metrics. `d66_ppl_bfcl_qwen` supplies the perplexity
+# side over the tool catalogue; this supplies the task side over the tool calls.
+#
+# No compression: the existing M6 retention arms vary the SCORER at a fixed 4 bits, which is a different axis
+# entirely and cannot be compared against a quantization sweep. Quantization is the axis D16 used and the only one
+# both metrics can read here.
+#
+# The bf16 variant is deliberately not omitted even though m6_bfcl_golden already measured it. It is the control:
+# it must reproduce that arm's 105/120, which is what makes the 4-bit and 2-bit points trustworthy -- the same role
+# M1's null variant plays for perplexity.
+
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/bfcl_v3_catalogue.yaml
+name: d66_task_bfcl_qwen
+task:
+  kind: qa_generate
+seed: 0
+sweep:
+  quantization:
+    - null
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 128}, values: {bits: 2, axis: per_token}}

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 from datasets import load_dataset
@@ -48,14 +49,21 @@ def tokenize_wikitext2(cfg: WikiText2Config, tokenizer: PreTrainedTokenizerBase)
     return torch.tensor(ids, dtype=torch.long)
 
 
-def make_chunks(all_ids: torch.Tensor, cfg: WikiText2Config) -> list[PPLChunk]:
+def make_chunks(all_ids: torch.Tensor, cfg: Any, prefix: str = "wt2") -> list[PPLChunk]:
+    """Non-overlapping chunks of ``prefix_len + continuation_len + 1`` tokens.
+
+    ``cfg`` is read structurally rather than by type: `BFCLConfig` carries the same three field names so the tool
+    catalogue is chunked by this exact function (D66). That is deliberate -- a second chunker would be a second
+    protocol, and the whole point of putting agent-domain text through perplexity is that the number is comparable
+    to WikiText's, which requires the geometry to come from one place.
+    """
     size = cfg.prefix_len + cfg.continuation_len + 1
     available = all_ids.numel() // size
     if available < cfg.n_chunks:
         raise ValueError(f"requested {cfg.n_chunks} chunks of {size} tokens but corpus provides only {available}")
     return [
         PPLChunk(
-            sample_id=f"wt2-{i:04d}",
+            sample_id=f"{prefix}-{i:04d}",
             token_ids=all_ids[i * size : (i + 1) * size].clone(),
             prefix_len=cfg.prefix_len,
             continuation_len=cfg.continuation_len,

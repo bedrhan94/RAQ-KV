@@ -35,6 +35,7 @@ would really have cached.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 from typing import Any
@@ -178,3 +179,30 @@ def build_bfcl(
 def pool_size() -> int:
     """Exposed so a test can pin the catalogue's supply without rebuilding every sample."""
     return len(_schema_pool(AST_CATEGORIES))
+
+
+def bfcl_corpus_ids(cfg: BFCLConfig, tokenizer: PreTrainedTokenizerBase) -> torch.Tensor:
+    """The tool catalogue as one token stream, for cache-conditioned perplexity on agent-domain text.
+
+    C4 says token-level metrics under-estimate agent failures, and its evidence has always been D16's "+29%
+    perplexity alongside -71% probe accuracy" -- a perplexity measured on **WikiText** against a task measured on the
+    probe. Two corpora, two vehicles, so the mismatch could always have been a domain difference rather than a
+    metric one. `docs/claims.md` records what closing it needs: perplexity over the catalogue.
+
+    This produces that corpus, and the protocol is WikiText's unchanged so the two numbers are comparable: schemas
+    are serialised as JSON, concatenated in the pool's deterministic name order, tokenized as **raw text with no
+    chat template**, and handed to `make_chunks`. Applying the template here would score its control tokens and the
+    perplexity would stop being a perplexity over tool schemas.
+
+    The whole pool is used, not a per-question catalogue: a question's catalogue is a 10-25 schema sample drawn for
+    that question, whereas a perplexity corpus wants to be one fixed text. All 769 distinct schemas in name order is
+    the only such text the vehicle defines.
+    """
+    schemas = _schema_pool(cfg.categories)
+    text = "\n\n".join(json.dumps(fn, ensure_ascii=False, sort_keys=True) for fn in schemas)
+    return torch.tensor(tokenizer(text, add_special_tokens=False)["input_ids"], dtype=torch.long)
+
+
+def corpus_fingerprint(ids: torch.Tensor) -> str:
+    """sha256 over the corpus token ids, so a tokenizer or pool change cannot pass unnoticed between runs."""
+    return hashlib.sha256(ids.numpy().astype("<i8").tobytes()).hexdigest()
