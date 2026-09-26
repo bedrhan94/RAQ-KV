@@ -1003,7 +1003,15 @@ def _first_token_shift(model: Any, faulty: Any, query_ids: Any, clean: Any) -> d
     faulty_lp = score_through_cache(model, faulty, query_ids, query_ids, return_logprobs=True,
                                     logprob_dtype=torch.float64).logprobs[-1]
     clean_p = clean.exp()
-    kl = float((clean_p * (clean - faulty_lp)).sum())
+    # Summed only where the clean model puts mass. KL's definition gives those terms weight zero -- 0*log(0/q) = 0
+    # -- so this is the definition rather than a guard, but writing it as `(clean_p * (clean - faulty_lp)).sum()`
+    # produces **NaN** instead of zero: across a 150k vocabulary almost every `clean_p` underflows to exactly 0.0
+    # in float64, `faulty_lp` reaches -inf for the least likely tokens, and 0 * inf is NaN. The first D62 campaign
+    # was run that way and returned NaN for most trials on long contexts while the 2-sample/1024-token smoke run
+    # came back finite -- the failure needed the long contexts to surface, so the smoke run could not have caught
+    # it. A `-inf` where the clean model DOES put mass is a genuinely infinite KL and is left as inf, not masked.
+    mass = clean_p > 0
+    kl = float((clean_p[mass] * (clean[mass] - faulty_lp[mass])).sum())
     top = int(clean.argmax())
     def lead(lp: Any) -> float:
         rival = lp.clone()

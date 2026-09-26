@@ -6,6 +6,8 @@ are properties that a test can pin exactly, so they are pinned here rather than 
 
 from __future__ import annotations
 
+import math
+
 import pytest
 import torch
 
@@ -384,3 +386,38 @@ class _Snapshot:
 
     def to_cache(self):
         return None
+
+
+def test_the_kl_is_finite_when_the_faulty_distribution_has_minus_infinity_tokens():
+    """The bug that cost a 12-minute campaign, pinned.
+
+    Written as `(clean_p * (clean - faulty_lp)).sum()` the KL returns **NaN**: across a large vocabulary almost
+    every `clean_p` underflows to exactly 0.0 in float64, `faulty_lp` reaches -inf for the least likely tokens, and
+    0 * inf is NaN. It needs long contexts to surface -- extreme logits push the softmax tail to -inf -- so a short
+    smoke run comes back finite and the full campaign returns NaN for most trials. Summing only where the clean
+    model puts mass is KL's own definition, since 0*log(0/q) = 0.
+    """
+    import torch
+
+    from raq_kv.experiments.tasks import _first_token_shift
+
+    # A clean distribution whose tail underflows to p = 0, and a faulty one with -inf exactly there.
+    logits = torch.tensor([60.0, 0.0, -800.0, -900.0], dtype=torch.float64)
+    clean = torch.log_softmax(logits, dim=-1)
+    assert (clean.exp() == 0).any(), "fixture must contain a token whose probability underflows to zero"
+
+    class _Stub:
+        def __init__(self, values):
+            self.lp = torch.log_softmax(torch.tensor(values, dtype=torch.float64), dim=-1)
+
+        def __call__(self, **kw):
+            import types
+            return types.SimpleNamespace(logits=self.lp.unsqueeze(0).unsqueeze(0).expand(1, 2, 4).float())
+
+    faulty = _Stub([60.0, 0.0, -float("inf"), -float("inf")])
+    assert (faulty.lp == -float("inf")).any(), "fixture must contain a -inf in the faulty distribution"
+
+    row = _first_token_shift(faulty, _Snapshot(), torch.zeros(1, 2, dtype=torch.long), clean)
+    assert not math.isnan(row["kl_first_token"]), "0 * inf must contribute zero, not NaN"
+    assert row["kl_first_token"] == pytest.approx(0.0, abs=1e-9), (
+        "the two distributions agree wherever the clean model has mass, so the KL is zero")
