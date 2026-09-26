@@ -3933,3 +3933,101 @@ rewritten from scratch. Copying a config copies its claims.
 
 WikiText-2, 40 chunks, the same strata and counts and seed as both earlier campaigns so the cells are comparable one
 by one. This is a scale axis within one family; it says nothing new about Llama, and a third *family* remains unrun.
+
+### RESULT, 2026-09-27 — the frozen branch holds on a third model; the QK-Norm prediction is directionally right and does not meet the project's own bar
+
+Two campaigns on Qwen3-4B, 26 minutes of compute after an 11-minute weight download.
+`d68_fault_campaign_4b`, `d68_quant_sensitivity_4b`, `outputs/reports/target_class_damage.json`.
+
+#### Q48 across three models
+
+| model | layers | ρ(quant sens, fault damage) | 95% CI | **partial ρ** on mean \|KV\| | frozen branch |
+|---|---|---|---|---|---|
+| Qwen3-1.7B | 28 | **−0.377** | [−0.588, −0.128] | **−0.282** | separate (≤ 0.3) ✓ |
+| **Qwen3-4B** | 36 | **−0.229** | [−0.448, **+0.004**] | **−0.156** | separate ✓ |
+| Llama-3.2-3B | 28 | +0.073 | [−0.237, +0.381] | +0.047 | separate ✓ |
+
+**The frozen branch holds on all three.** Partial |ρ| is 0.282, 0.156 and 0.047, every one inside the *separate
+signals* branch fixed before any measurement. So §6's multiplicative Joint Reliability Score is now rejected on three
+models rather than one, and D18's consequence for the allocator — a staged rule instead of a product — does not rest
+on a single configuration. That was the outcome flagged as unlikely and most consequential if it failed; it did not
+fail.
+
+**The QK-Norm prediction is directionally right and does not clear the project's own rule.** The sign is negative on
+both Qwen models and positive on Llama, which is what the account predicts. But **Qwen3-4B's interval includes zero**
+(upper bound +0.004), so by D31 — a result needs its interval to exclude zero — the negative sign is **not
+established** on the third model. The pre-registration said a negative ρ would give the account "its first real
+support"; the honest verdict is weaker than that sentence, and the sentence was mine.
+
+**And the effect attenuates with scale, which QK-Norm alone does not predict.** ρ goes −0.377 → −0.229 and the
+partial −0.282 → −0.156 between 1.7B and 4B, both Qwen, both applying QK-Norm. If the architecture feature were the
+whole story the two Qwens should agree; instead the larger one sits roughly halfway to Llama. So scale is doing
+something too, and the clean two-way story (Qwen negative, Llama positive, QK-Norm the cause) is not what three
+models show.
+
+#### H2d on a third model, and the ratio now comes from one definition
+
+Extracted into `scripts/report_target_class_damage.py` after being computed by hand in D17 and D55 — which
+**disagreed on the same data** (2.4× against 2.845×) purely through a different pooling of scale and zero. The
+extracted definition reproduces D55 exactly, which is the check that matters.
+
+| model | code mean | metadata mean | **ratio** | worst metadata | worst code | tail | LSB→MSB |
+|---|---|---|---|---|---|---|---|
+| Qwen3-1.7B | 0.2233 | 0.6353 | **2.845×** | 35.96 | 0.870 | 41× | 1.032 |
+| **Qwen3-4B** | **0.2232** | **0.7886** | **3.534×** | 25.00 | **2.187** | **11×** | **1.057** |
+| Llama-3.2-3B | 0.1273 | 0.5659 | **4.446×** | 19.05 | 0.366 | 52× | 1.023 |
+
+**Metadata dominates on all three**, at 2.8×, 3.5× and 4.4×. This is the finding every protection decision descends
+from and it is now three-for-three. **H1c likewise**: LSB→MSB moves damage 1.032×, 1.057× and 1.023× while the stored
+value changes **128×**, so MSB-only ECC is poor value per bit on every model measured.
+
+Two things the third model adds. **Code damage is scale-invariant in the mean** — 0.2232 against the 1.7B's 0.2233,
+which is a coincidence to three decimals and worth stating as such rather than as a law. But **the 4B's worst code
+flip is 2.187 nats against 0.870**, so its tail separation collapses to 11× from 41×: the larger model has code flips
+that hurt much more than any the 1.7B produced, even though the average is identical. A tail that grows with scale
+while the mean does not is the sort of thing a mean-based protection argument would miss.
+
+**The fault map's layer structure replicates.** Layer × part cells are statistically separated on all three (spread
+0.9219 / 0.8909 / 0.7656, disjoint intervals in each), while bit position is nearly flat (0.0408 / 0.0205 / 0.0244)
+and on the 4B is **not** separated at all. M2's criterion-2 finding — layers matter, bit positions barely — is
+general.
+
+#### A new three-model finding: the zero-point is the most dangerous word in the cache
+
+Counted explicitly because the first version of the extracted script reported `nan` for every metadata mean, and
+tracking down why turned out to be the finding:
+
+| model | code non-finite | scale non-finite | **zero non-finite** |
+|---|---|---|---|
+| Qwen3-1.7B | **0 / 4000** | 2 / 387 = 0.52% | **5 / 413 = 1.21%** |
+| Qwen3-4B | **0 / 4000** | 2 / 423 = 0.47% | **4 / 377 = 1.06%** |
+| Llama-3.2-3B | **0 / 4000** | 0 / 387 = 0.00% | **7 / 413 = 1.69%** |
+
+**Not one of 12,000 code flips drove the NLL non-finite, and about 1% of metadata flips did** — matching D62's
+independently measured ~1.3% on a different vehicle. And the zero-point is the worse half in **all three models**,
+which generalises the observation D62 could only make on Llama (7 of 7 collapses from zero-point flips).
+
+**This also makes every metadata/code ratio above a lower bound.** The non-finite sites are excluded from the means
+by necessity, and they are not missing data — they are the worst outcomes there are. D55's numbers were computed the
+same way without saying so; the script now prints the count beside the mean.
+
+#### Two provenance defects fixed on the way
+
+**`kv_magnitude.json` was one fixed path for model-specific data.** Running `kv_stats.py` for a second model
+overwrote the first, after which `report_m2`'s partial correlation for the original campaign would merge the *wrong*
+magnitudes onto layers 0–27 and report a number with nothing announcing it. The reverse direction fails safely
+(missing layers merge as NaN and the partial is skipped), so exactly one direction was dangerous. Now written per
+model and resolved by matching the file's own recorded `model` against the campaign's manifest. **D18 reproduces
+exactly through the new path** — ρ = −0.3773 [−0.5883, −0.1279], partial −0.2817 against the recorded −0.282 — which
+is the check that the change moved nothing.
+
+**A copied config carried a false header.** `d68_quant_sensitivity_4b` was first produced by search-and-replacing an
+include path, leaving a header that read "ON THE SECOND FAMILY" and "Identical KV geometry (verified: both 57344
+values per token)" — both false for a 36-layer model with 73,728, and neither touched by the replacement. Rewritten
+from scratch. Copying a config copies its claims.
+
+#### Scope
+
+WikiText-2, 40 chunks, same strata and seed as both earlier campaigns. This is a **scale** axis inside one family:
+it says nothing new about Llama, and a third *family* remains unrun. No protection arm was run on Qwen3-4B, because
+the layer-indexed maps (`data_layers: [9..27]`) were written for 28 layers and do not transfer.

@@ -51,7 +51,12 @@ def main() -> int:
             "outlier_ratio": float(absolute.max() / absolute.mean()),
         })
 
-    out = resolve_output_root(args.output_root) / "reports" / "kv_magnitude.json"
+    # Named per model. The path was `kv_magnitude.json` for every model, and the contents are model-specific: a
+    # 4B run would overwrite the 1.7B file, after which `report_m2`'s partial correlation for the 1.7B campaign
+    # would merge the WRONG magnitudes on layers 0-27 and report a number with nothing announcing it. The reverse
+    # direction fails safely (missing layers become NaN and the partial is skipped), so only one direction was
+    # dangerous -- which is exactly the kind of asymmetry that goes unnoticed.
+    out = resolve_output_root(args.output_root) / "reports" / f"kv_magnitude_{cfg.model.short_name}.json"
     write_json_atomic(out, {"model": cfg.model.hf_id, "revision": cfg.model.revision,
                             "n_chunks": len(chunks), "context_tokens": cfg.dataset.prefix_len, "per_region": rows})
     worst = max(rows, key=lambda r: r["outlier_ratio"])

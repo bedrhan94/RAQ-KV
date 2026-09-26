@@ -214,18 +214,46 @@ def rate_map_section(df: pd.DataFrame) -> tuple[str, dict[str, Any]]:
     return chr(10).join(lines), facts
 
 
-def q48_section(raw_root: Path, faults: pd.DataFrame, quant_name: str, rng: np.random.Generator):
+def _magnitude_file(raw_root: Path, campaign: str) -> Path | None:
+    """The KV magnitude statistics for the model this campaign ran on, or None.
+
+    Selected by matching the file's own recorded `model` against the campaign's manifest, not by a fixed filename.
+    The path used to be `kv_magnitude.json` for every model while the contents are model-specific, so running
+    `kv_stats.py` for a second model overwrote the first -- and the partial correlation would then merge the wrong
+    magnitudes onto layers 0-27 of the original campaign and report a number with nothing announcing it. The other
+    direction fails safely, because missing layers merge as NaN and the partial is skipped; only one direction was
+    dangerous, which is the kind of asymmetry that goes unnoticed.
+    """
+    hf_id = None
+    for exp in sorted(raw_root.glob("*")):
+        if ".superseded-" in exp.name or not (exp / "manifest.json").exists():
+            continue
+        manifest = read_json(exp / "manifest.json")
+        if manifest.get("superseded_by") or manifest["config"]["name"] != campaign:
+            continue
+        hf_id = manifest["config"]["model"]["hf_id"]
+        break
+    if hf_id is None:
+        return None
+    for path in sorted((raw_root.parent / "reports").glob("kv_magnitude*.json")):
+        if read_json(path).get("model") == hf_id:
+            return path
+    return None
+
+
+def q48_section(raw_root: Path, faults: pd.DataFrame, quant_name: str, rng: np.random.Generator,
+                campaign: str = "m2_fault_campaign"):
     qm = quant_map(raw_root, quant_name)
     if qm.empty or faults.empty:
         return "_missing one of the two maps_\n", {}
     merged = fault_map(faults).merge(qm, on=["layer", "part"])
-    magnitudes = raw_root.parent / "reports" / "kv_magnitude.json"
+    magnitudes = _magnitude_file(raw_root, campaign)
     rho = float(stats.spearmanr(merged["quant_sensitivity"], merged["fault_damage"]).statistic)
     lo, hi = _bootstrap_spearman(merged["quant_sensitivity"].to_numpy(), merged["fault_damage"].to_numpy(), rng)
     facts = {"n_cells": len(merged), "spearman": rho, "ci_low": lo, "ci_high": hi}
     lines = [f"{len(merged)} (layer, part) cells measured on the same storage scheme.", "",
              f"- Spearman ρ(quantization sensitivity, fault damage) = **{rho:.3f}** [95% CI {lo:.3f}, {hi:.3f}]"]
-    if magnitudes.exists():
+    if magnitudes is not None:
         mag = pd.DataFrame(read_json(magnitudes)["per_region"])
         merged = merged.merge(mag, on=["layer", "part"], how="left")
         if merged["mean_abs"].notna().all():
@@ -235,7 +263,8 @@ def q48_section(raw_root: Path, faults: pd.DataFrame, quant_name: str, rng: np.r
             lines.append(f"- Partial ρ controlling for mean |KV| = **{partial:.3f}** "
                          "(if this collapses, both signals were proxies for magnitude)")
     else:
-        lines.append("- _KV magnitude statistics not found; run `scripts/kv_stats.py` for the partial correlation_")
+        lines.append("- _no KV magnitude statistics for this campaign's model; run "
+                     "`scripts/kv_stats.py --config <this campaign>` for the partial correlation_")
     by_part = merged.groupby("part")[["quant_sensitivity", "fault_damage"]].mean().round(4)
     lines += ["", "Means by part:", "", "```", by_part.to_string(), "```", ""]
     return "\n".join(lines), facts
@@ -289,7 +318,8 @@ def main() -> int:
     sections = [
         (f"Damage profile ({args.campaign})", damage_section(campaign) if not campaign.empty else ("_no run_", {})),
         ("Fault map with Wilson intervals (exit criterion 2)", rate_map_section(campaign)),
-        ("Q48 — do the two sensitivities agree?", q48_section(raw, campaign, args.quant_map, rng)),
+        ("Q48 — do the two sensitivities agree?",
+         q48_section(raw, campaign, args.quant_map, rng, args.campaign)),
     ]
     # Q49 was measured at three corruption scales; the answer depends on which, so all of them are reported.
     for probe_name in args.probe:
