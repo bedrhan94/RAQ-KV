@@ -3440,3 +3440,62 @@ and the shell reported **exit code 0**. A truncated run that looks successful is
 `--set task.n_samples=2` smoke run that shared a config name with its real arm: the output is not wrong, it is
 *incomplete in a way nothing announces*. The missing half was caught by noticing the absent second block, not by
 any check.
+
+### PILOT, part two — both families desaturate, the ordering survives, and confidence comes apart from accuracy
+
+Llama-3.2-3B on the same rows, **10 of 12** completed: the run died with CUDA OOM on row 11, a 15574-token context,
+after 44 minutes. sdpa asked for **19.36 GiB** there, so the memory-efficient path is not memory-efficient enough at
+that length on a 16 GB card — the same wall eager hit at 7k, moved out to 15k.
+
+| | RAQ-Probe | LongBench 2wikimqa |
+|---|---|---|
+| **Qwen margin** (median) | 16.50 / 17.25 / 19.50 | **2.875** |
+| **Llama margin** | 2.50 / 3.19 / 3.12 | **0.938** (min 0.125, **50%** below 1 nat) |
+| **Qwen top-1 p** | **1.0000** at every rung | **0.9284** |
+| **Llama top-1 p** | 0.9140 / 0.9503 / 0.9477 | **0.5350** (min 0.1755, **90%** below 0.9) |
+| **Qwen accuracy** | 97.5–100% exact match | F1 mean **0.071**, 75% exactly 0 |
+| **Llama accuracy** | 77.5–85.0% exact match | F1 mean **0.311**, 60% exactly 0, 30% above 0.5 |
+
+**Both families desaturate, and the ordering survives.** Qwen is still the more confident of the two — margin 2.875
+against 0.938, top-1 probability 0.928 against 0.535 — so the saturation ordering D62 rests on is not an artefact of
+the probe. What changes is the *size* of the gap: the margin ratio goes from **0.152–0.185×** on the probe to
+**0.326×** here, so the two families converge without crossing.
+
+### The unexpected part, and it strengthens D62's mechanism rather than weakening it
+
+**On the probe Qwen was both more accurate and more confident, so confidence could be read as "Qwen finds this
+easier". On LongBench Qwen is LESS accurate and STILL more confident** — F1 0.071 against Llama's 0.311, while
+holding its answers at four times the margin. Accuracy and confidence come apart across the two families, and they
+come apart in the direction that rules out the competence reading.
+
+So the honest mechanism statement gets sharper: **Qwen's fault tolerance comes from calibration, not competence.**
+Its answers sit further from the decision boundary whether or not they are right, and a KV corruption has to travel
+that distance before the answer changes. That is why D62's hazard difference exists, and it is not a codec property
+in any regime measured.
+
+**A caution this implies for the field, and for this project's own metric.** "Did the answer change under fault" —
+the outcome every arm here uses — **rewards overconfidence**. A model that commits hard to a wrong answer scores as
+more reliable than one that holds a right answer tentatively. On the probe that distinction was invisible because
+the more confident model was also the more accurate one; here it separates, and Qwen wins the reliability metric on
+the task it is worse at. Any reliability comparison across models that does not report calibration alongside is
+measuring something other than what it claims.
+
+### Status and limits of this pilot, stated plainly
+
+* **A pilot, not a result.** Scratchpad script, no exp_id, no committed vehicle, sdpa rather than eager.
+* **Unpaired.** Qwen's numbers are over 12 rows, Llama's over the first 10; both runs were truncated by their own
+  failure mode (Qwen by a 25-minute shell timeout, Llama by OOM). The top-1 probability difference (0.928 against
+  0.535) is far too large for the mismatch to explain, but no interval is computed and none should be quoted.
+* **Neither accuracy figure is resolvable** at 10–12 samples. That Llama's F1 exceeds Qwen's is the direction, not a
+  demonstrated difference, and the dissociation argument rests on it — so it is the first thing a committed vehicle
+  should settle.
+* **Nothing here measures fault hazard.** Whether the hazard ordering follows the confidence ordering on a hard task
+  is still unmeasured, and it is the question that would close D59's line properly.
+
+### What a committed vehicle would have to do
+
+**Filter by length, and say so as a condition.** A 16 GB card cannot run 2wikimqa's longest rows on the 3B model at
+all, so a vehicle must select rows whose context fits — roughly under 8k tokens on this hardware — and that
+selection is a stated condition of the result, not a convenience. It also means the vehicle cannot be used for the
+attention-scorer path at any length (eager OOMs at 7k), so retention experiments with query-aware scoring are out of
+reach on it, and only logit-based and fault work is available.
