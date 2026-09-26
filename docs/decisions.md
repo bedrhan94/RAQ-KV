@@ -3584,3 +3584,59 @@ n attached — which is how the project memory entry now carries it.
 The confidence half is untouched and remains the solid part: Qwen top-1 probability 1.0000 on the probe against
 0.9284 here, Llama 0.914–0.950 against 0.5350, ordering preserved, and the function-word caveat from part three
 cutting conservatively against the desaturation reading rather than for it.
+
+## D64 — The agent arms fail by losing the tool, never by mis-transcribing it (2026-09-26)
+
+D50 recorded that `named_gold_function` "was built for this and is not yet analysed": whether the deployable arms
+fail by **picking the wrong function** or by **filling its arguments wrong**. The field has been in every M6 BFCL
+record since the vehicle was built. Analysed now, with no GPU — `scripts/report_m6_failure_modes.py`,
+`outputs/reports/m6_failure_modes.json`.
+
+Conditioned on the calls each arm's own golden answers correctly, so the vehicle's floor is excluded rather than
+charged to compression.
+
+| arm | n | correct | failures | **wrong function** | wrong arguments | arguments' share, Wilson 95% |
+|---|---|---|---|---|---|---|
+| `m6_bfcl_golden` (no compression) | 120 | 105 | 15 | 7 | **8** | **0.533** [0.301, 0.752] |
+| `m6_bfcl_joint` (query-aware, span) | 105 | **102** | 3 | 2 | 1 | 0.333 [0.061, 0.792] |
+| `m6_bfcl_prefixcache` (query-agnostic) | 105 | 20 | 85 | **85** | **0** | **0.000** [0.000, 0.043] |
+| `m6_bfcl_magnitude` (key magnitude) | 105 | **0** | 105 | **105** | **0** | **0.000** [0.000, 0.035] |
+| `m6_bfcl_recency` | 105 | 24 | 81 | **81** | **0** | **0.000** [0.000, 0.045] |
+
+**Across the three failing arms, 0 of 271 failures are argument errors.** The upper bounds are 3.5–4.5%, so this is
+a measured near-absence rather than a small count. The mode is effectively binary: when retention drops the gold
+schema the model names a *different* tool, and it never names the right tool and then botches its arguments.
+
+**The contrast with the golden arm is the sharp part.** With no compression at all, the model's own failures split
+roughly evenly — 8 of 15 with the right function named. So argument errors are a real failure mode of this vehicle;
+they are simply **not** what compression causes. Compression damage is entirely tool *selection*.
+
+### What this settles
+
+**The compression axis owns all of the agent-level damage, and quantization fidelity owns none of it here.** Every
+arm ran at the same 4-bit `group_token`/`per_token` quantization, and if that quantization were degrading surviving
+schemas enough to corrupt an argument, argument errors would appear among the failures. They do not appear at all.
+So on this vehicle the lever for agent reliability is *what gets kept*, not *how precisely it is stored* — which is
+the opposite of where the fault-side work (D25–D30, metadata protection) points, and they are consistent because
+they concern different perturbations: pruning removes a schema, a metadata flip rescales a group.
+
+**`m6_bfcl_magnitude` fails 105 of 105.** The `magnitude_only` policy does not merely underperform, it never
+selects the gold schema on any sample. That is the strongest statement yet of the key-magnitude result: D42 called
+it "at chance", D47 corrected that to an **anti-signal**, and here the anti-signal is total. A policy ranking tool
+schemas by key magnitude is worse than random at keeping the one the question needs.
+
+**H3's span finding gains a mechanism.** `m6_bfcl_joint` answers 102 of 105 — 3 failures against prefixcache's 85 —
+and the difference is entirely in whether the gold schema survives. Query-aware span retention works on this vehicle
+because it keeps the right *schema*, not because it preserves argument detail better.
+
+### What it does not settle
+
+**This is one model, one BFCL category, one catalogue setting.** The Llama BFCL arms do not carry the field split
+because the second-family M6 work used the probe, so the decomposition is Qwen3-1.7B only.
+
+**The golden arm's 53.3% argument share has a wide interval** ([0.301, 0.752] on 15 failures) and is not the claim;
+the claim is the arms' 0.000 with upper bounds under 5%.
+
+**Nothing here is a fault result.** These are unfaulted retention arms. Whether a *fault* can produce an argument
+error while leaving the function name intact is a different question and is unmeasured — and it is the interesting
+one for C4, because that would be exactly a case where a token-level metric moves and the tool call still parses.
