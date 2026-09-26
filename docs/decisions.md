@@ -2629,3 +2629,65 @@ attention is spread more evenly across groups, a randomly-placed corrupted scale
 would sit at the ceiling without any pruning — which is exactly the observation. That is measurable in one forward
 pass per sample (attention mass per quantization group, no fault injection, no new campaign) and has not been run.
 Recorded as the next question rather than as an answer.
+
+## D60 — Attention spread is ruled out as the reason Llama starts at the metadata hazard ceiling, and the numbers point the other way (2026-09-26)
+
+D59 left one question and named its live candidate: **how many quantization groups a model attends to enough that
+corrupting one would change the answer.** The prediction was explicit — *Llama's attention should be spread across
+more groups than Qwen's*, because spread attention means more randomly-placed corruptions land somewhere that
+matters, which would explain Llama's 2.63% per-metadata-flip hazard against Qwen's 1.17%.
+
+Measured with `scripts/measure_group_attention.py`: one prefill and one `query_attention` read per sample, folded
+into `group_token` groups of 128 — the size the fault arms used — over 40 samples per family spread across the
+probe's whole 512–4096 length range, so the group count (15.9 on average) matches the arms'.
+
+| model | groups | **effective groups** exp(H) | effective fraction | **top-1 share** | top-5 share | groups holding 90% |
+|---|---|---|---|---|---|---|
+| Qwen3-1.7B | 15.9 | **3.10** | 0.263 | **0.762** | 0.913 | **44.1%** |
+| Llama-3.2-3B | 15.9 | **2.46** | 0.211 | **0.826** | 0.930 | **33.8%** |
+
+**The prediction is refuted, and in the direction that makes it worse rather than merely null.** Llama's attention
+is *more* concentrated on every measure — fewer effective groups, a larger top-1 share, and 90% of the mass in a
+third of the groups against Qwen's nearly half. On the stated logic that should give Llama the *lower* hazard. Its
+hazard is 2.2× higher.
+
+**A methodological note that mattered.** The first run took the first 40 samples, which are all 512-token contexts,
+giving 5 groups per sample — at which size `top5_share` is 1.0 by arithmetic and every concentration metric is
+degenerate. The subset now spans the length distribution. A measurement whose metric is saturated by construction
+would have looked like a clean null.
+
+### Two candidates eliminated, and the arithmetic now points at a third
+
+* **Dynamic range** — ruled out in D59: Llama's values carry 500× smaller MSE at equal SQNR, and a corrupted fp16
+  scale multiplies by up to 65536 either way, so from a smaller base that is a smaller excursion.
+* **Attention spread** — ruled out here, with the sign reversed.
+
+What survives is the **opposite** of the spread story: concentration may raise the *conditional severity* of the
+flips that do matter. If only the top-attention group is consequential, a uniform flip hits it with probability
+1/15.9 = 6.3%, and the measured hazards then imply
+
+| | P(flip hits the top group) | measured hazard | implied **P(break | hit top group)** |
+|---|---|---|---|
+| Qwen | 6.3% | 1.17% | **18.6%** |
+| Llama | 6.3% | 2.63% | **41.8%** |
+
+which is what more concentration would produce: when 82.6% of the mass sits on one group, corrupting *that* group
+is more often fatal than corrupting the top group of a flatter distribution carrying 76.2%.
+
+**This is arithmetic on an assumption, not a measurement.** It assumes only the top group matters, which the
+top-5 shares (0.91 and 0.93) say is wrong in detail. It is recorded as the surviving hypothesis, not as the answer.
+
+### The experiment that would settle it
+
+Inject **one** metadata flip at a time into a *chosen* group and record the group's attention rank alongside the
+outcome. That gives P(break | rank) directly per family, and distinguishes "more groups matter" from "the groups
+that matter matter more" without any modelling. The fault machinery already addresses individual regions
+(`faults/storage.py` enumerates them); what it does not yet do is let an arm target a group by rank, which is the
+one piece of work this needs.
+
+### Scope
+
+One probe, one group size, 40 samples per family, query-aware attention only. A query-agnostic read would measure
+a different distribution and is the right control if this is pursued — the fault arms are query-agnostic in the
+sense that the flips are placed without reference to the question, so what should predict the hazard is arguably
+attention as the *model* ends up using it, which is what is measured here.
