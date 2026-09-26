@@ -2930,3 +2930,51 @@ were chosen precisely because they do not depend on resolving it.
 measurement (Qwen rank 1 at relative position 0.651 here against 0.473 there) because this is the 31-sample subset
 all six arms answer cleanly, not the 40 the attention measurement used. The cells are the same construction; the
 subsets are not.
+
+### Three closing checks, one of which corrects a number reported above (2026-09-26)
+
+Run in review, all on data already on disk, no GPU.
+
+**1. The 31-sample intersection is not biased in context length, so the share range above is real.** If the samples
+dropped from the intersection were disproportionately long, the 69× share range would be arithmetically true while
+the *position* separation was compressed — a short cache has few groups and "tail" sits near "top". Measured: the
+six-way shared set has mean `cache_len` **2204.1** against **2210.4** over the full 40, the 9 dropped samples mean
+**2232.1**, Mann–Whitney **p = 0.897**, and mean groups per sample **18.00** against 18.05. The intersection is
+representative.
+
+**2. The inverse ordering does not meet a rule in aggregate either, and now it has numbers instead of an adjective.**
+The pre-registration asked four per-cell questions and none asked whether the *ordering* is itself significant.
+Added post-hoc and labelled so in `report_d61.py`:
+
+* Spearman(attention share, break rate) over the six cells: **ρ = −0.754, p = 0.0835**
+* Pooled top cells against non-top, 62 pairs with the families stacked: **3.226% → 4.234%**, difference
+  **+1.008%** [−0.504%, +2.823%], **p = 0.349**
+* Pooled counts: top **16/496 = 3.226%** [1.995, 5.175] against non-top **42/992 = 4.234%** [3.147, 5.673]
+
+So the inversion stays a **direction**: suggestive at ρ = −0.75 on six points, not established at any conventional
+threshold, and the intervals overlap. Recorded this way rather than as "unresolved", because a bound with a number
+is worth more than an adjective.
+
+**3. CORRECTION — primary 3 was computed on the wrong sample set, and on Qwen the magnitude differs 3.8×.**
+`shared_samples` was called with all six arms, so a *within-family* contrast required the **other** family's arms to
+answer a sample cleanly for it to count. That is stricter than any other contrast in this project and buys nothing.
+On each family's own three-arm intersection:
+
+| primary 3 | canonical (own family) | as first reported (six-way) |
+|---|---|---|
+| **Qwen**, n = 39 | tail 3.846% → rank 1 3.526%, **−0.321%** [−1.923%, +1.282%], p = **0.705** | −1.210% [−2.823%, +0.403%], p = 0.180 |
+| **Llama**, n = 32 | tail 5.469% → rank 1 3.906%, **−1.563%** [−5.469%, +1.953%], p = **0.458** | −2.016% [−5.645%, +1.613%], p = 0.327 |
+
+The verdict is unchanged — both fail D31 either way — but **the six-way set made the Qwen contrast look 3.8× larger
+than that family's own data supports**, and that is the direction that would have overstated. The canonical numbers
+are the own-family ones; both are printed by `report_d61.py` and stored in the JSON so the difference is visible
+rather than buried. Primaries 1 and 2 are cross-family by construction and correctly use the six-way set.
+
+The own-family cell rates, for completeness: Qwen top **2.564%** [1.305, 4.977] / rank 1 3.526% / tail **3.846%**
+[2.214, 6.601] at 312 trials each; Llama top **3.906%** [2.135, 7.040] / rank 1 3.906% / tail **5.469%**
+[3.285, 8.969] at 256 trials each. **The monotone inversion holds on these sets too** (weakly on Llama, where top
+and rank 1 are equal), so nothing in the result above depends on the sample-set error.
+
+**What none of the three changes.** D60's 18.6% / 41.8% prediction is excluded on either sample set — the top
+cell's interval tops out at 5.7% (Qwen) and 7.0% (Llama). The actionable negative result stands: an
+attention-weighted metadata protection policy would be worse than uniform.

@@ -35,6 +35,7 @@ import json
 import sys
 
 import numpy as np
+from scipy import stats
 
 from raq_kv.analysis.arms import _controls_clean, _trials, load_arm, rates, shared_samples
 from raq_kv.analysis.contrasts import contrast
@@ -160,12 +161,47 @@ def main() -> int:
         "PRIMARY 2 -- P(break | least-attended group), across families. Same cell, same rule, both families.",
         "qwen_tail", "llama_tail",
         "branch B predicts Llama above Qwen HERE rather than at primary 1")
+    # Primary 3 is WITHIN a family, so it belongs on that family's own three-arm intersection. Restricting it to
+    # the six-way set requires the OTHER family's arms to answer a sample cleanly for it to count -- a stricter
+    # condition than any other contrast in this project imposes, buying nothing. Both are printed because D61's
+    # record first reported the six-way numbers and on Qwen the magnitude differs 3.8x: the six-way set made the
+    # contrast look stronger than that family's own data supports.
     for fam in FAMILIES:
-        out["contrasts"][f"primary3_{fam}_rank1_vs_tail"] = show(
-            f"PRIMARY 3 ({fam}) -- P(break | rank 1) against P(break | tail), within the family.",
+        own = shared_samples({k: v for k, v in arms.items() if k.startswith(fam)})
+        c_own = contrast(f"{fam}_tail", f"{fam}_rank1",
+                         rates(arms[f"{fam}_tail"], own, "answer_changed"),
+                         rates(arms[f"{fam}_rank1"], own, "answer_changed"), args.seed)
+        print(f"\nPRIMARY 3 ({fam}) -- P(break | rank 1) against P(break | tail), within the family."
+              f"\n  CANONICAL, on this family's own {len(own)}-sample intersection: "
+              f"tail {c_own['x_mean']:.4%} -> rank 1 {c_own['y_mean']:.4%}, difference "
+              f"{c_own['difference']:+.4%} [{c_own['ci'][0]:+.4%}, {c_own['ci'][1]:+.4%}], p = {c_own['p']:.3g}, "
+              f"{c_own['discordant']}/{c_own['n_pairs']} samples moved"
+              f"\n  {'MEETS D31' if c_own['meets_rule'] else 'does NOT meet D31'}")
+        out["contrasts"][f"primary3_{fam}_rank1_vs_tail"] = c_own
+        out["contrasts"][f"primary3_{fam}_rank1_vs_tail_sixway"] = show(
+            f"  the same contrast on the six-way {len(samples)}-sample set, for comparability:",
             f"{fam}_tail", f"{fam}_rank1",
             "share-separated (no overlap) but NOT position-balanced: rank 1 sits earlier than the tail in 60% of "
             "Qwen and 82% of Llama samples, so a positional reading is not excluded here")
+
+    # Added in review AFTER the four pre-registered contrasts and labelled as such. Each per-cell contrast fails,
+    # but the six cells order inversely to attention in both families, and "does that ordering itself meet a rule"
+    # is a question the pre-registration did not ask. Reported so the direction carries a number rather than an
+    # adjective -- not as a replacement for anything above.
+    print("\n" + "=" * 100)
+    print("\nPOST-HOC (not pre-registered) -- does the inverse ordering itself meet a rule?\n")
+    rho, p_rho = stats.spearmanr(np.array([tgt[n]["share"] for n in arms]),
+                                 np.array([per_sample[n].mean() for n in arms]))
+    print(f"  Spearman(attention share, break rate) over the 6 cells: rho = {rho:+.3f}, p = {p_rho:.4f}")
+    c_pool = contrast("top_cells", "non_top_cells",
+                      np.concatenate([per_sample[f"{f}_top"] for f in FAMILIES]),
+                      np.concatenate([(per_sample[f"{f}_rank1"] + per_sample[f"{f}_tail"]) / 2
+                                      for f in FAMILIES]), args.seed)
+    print(f"  pooled top against non-top, {c_pool['n_pairs']} pairs with the families stacked: "
+          f"{c_pool['x_mean']:.4%} -> {c_pool['y_mean']:.4%}, difference {c_pool['difference']:+.4%} "
+          f"[{c_pool['ci'][0]:+.4%}, {c_pool['ci'][1]:+.4%}], p = {c_pool['p']:.4f}\n  "
+          f"{'MEETS D31' if c_pool['meets_rule'] else 'does NOT meet D31'} -- the inversion stays a direction")
+    out["post_hoc"] = {"spearman_rho": float(rho), "spearman_p": float(p_rho), "pooled_top_vs_non_top": c_pool}
 
     # Descriptive only, and labelled so. Position is confounded with share across cells, which is the whole reason
     # primaries 1 and 2 are cross-family; this curve is for shape, not for a verdict.
