@@ -2350,3 +2350,58 @@ record is the like-for-like one.
 WikiText campaign, so it is not free and has not been run on Llama. Given D54, it is now more interesting than it
 was: Q49 is about *which tokens* matter under faults, which is the same axis the concentration effect turned out to
 be family-specific on.
+
+## D56 — H6 replicates and the margin grows; my pre-run prediction was wrong, and why it was wrong is the finding (2026-09-26)
+
+KIVI at its own published configuration — keys `group_token` 32, values `group_channel` 32, residual window 128, the
+window paid for in the budget — against the joint point, on Llama-3.2-3B. 100 paired samples.
+
+| arm | bits / original token | **Llama** task failure | Qwen (D39) |
+|---|---|---|---|
+| **joint point** (4-bit @ 25%, query-aware spans) | **1.0539** | **0.0000** | 0.0085 |
+| KIVI 2-bit, residual 128 | 4.3822 | **0.1000** | 0.0513 |
+| KIVI 4-bit, residual 128 | 6.1707 | 0.0100 | 0.0000 |
+
+| contrast | difference | p | discordant |
+|---|---|---|---|
+| joint vs KIVI 2-bit | **−0.1000 [−0.1600, −0.0500]** | **0.0016** | 10 |
+| joint vs KIVI 4-bit | −0.0100 [−0.0300, +0.0000] | 0.317 | 1 |
+
+**H6 replicates and the margin is larger.** The joint point is **4.2× cheaper** than KIVI at its published
+configuration and beats it decisively (10 points against Qwen's 5.13), while KIVI 4-bit remains essentially lossless
+on both families — a bound, not a win, at 5.9× the cost. The budget arithmetic transferred exactly as predicted,
+since the geometries are identical: 4.3822 against Qwen's 4.331 and 6.1707 against 6.13, differences of 1.2% and
+0.7% from context-length variation alone.
+
+### The prediction I wrote before the run was wrong
+
+The config header said: *"D51 found Llama tolerates 2-bit about 3.5× better than Qwen, and KIVI 2-bit IS a 2-bit
+arm — so the most likely outcome is that KIVI looks BETTER on Llama and the margin over the joint point shrinks."*
+
+It looks **worse**: 0.1000 against Qwen's 0.0513, roughly twice the failure rate. The margin grew instead of
+shrinking.
+
+### Why, and this is the part worth keeping
+
+The two "2-bit" arms are not the same configuration:
+
+| | keys | values | residual | retention |
+|---|---|---|---|---|
+| D51's 2-bit arm | 2b `group_token` 32 | 2b **`per_token`** | 0 | 40.5% |
+| KIVI's 2-bit | 2b `group_token` 32 | 2b **`group_channel` 32** | 128 | 100% |
+
+**D51's finding is axis-specific and I generalised it past its evidence.** "Llama tolerates 2-bit better" was
+measured with values on `per_token`; KIVI quantizes values along `group_channel`, and there Llama does worse than
+Qwen. Three things differ between the arms at once — values axis, residual window, retention ratio — so this pair
+cannot attribute the reversal to any one of them. What *is* established is the negative: **there is no general "2-bit
+is easier on Llama" property**, and D51's number belongs to its own configuration.
+
+That is a correction to how I read my own result one record earlier, caught by a prediction failing rather than by a
+control. It also sharpens what D51 says: a family's low-precision tolerance is a property of the *quantization
+scheme*, not of the family alone — which is a more useful statement than the one I was about to carry forward.
+
+### Scope
+
+One probe, 512–4096 tokens. KIVI's own claims are made at longer context where its fixed residual window is
+cheaper per value, and D39's finding that below ~1500 tokens the window is dominated by plain 4-bit with no window
+still applies to both families — it is arithmetic about R/T, not about either model.
