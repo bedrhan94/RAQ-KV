@@ -1,0 +1,38 @@
+# SECOND-FAMILY REPLICATION of D49 -- precision x faults, the last single-model claim in the project.
+#
+# On Qwen3-1.7B at matched exposure (558 flips/trial, the rate a 4-bit g128 cache takes at BER 1e-6), a 2-bit cache
+# fails 0.6655 against 4-bit's 0.3277: +0.3378 [+0.2770, +0.3986], p = 2.1e-07. Composition is a real confound
+# there -- fp16 scales cost the same at any bit width, so metadata's share of storage RISES as precision falls, and
+# metadata is >=1543x more damaging per bit. No group size matches 2-bit's composition to 4-bit's, so the design
+# BRACKETS it: two extra 4-bit arms vary composition at fixed precision, and on Qwen the 2-bit arm (11.46% metadata)
+# failed MORE than 4-bit g32 (13.50%), an ordering violation ruling out a purely compositional explanation.
+#
+# WRITTEN BEFORE THE RUN, and the priors point in opposite directions this time:
+#  * D51 found Llama tolerates 2-bit ~3.5x better -- but D56 showed that finding is AXIS-SPECIFIC (it was measured
+#    with values on per_token, and KIVI's group_channel 2-bit did worse on Llama). These arms use per_token values,
+#    the same axis D51 measured, so its prior does apply here.
+#  * D55 found metadata dominance LARGER on Llama (4.446x against 2.845x). Since the confound is metadata share
+#    rising as precision falls, a larger metadata penalty should make the COMPOSITIONAL half of the effect bigger
+#    here, not smaller.
+# So a weaker precision effect and a stronger compositional one would be consistent with both. If the bracketing
+# ordering violation disappears -- i.e. 4-bit g32 fails at least as much as 2-bit g128 -- then on Llama the whole
+# effect is compositional and D49's precision attribution is Qwen-only.
+#
+# Exposure is matched per ORIGINAL token, so it is independent of precision and of the probe's context range.
+#
+# COMPOSITION CONTROL at fixed precision: same 4 bits, a finer group, so more metadata in the line of
+# fire. Brackets the 2-bit arm's share from below (g64) and above (g32).
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/raq_probe_v0.yaml
+name: m9l_pf_4bit_g64
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 64}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 60
+  n_flips_per_token: 0.24395
+  n_trials: 8
+  n_control: 1
+seed: 0
