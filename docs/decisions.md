@@ -2846,3 +2846,87 @@ second reason they are the primaries.
 **Cells changed accordingly:** the middle cell is now **rank 1** (`d61_{qwen,llama}_rank1.yaml`), replacing the
 rank-2 cell, because rank 1 is the most-attended non-first group and is the strongest share contrast available
 against the tail. Six arms, unchanged in every other respect.
+
+### RESULT, 2026-09-26 — the third branch. Attention rank does not predict fault consequence, and D60's surviving hypothesis is refuted with power
+
+Six arms, 06:52–07:17, 31 samples clean in all six, 248 trials per cell. `scripts/report_d61.py`,
+`outputs/reports/d61_group_conditional.json`.
+
+| cell | attention share | is group 0 | rel. position (sd) | k / n | break rate | Wilson 95% |
+|---|---|---|---|---|---|---|
+| qwen top | 0.759 | 1.000 | 0.000 (0.000) | 7/248 | **2.823%** | [1.374%, 5.711%] |
+| qwen rank 1 | 0.060 | 0.000 | 0.651 (0.276) | 8/248 | 3.226% | [1.644%, 6.235%] |
+| qwen tail | 0.011 | 0.000 | 0.365 (0.186) | 11/248 | **4.436%** | [2.495%, 7.767%] |
+| llama top | 0.819 | 1.000 | 0.000 (0.000) | 9/248 | **3.629%** | [1.921%, 6.752%] |
+| llama rank 1 | 0.047 | 0.000 | 0.663 (0.281) | 9/248 | 3.629% | [1.921%, 6.752%] |
+| llama tail | 0.007 | 0.000 | 0.620 (0.290) | 14/248 | **5.645%** | [3.392%, 9.251%] |
+
+The tail cells' realised rank is **17.0** against the 999 requested, so the wrap behaved and the records say so.
+
+**Every one of the four pre-registered contrasts fails D31.**
+
+| contrast | difference | 95% CI | p | samples moved | verdict |
+|---|---|---|---|---|---|
+| **1** — top, Llama against Qwen | +0.807% | [−2.016%, +4.032%] | 0.557 | 8/31 | fails |
+| **2** — tail, Llama against Qwen | +1.210% | [−0.807%, +3.629%] | 0.317 | 6/31 | fails |
+| **3** — Qwen, rank 1 against tail | −1.210% | [−2.823%, +0.403%] | 0.18 | 5/31 | fails |
+| **3** — Llama, rank 1 against tail | −2.016% | [−5.645%, +1.613%] | 0.327 | 9/31 | fails |
+
+This is the branch the pre-registration listed third: *"the rank gradient is flat in both families … the hazard is
+not attention-mediated at all and would send the question back to the codec."* It is the outcome, and it was named
+before the run.
+
+**What is refuted, and it is refuted with power rather than by a null.** D60's surviving hypothesis put
+P(break | top group) at about **18.6%** (Qwen) and **41.8%** (Llama) on the assumption that only the top group
+matters. Measured: **2.823%** [1.374%, 5.711%] and **3.629%** [1.921%, 6.752%]. Both intervals **exclude** the
+predicted values by a wide margin — factors of 6.6× and 11.5×. So this is not "we could not tell": the arithmetic
+D60 recorded as its surviving hypothesis is wrong, and the assumption it rested on is the thing that fails.
+
+**And the point estimates order the wrong way, consistently.** In *both* families the rate rises as the corrupted
+group's attention falls — top < rank 1 < tail, over a **69×** range in attention share (0.759 → 0.011 on Qwen,
+0.819 → 0.007 on Llama). Six cells, two independent families, the same monotone inversion. No single contrast
+resolves it, so **this is a direction, not a result** (D31), and it is recorded as such. But it is the opposite of
+every attention-mediated prediction anyone in this record has made, including mine.
+
+**The mechanism this points at, stated as a hypothesis and not measured here.** Group 0 is the attention sink. A
+sink absorbs attention mass without its *content* being read for information, so corrupting the sink's key scales
+moves a large share of the attention weights and changes little about what the model retrieves. If that is right,
+attention mass is simply the wrong covariate for fault consequence — the right one is something like how much the
+answer depends on the values those weights multiply, which is not what any scorer in this project measures.
+
+### The actionable consequence, which is the useful part
+
+**A protection policy that spent its bits on the high-attention groups' metadata would be worse than uniform.** On
+this probe the highest-attention group is the **least** damaging cell to corrupt in both families. That policy is
+an obviously attractive refinement of the metadata guard — protect where attention is, save bits elsewhere — and it
+is now closed off by measurement rather than by argument. The existing guard (H2d), which protects **all**
+quantization metadata and costs +0.075% of storage, needs no change; what changes is that the cheaper
+attention-weighted variant is not available.
+
+This also closes the D40 allocator question from a new side. §6's multiplicative Joint Reliability Score is already
+dead on GATE-1's grounds (D18: the two sensitivities are not one signal). D61 removes a *different* candidate
+refinement — an importance-weighted protection term — on its own evidence.
+
+### What this does NOT settle
+
+**The original question is still open, and D61 narrows it rather than answering it.** Why Llama sits at the
+metadata hazard ceiling (D59: 2.63% unpruned against Qwen's 1.17%) is not explained here. The cross-family
+differences at matched cells run in the same direction — +0.81pp at the top, +1.21pp at the tail, ratios 1.29× and
+1.27× — but neither is resolved at 31 samples, and both are far smaller than the 2.2× the uniform plan showed.
+Three mechanisms are now eliminated (dynamic range, attention spread, attention-rank-conditioned severity) and
+none of the three was the answer.
+
+**Power.** 31 paired samples resolve differences of roughly 2–4 percentage points, so a residual gradient smaller
+than that is invisible and is **not** shown to be absent — the same rule that makes a zero cell a bound. What the
+design does have power for is the effect D60 predicted, which was an order of magnitude larger than its own
+detection limit, and that one is excluded.
+
+**Scope.** One probe, one group size (128), 4 bits, keys only, one query-aware scorer, single flips, no protection,
+no pruning, eager attention throughout (so not interchangeable with D59's absolute rates). The position confound
+on the rank-0 cell is unresolved *within* a family and always will be on this probe; the cross-family primaries
+were chosen precisely because they do not depend on resolving it.
+
+**One number worth flagging for anyone re-deriving this.** The position statistics here differ from D60's 40-sample
+measurement (Qwen rank 1 at relative position 0.651 here against 0.473 there) because this is the 31-sample subset
+all six arms answer cleanly, not the 40 the attention measurement used. The cells are the same construction; the
+subsets are not.
