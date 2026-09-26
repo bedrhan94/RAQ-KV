@@ -2547,3 +2547,85 @@ regime, a floor set for an unrelated reason.
 One rate, full retention only, three precision/group configurations per family, 38 paired samples. The 2-bit arm's
 0.8092 is close enough to the ceiling that this design's power to resolve *differences among the bad arms* is
 limited, which is the same limitation on the opposite side from the floor-limits of D48, D51 and D53.
+
+## D59 — Why the concentration effect does not replicate: Llama starts where Qwen ends, and D54's proposed mechanism looked at the wrong channel (2026-09-26)
+
+D54 recorded that the concentration effect is absent on Llama and offered a mechanism: Llama's fault map is flatter
+(CV 14% against 27%, D51), so there is less heterogeneity for retention to concentrate. **That explanation was
+about the wrong channel**, and the arms already on disk say so.
+
+### The failures are almost entirely metadata-driven, in every arm
+
+Dose-response between the number of metadata flips in a trial and whether the answer broke:
+
+| family | arm | metadata flips / trial | failure | corr(meta flips, failure) |
+|---|---|---|---|---|
+| Qwen | unpruned | 9.55 | 0.1059 | **+0.279 (p = 6.8e-10)** |
+| Qwen | pruned | 9.87 | 0.2232 | **+0.199 (p = 2.2e-05)** |
+| Llama | unpruned | 9.68 | 0.2270 | **+0.347 (p = 1.6e-12)** |
+| Llama | pruned | 9.38 | 0.2150 | **+0.286 (p = 6.1e-09)** |
+
+So D54's flatness argument was about the variance of **code**-flip damage, while the failures come through
+**metadata**. D51's CV comparison is still a true statement about the fault map; it is just not the channel these
+outcomes travel on.
+
+### The per-metadata-flip hazard is where the answer is
+
+Converting each arm's failure rate to a per-metadata-flip hazard (assuming flips act independently within a trial,
+which the dose-response supports but does not prove — this is a derived quantity, not a measurement):
+
+| family | unpruned | pruned | ratio |
+|---|---|---|---|
+| **Qwen** | **1.17%** | **2.53%** | **2.17×** |
+| **Llama** | **2.63%** | **2.55%** | **0.97×** |
+
+**Llama's unpruned hazard already equals Qwen's pruned hazard.** Pruning on Qwen raises 1.17% → 2.53%; Llama sits at
+2.6% before any pruning. There is no headroom for retention to concentrate, because the thing concentration would
+produce is already the starting condition.
+
+**And both families converge to the same ~2.5% per metadata flip once pruned.** That is the shape of a ceiling
+rather than of two different effects: a corrupted fp16 scale that lands somewhere consequential costs an answer
+about 2.5% of the time in either model, and pruning moves Qwen toward that bound while Llama begins at it.
+
+### This unifies findings that looked unrelated
+
+* **D55** — metadata dominance larger on Llama (4.45× against 2.85×). Same fact from the other side: Llama's
+  metadata flips are individually more damaging.
+* **D51** — Llama more fragile unprotected at 1e-6 (0.5250 against 0.3211). Same cause, not a separate family quirk.
+* **D57** — Q49's role effect replicates on both. Consistent, and no longer puzzling: Q49 destroys a *token's row*
+  deliberately, which is a different channel from a uniformly-placed metadata flip. The two were never measuring
+  the same thing, which is exactly what D57 concluded from the outside; this is the inside view of why.
+
+### What this changes, and what it does not
+
+**D54's verdict stands: the concentration effect is a Qwen result.** What changes is the account of why, and it is a
+better one because it is measured: not "Llama has less heterogeneity to concentrate" but **"Llama's metadata is
+already as damaging as concentration can make it."**
+
+That also makes the Qwen effect less exotic than D43–D45 framed it. On Qwen, pruning does not create fragility; it
+**raises the per-flip hazard toward a bound both families share.** So "protection is not separable from retention"
+is best read as: *how far a model sits below the metadata hazard ceiling determines how much pruning can hurt it.*
+A model already at the ceiling has nothing to lose, and one below it does.
+
+### The open question this leaves, stated rather than answered
+
+**Why does Llama start at the ceiling?** Nothing here explains that, and I checked the cheap candidate before
+saying so. The stored quantization statistics, at the same 4-bit spec on the same probe:
+
+| | key SQNR | value SQNR | key MSE | value MSE |
+|---|---|---|---|---|
+| Qwen | 27.05 dB | 18.61 dB | 0.0302 | **0.8336** |
+| Llama | **24.84 dB** | 18.62 dB | 0.0112 | **0.0016** |
+
+Two real differences, neither of which answers the question. Llama's keys quantize about **2.2 dB worse** at the
+same spec, and its values are **two orders of magnitude smaller in absolute magnitude** (equal SQNR, 500× smaller
+MSE). The magnitude difference cuts the wrong way for the obvious story: a corrupted fp16 scale multiplies its group
+by up to 65536 either way, and from a *smaller* base that is a smaller absolute excursion, which would predict Llama
+being **less** fragile per metadata flip, not more.
+
+So the dynamic-range candidate is **ruled out as stated**, and what remains is the one thing these statistics cannot
+see: **how many groups a model actually attends to enough that corrupting one changes the answer.** If Llama's
+attention is spread more evenly across groups, a randomly-placed corrupted scale is more often consequential, and it
+would sit at the ceiling without any pruning — which is exactly the observation. That is measurable in one forward
+pass per sample (attention mass per quantization group, no fault injection, no new campaign) and has not been run.
+Recorded as the next question rather than as an answer.
