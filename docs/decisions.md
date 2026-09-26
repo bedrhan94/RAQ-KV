@@ -3161,3 +3161,55 @@ policy that would close the gap, because the gap is not made by the codec.
   flags were correct and unaffected — primary 2 already read the same result off them — but a record carrying a
   NaN in a field the report reads is not something to leave live.
 * One probe, one group size, 4 bits, single flips, first answer token, 496 flips per family.
+
+### Three closing controls, and the third is stronger than the result it checks (2026-09-26)
+
+All on data already on disk.
+
+**1. Seed stability.** Re-run at `--seed 1` and `--seed 7`: the AUCs are identical to three decimals (0.999 and
+0.885), primary 2 is identical to four (−13.8044), and the log10 contrast is **+4.503 dex** in all three runs. Only
+the bootstrap CI bounds move, in the third decimal (Llama's AUC lower bound 0.774 / 0.771 / 0.768). Nothing here
+rests on a draw.
+
+**2. The collapse originates in the cache, not in the model's arithmetic.** The trials with a non-finite KL are
+**exactly** the trials with a non-finite `max_relative_change` — 6 of 6 on Qwen, 7 of 7 on Llama, the same trials in
+both columns. `max_relative_change` is measured on the dequantized stored values before the model runs, so the
+corrupted metadata word made the *cache* non-finite and the forward pass merely carried it. That is a cleaner
+statement than "the softmax overflowed": nothing in the model overflowed, it was handed an infinity.
+
+**3. THE EXPOSURE IS MATCHED AND THE RESPONSE IS NOT, which is the strongest form of the result.**
+
+The fault model delivers almost exactly the same value-space perturbation to both families, as identical KV geometry
+predicts: median `max_relative_change` **0.09661** (Qwen) against **0.09149** (Llama), p90 = **3** for both, maximum
+**65536** for both — which is 2^16 exactly, the largest factor an fp16 exponent flip can produce, so the fault
+model's arithmetic is confirmed at its own ceiling.
+
+Binned on that exposure, with comparable counts in every bin:
+
+| `max_relative_change` | Qwen n / median KL | Llama n / median KL |
+|---|---|---|
+| [0.001, 0.1) | 221 / **2.56e-11** | 214 / **1.57e-05** |
+| [0.1, 1) | 141 / **9.44e-11** | 152 / **1.07e-05** |
+| [1, 1000) | 85 / **2.88e-11** | 69 / **3.84e-05** |
+
+**Qwen's KL does not respond to its own exposure.** Across a **million-fold** range of stored-value perturbation its
+median KL stays at 2.6e-11, 9.4e-11, 2.9e-11 — flat, within a factor of four, with no trend. Llama's rises with
+exposure and sits five to six orders of magnitude higher in every bin.
+
+This is what settles the interpretation. Because the exposure is matched by construction, the difference cannot be
+attributed to what quantization did to the cache — that quantity is held equal and measured. What differs is
+entirely on the output side, and a response that is **flat against a million-fold change in its input** is the
+signature of a saturated distribution, not of a robust one. It is the same conclusion as the entropy and top-1
+measurements reached independently, and it is the version a reviewer should be shown, because it needs no appeal to
+float64 saturation limits: the flatness is visible in the KL itself.
+
+**So branch A is not merely "not established" — the control that would have supported it argues against it.** At
+matched exposure the codec has been equalised and the families still differ, which locates the difference outside
+the codec. Per-flip severity in the sense branch A meant it — *the same corruption doing more damage because of how
+it is stored* — has no room left to be true here.
+
+**A limit of control 3 worth stating.** The bins are wide (three orders of magnitude in the first two) and matched
+on `max_relative_change`, which is the largest single value change in the plan, not the whole perturbation's shape.
+Two flips with the same maximum can differ in how many values they moved. A tighter version would match on the
+number of affected values as well; the counts per bin (221/214, 141/152, 85/69) show the *distributions* align, not
+that each pair of flips is equivalent.
