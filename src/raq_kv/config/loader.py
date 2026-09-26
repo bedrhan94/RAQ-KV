@@ -105,5 +105,22 @@ def expand_sweep(data: dict[str, Any]) -> list[dict[str, Any]]:
 def load_experiment_configs(
     path: Path, overrides: list[str] | None = None, root: Path | None = None
 ) -> list[ExperimentConfig]:
+    """Includes, then overrides, then sweep expansion -- and an override the sweep would erase is refused.
+
+    The order is what makes the refusal necessary. `expand_sweep` writes each swept key with `set_dotted`, so an
+    override touching a path **under** a swept key is applied and then silently overwritten. Concretely,
+    ``--set task.n_samples=2`` on a config whose sweep lists whole ``task`` dicts does nothing at all, with no
+    warning: it looks like a 2-sample smoke run and is the full campaign. That cost 15 minutes of GPU on D67's
+    calibration, and on a longer config it would have cost a great deal more -- the failure is invisible in the
+    output, because the run that happens is a perfectly valid one that nobody asked for.
+    """
     raw = apply_overrides(load_with_includes(path, root), overrides or [])
+    swept = set(raw.get("sweep") or {})
+    for item in overrides or []:
+        head = item.split("=", 1)[0].split(".")[0]
+        if head in swept:
+            raise ValueError(
+                f"override {item!r} targets {head!r}, which this config sweeps: sweep expansion rewrites that key "
+                f"afterwards, so the override would be silently discarded. Edit the sweep entries, or use a config "
+                f"without a sweep on {head!r}.")
     return [ExperimentConfig.model_validate(variant) for variant in expand_sweep(raw)]

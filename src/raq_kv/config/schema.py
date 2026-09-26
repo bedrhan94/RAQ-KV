@@ -287,6 +287,14 @@ class ProtectionArmTask(StrictModel):
     record_perturbation: bool | None = Field(
         default=None, description="Per trial, record the first-token KL, margin erosion and argmax flip against "
                                   "the arm's own fault-free distribution (D62)")
+    # D67: H2b's live form. Its single-bit resolution was "placement does not matter for task outcomes", reached
+    # from 0 of 1416 trials failing in BOTH arms -- a floor-to-floor comparison, which D30/D44 makes a bound rather
+    # than an equality. The claim row has said since D31 that "the live version of the question belongs to the burst
+    # regime", because a burst is what a corrupted memory word actually looks like and is the unit that produced
+    # task failures where single bits produced none (D19 -> the m2 burst arms). None keeps every existing arm's id.
+    burst_bits: int | None = Field(
+        default=None, ge=2, description="Bits flipped together inside one (layer, part, token, head) word; the "
+                                        "arm's `n_flips` is then delivered as `n_flips / burst_bits` bursts")
     n_trials: int = Field(default=8, ge=1, description="Independent storage-wide fault draws per sample")
     n_control: int = Field(default=1, ge=0, description="No-fault scorings; must be exactly zero damage")
 
@@ -315,6 +323,17 @@ class ProtectionArmTask(StrictModel):
         elif any(x is not None for x in targeting):
             raise ValueError("`target_group_rank` and `rank_scorer` only mean something with "
                              "`fault_target: group_rank`; set it or drop them")
+        if self.burst_bits is not None:
+            if self.n_flips is None:
+                raise ValueError("a burst arm states its exposure as `n_flips` (total bits flipped), which is then "
+                                 "delivered in bursts; a rate would have to be converted per sample and the two "
+                                 "arms of a placement comparison would stop being matched on bits")
+            if self.n_flips % self.burst_bits:
+                raise ValueError(f"n_flips {self.n_flips} is not a multiple of burst_bits {self.burst_bits}, so the "
+                                 f"arm's stated exposure and the bits actually delivered would differ")
+            if self.fault_target is not None:
+                raise ValueError("`burst_bits` draws code bursts and `fault_target` narrows to metadata or to one "
+                                 "token group; combining them is not implemented and would silently pick one")
         if self.fault_target is not None:
             if self.n_flips is None:
                 # A *rate* over the arm's whole storage cannot describe a draw confined to one group's scales:

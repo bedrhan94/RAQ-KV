@@ -191,3 +191,70 @@ def test_the_existing_protection_arms_keep_their_identities():
     for field in ("fault_target", "target_group_rank", "rank_scorer", "ber_basis", "n_flips",
                   "record_perturbation"):
         assert field not in dumped, f"{field} would enter the identity hash of every arm that never sets it"
+
+
+def test_a_burst_arm_states_its_exposure_in_bits_and_delivers_them_grouped():
+    """H2b's live form (D67). The point of a burst arm is that it is matched on BITS to a single-bit arm.
+
+    So the exposure stays `n_flips` -- the total delivered -- and `burst_bits` only says how they are grouped. A
+    rate is refused because it would have to be converted per sample, and the two arms of a placement comparison
+    would stop being matched on the quantity the comparison holds fixed.
+    """
+    import pytest
+
+    from raq_kv.config.schema import ProtectionArmTask
+
+    ok = ProtectionArmTask(n_flips=64, burst_bits=16)
+    assert ok.n_flips // ok.burst_bits == 4, "64 bits arrive as 4 words of 16"
+
+    with pytest.raises(Exception, match="stops? being matched|states its exposure as"):
+        ProtectionArmTask(ber=1e-6, burst_bits=16)
+    # A count that is not a multiple would deliver fewer bits than the arm claims.
+    with pytest.raises(Exception, match="not a multiple"):
+        ProtectionArmTask(n_flips=30, burst_bits=16)
+    # Bursts hit codes; fault_target narrows to metadata or to one token group. Combining them would silently
+    # pick one, and an arm whose manifest says both is the D24/D42 failure mode again.
+    with pytest.raises(Exception, match="not implemented"):
+        ProtectionArmTask(n_flips=64, burst_bits=16, fault_target="metadata")
+    with pytest.raises(Exception, match="not implemented"):
+        ProtectionArmTask(n_flips=64, burst_bits=16, fault_target="group_rank",
+                          target_group_rank=0, rank_scorer="query_attention")
+
+
+def test_burst_bits_defaults_to_none_so_no_existing_arm_identity_moves():
+    from raq_kv.config.schema import ProtectionArmTask
+
+    plain = ProtectionArmTask(ber=1e-6)
+    assert plain.burst_bits is None
+    assert "burst_bits" not in plain.model_dump(exclude_none=True)
+
+
+def test_an_override_the_sweep_would_erase_is_refused(tmp_path):
+    """The trap that cost 15 minutes: `--set task.n_samples=2` on a config sweeping `task` does nothing.
+
+    `apply_overrides` runs first, then `expand_sweep` rewrites each swept key with `set_dotted`, so the override is
+    applied and then overwritten. Nothing in the output says so -- the run that happens is a valid one nobody asked
+    for, which is worse than an error because it looks like a smoke test and is the full campaign.
+    """
+    import pathlib
+
+    import pytest
+
+    from raq_kv.config.loader import load_experiment_configs
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "configs" / "experiments" / "d67_burst_calibration.yaml"
+    with pytest.raises(ValueError, match="silently discarded"):
+        load_experiment_configs(src, overrides=["task.n_samples=2"])
+    # An override on a key the config does NOT sweep is still honoured.
+    cfgs = load_experiment_configs(src, overrides=["seed=7"])
+    assert cfgs and all(c.seed == 7 for c in cfgs)
+
+
+def test_overrides_still_work_on_a_config_without_a_sweep():
+    import pathlib
+
+    from raq_kv.config.loader import load_experiment_configs
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "configs" / "experiments" / "d61_qwen_top.yaml"
+    cfgs = load_experiment_configs(src, overrides=["task.n_samples=3"])
+    assert len(cfgs) == 1 and cfgs[0].task.n_samples == 3

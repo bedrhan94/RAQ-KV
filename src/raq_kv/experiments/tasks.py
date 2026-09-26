@@ -930,7 +930,16 @@ class ProtectionArm:
                          **{f"faulty_{k}": v for k, v in SCORERS[sample.scorer](text, sample.reference).items()}})
         for trial in range(self.task.n_trials):
             trial_seed = derive_seed(seed, f"trial{trial}")
-            if self.task.fault_target == "metadata":
+            if self.task.burst_bits is not None:
+                # H2b's live form (D67). One burst is one corrupted memory word: `burst_bits` flips inside a single
+                # (layer, part, token, head) slot, drawn over every cached token. The arm's `n_flips` is the total
+                # bit count either way, so a burst arm and a single-bit arm at the same `n_flips` are matched on
+                # bits delivered and differ only in how those bits are grouped -- which is the whole comparison.
+                bursts = generate_bursts_in_tokens(
+                    qkv, trial_seed, list(range(base.seq_len)), "storage_burst",
+                    self.task.n_flips // self.task.burst_bits, self.task.burst_bits)
+                plan = [site for burst in bursts for site in burst]
+            elif self.task.fault_target == "metadata":
                 plan = generate_metadata_plan(qkv, trial_seed, n_flips)
             elif target is not None:
                 plan = generate_group_targeted_plan(qkv, trial_seed, target["target_group_index"],
