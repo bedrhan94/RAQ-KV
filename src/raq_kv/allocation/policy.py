@@ -114,6 +114,27 @@ def _protection(ber: float) -> tuple[str | None, str, str]:
     concentration effect is absent (D54). All three are consistent with Qwen applying QK-Norm where Llama does not;
     none of them ablates it.
 
+    **That QK-Norm account is superseded as the mechanism, and the paragraph above is kept only for the
+    measurements it cites.** Two corrections, in order. D59 found the failures in every arm to be metadata-driven,
+    so D54's "flatter fault map" reasoning was about **code**-flip variance -- the wrong channel -- and the real
+    quantity is the per-metadata-flip hazard: Qwen 1.17% -> 2.53% under pruning, Llama 2.63% -> 2.55%, both
+    converging on a shared ceiling. Then D62 located *why* Llama starts at that ceiling, and it is **not in the
+    codec at all**: Qwen holds these answers at top-1 probability 1.0000 against Llama's 0.9880, so a fault must do
+    far more work to unseat one than the other. At matched value-space exposure Qwen's output barely responds --
+    median KL flat at ~3e-11 across a **million-fold** perturbation range -- which is what a saturated distribution
+    does and what a codec explanation cannot produce. Four mechanisms were tested and eliminated on the way
+    (dynamic range D59, attention spread D60 with the sign reversed, attention-rank-conditioned severity D61,
+    per-flip severity D62).
+
+    **Two consequences for this function, one of which is a policy that is now closed off.** First, D61 rules out
+    the obvious cheap refinement of the metadata guard: spending its bits where attention is. The highest-attention
+    token group is the **least** damaging cell to corrupt in both families, so an attention-weighted guard would be
+    worse than the uniform one below. Second, none of this changes whether the lookup needs a retention argument --
+    that question is about retention coupling, which D62 does not touch, and it stays open exactly as stated below.
+    A LongBench pilot then narrowed D62's own generality: Qwen desaturates completely on a hard task (top-1 0.9284,
+    margin 2.875 against 16.5-19.5 on the probe), so "the difference is saturation" describes a regime, and the
+    regime is this project's probe.
+
     **What a caller should take from this:** price protection from measurements on the model being deployed. The
     constants here came from Qwen and the interaction they do not model is Qwen's.
 
