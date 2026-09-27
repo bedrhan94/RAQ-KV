@@ -4463,3 +4463,110 @@ One model, one vehicle, one exposure (a single metadata flip), 80 samples, break
 is coarse over 16 trials. The bound is on a **rank** correlation with that coarseness included; a finer per-sample
 fragility measure — the graded KL as the outcome instead of the rate — could resolve a smaller effect, and on this
 vehicle Qwen is no longer saturation-limited so that route is now open. It is not run.
+
+## D75 — The margin–KL correlation is the softmax's own curvature, and it takes D73's headline with it (2026-09-27/28)
+
+D71 and D74 both ended by naming the same escape: *the graded KL as the outcome instead of the rate could resolve a
+smaller effect.* It needs no GPU — `d74_margin_curve_llama_lb` recorded `kl_first_token` on all 80 × 16 trials — so
+this runs it. Pre-registered before looking, direction included, in `d75_prereg.md`: **Spearman(`margin_clean`,
+per-sample median KL), predicted NEGATIVE**, because under D62's saturation account a thin margin leaves more mass to
+move. The motivation was sound: a break rate over 16 trials takes six values in practice and **75 of D74's 80 samples
+are tied**, so the rate really is the blunt instrument both records said it was.
+
+### The primary confirmed, and the confirmation is worthless
+
+| arm | n | ρ(margin, median KL) | 95% CI | p | D31 |
+|---|---|---|---|---|---|
+| `d74_margin_curve_llama_lb` | 80 | −0.419 | [−0.585, −0.220] | 0.0001 | meets |
+| `d71_margin_dose_qwen` | 200 | **−0.918** | [−0.960, −0.860] | <1e-4 | meets |
+| `d73_lb_fault_qwen` | 20 | −0.858 | [−0.965, −0.602] | <1e-4 | meets |
+
+Three arms, two families, two vehicles, all negative, all meeting D31 — and **ρ = −0.918 is too good, which is what
+prompted the control instead of the record.** For a small logit perturbation the KL is a quadratic form in the softmax
+Fisher information `diag(p) − ppᵀ`; for two effective states that is `½·p₁p₂·δ²`, so
+
+    ln KL  =  ln(p₁p₂)  +  2 ln δ  +  const
+
+**A fault of fixed size therefore produces a strong negative correlation with the margin through nothing but the shape
+of the softmax.** The pre-registered primary was tested against ρ = 0, and ρ = 0 is not the null.
+
+### The right null, and my first attempt at it was also wrong
+
+I first tested slope = **−1** per nat, since `p₂/p₁ = exp(−margin)`. That is only the deep-margin limit:
+`d ln(p₁p₂)/d margin = 1 − 2p₁`, which reaches −1 only as `p₁ → 1`. The correct null evaluated at each arm's own
+margins, beside the version that does not depend on where the margins sit:
+
+| arm | median margin | slope vs margin | null: deep / two-state / calibrated | slope vs `ln(p₁p₂)` (identity ⇒ **1.0**) | R² |
+|---|---|---|---|---|---|
+| `d71` (Qwen, probe) | 18.75 | −0.982 [−1.024, −0.940] | −1.000 / −1.000 / −0.994 | **+0.985 [+0.943, +1.027]** | 0.914 |
+| `d73` (Qwen, LongBench) | 6.500 | −0.940 [−1.196, −0.684] | −1.000 / −0.997 / — | **+0.948 [+0.689, +1.208]** | 0.740 |
+| `d74` (Llama, LongBench) | 1.312 | −0.571 [−0.767, −0.375] | −1.000 / **−0.580** / **−0.484** | +0.710 [+0.470, +0.951] | 0.301 |
+
+**On Qwen the identity holds outright.** And d74's slope, which I briefly read as a violation because it excludes −1,
+contains both the two-state null (−0.580) and the null calibrated on a recorded `p₁` (−0.484).
+`tests/test_curvature.py` pins this with synthetic data generated at a **constant** δ: at thin margins it excludes −1
+too, so excluding −1 proves nothing. The same first pass detrended with `ln KL + margin` and got ρ = +0.482,
+p < 1e-4 — an artefact, because `ln(p₁p₂) + margin` rises by construction wherever `p₁ < 1`. Detrended properly with
+`ln KL − ln(p₁p₂)` it is +0.262 (d74), +0.115 (d71), +0.091 (d73).
+
+### So D73's headline is withdrawn as evidence
+
+D73 called Qwen's **39,005×** KL rise between vehicles "as direct a confirmation as this design can give" of D62's
+saturation account. Qwen's `ln(p₁p₂)` gains 10.622 nats between those vehicles, which predicts **41,027×** from
+curvature alone, with no change whatever in how much damage a flip does. Measured: 20,731×. **Residual 0.5×.** On
+D73's own quoted medians it is 2.7×. Either way the residual is **four orders of magnitude below the headline**.
+
+| family | sample set | curvature gain | predicted | measured | residual |
+|---|---|---|---|---|---|
+| Qwen3-1.7B | each arm's own | +10.622 | 41,027× | 20,731× | **0.5×** |
+| Qwen3-1.7B | D73's quoted | +9.569 | 14,313× | 39,005× | **2.7×** |
+| Llama-3.2-3B | each arm's own | +1.030 | 3× | 14× | 5.0× |
+| Llama-3.2-3B | D73's quoted | +1.161 | 3× | 12× | 3.8× |
+
+**The KL was never independent corroboration of the margin difference; it is the margin difference in another unit.**
+That is how both D62 and D73 used it, and that use is withdrawn. What is *not* withdrawn is D62's separate
+observation that Qwen's KL is flat across a **million-fold exposure range** at fixed margin — varying δ with the
+curvature held still is a different measurement and the curvature identity does not explain it.
+
+### What replaces it, and it is better than what it replaces
+
+Inverting the identity gives **δ, the effective logit perturbation** — how far one metadata flip moves the scores,
+with the softmax's amplification divided out. Unlike a KL it is comparable across models and tasks.
+
+| family | vehicle | n | median margin | median KL | **δ** |
+|---|---|---|---|---|---|
+| Qwen3-1.7B | probe | 38 | 17.125 | 5.39e-10 | **0.2514** |
+| Qwen3-1.7B | LongBench | 20 | 6.500 | 1.12e-05 | **0.1901** |
+| Llama-3.2-3B | probe | 32 | 2.688 | 3.55e-05 | **0.0744** |
+| Llama-3.2-3B | LongBench | 20 | 1.312 | 4.93e-04 | **0.0872** |
+
+A KL spanning **six orders of magnitude** across those four cells is a δ spanning **3.4×**. And the family gap meets
+D31 while the vehicle gaps do not: Qwen/Llama **3.35×** [2.50, 9.59] on the probe and **2.30×** [1.54, 3.52] on
+LongBench, against Qwen 0.77× [0.62, 1.06] and Llama 1.15× [0.74, 3.37] across vehicles. **δ is a model property that
+barely moves between tasks**, which is what a codec-side quantity should look like and what a KL could never show.
+
+**And it runs opposite to the hazard.** One metadata flip moves Qwen's logits **2–3× further** than Llama's, while
+Llama breaks **2.25×** more often on the probe and **12×** on LongBench. So the family fragility difference is not
+that faults do more to Llama — they demonstrably do *less*. **It is the margin, and only the margin.** This is a
+cleaner statement of D62's conclusion than D62 made, reached by removing D62's own supporting evidence.
+
+### Scope, and the one assumption that is doing work
+
+`p₁p₂` is the two-effective-state reading of a margin, because **no arm records `p₁` per sample.** Checked against the
+recorded `top1_prob` of the D63 ladder: accurate where margins are deep (Qwen, margins 15.25–25.25,
+`d ln(1−p₁)/dm` = −0.994 [−1.029, −0.958] against a two-state −1.000, true non-top mass 1.34× the runner-up) and
+**measurably optimistic where they are thin** (Llama, margins 0.38–10.38, −0.774 [−0.823, −0.725] against −0.925, true
+mass **2.30×**). So:
+
+* **The Qwen results, and with them the D73 correction, sit in the validated regime.**
+* **d74's numbers are assumption-limited** and no claim is made from them either way. Its `ln(p₁p₂)` slope of +0.710
+  excluding 1.0 is as likely the two-state form failing as anything physical.
+* **The δ family gap is a lower bound.** δ scales as `1/√(p₁p₂)`, and correcting each family by its measured tail
+  inflation moves the probe gap from 3.38× to **4.42×** — the correction widens it.
+
+The fix is cheap and specified: **record `top1_prob` (and the top-2 gap) per sample in the fault arms**, which removes
+the assumption entirely and costs one tensor read per sample. Also: one d71 sample has a median KL of exactly zero —
+at least half its flips were null events, consistent with code-0 invariance — so "exposure" is not uniform across
+trials and a median δ mixes null flips with real ones. Unpaired across vehicles by construction, since the two use
+different datasets. And the rate-based tests remain the only ones with a task-level outcome that curvature cannot
+fake: D71 and D74, both null.
