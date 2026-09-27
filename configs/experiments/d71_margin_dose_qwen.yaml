@@ -1,0 +1,36 @@
+# D71: is the answer margin the MECHANISM of fault fragility, or a correlate? D62's own stated limitation.
+#
+# D62 established the cross-family half decisively -- Qwen3-1.7B holds these answers at 17.07 nats against
+# Llama-3.2-3B's 3.27, p = 1.2e-06 on 31 of 31 samples -- and then said plainly what it could not establish: if a
+# thin margin is the mechanism, then WITHIN a family the thin-margin samples should break more. They do, by 1.98x
+# (Qwen, 4.41% against 2.23%) and 1.88x (Llama, 7.03% against 3.75%), and neither correlation approaches
+# significance (rho = +0.000, p = 1; rho = -0.109, p = 0.558).
+#
+# The obstacle is arithmetic, not design. Break rates run 2-6%, so a per-sample rate over 16 trials is a coarse
+# number, and 31 samples cannot resolve a correlation against it. Unlike the KL, `margin_clean` is ONE number per
+# sample and cannot be enriched by adding trials -- so the fix is samples, and only samples.
+#
+# 200 against D62's 40. Five times the pairs at the same 16 trials each, which is the largest step that keeps this
+# arm under an hour. Everything else is D62's arm unchanged -- same metadata-uniform single flip, same quantization,
+# no protection, no pruning, eager attention -- so the two are comparable and this one is a strict superset in power.
+#
+# Pre-registered, because a dose-response is exactly the kind of analysis that invites choosing a threshold after
+# looking: the primary is Spearman(margin_clean, per-sample break rate) over all 200 samples with a bootstrap CI,
+# and D31's rule applies. The thin/thick median split D62 reported is kept as a secondary so the two records can be
+# read against each other, not because a median split is the better test.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: d71_margin_dose_qwen
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 200
+  n_flips: 1
+  fault_target: metadata
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0

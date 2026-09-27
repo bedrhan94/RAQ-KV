@@ -1,0 +1,35 @@
+# D70: key-magnitude retention on the SECOND FAMILY. Replicates M6's agent arms, which are Qwen3-1.7B only.
+#
+# Why this is the open item worth closing first: D64 found that compression damage on the tool-call vehicle is
+# ENTIRELY tool selection -- across the three failing arms, 0 of 271 failures are argument errors (Wilson upper
+# bounds 3.5-4.5%) while the uncompressed golden splits its own failures roughly evenly. That is a striking claim
+# and it rests on one model. The project's own standard is that a single-model finding is provisional: H7's
+# concentration effect looked general and turned out to be Qwen-only (D54), and the records now separate "where the
+# damage lands" (general) from "whether pruning concentrates it" (not).
+#
+# The retention ratio 0.2467 transfers cleanly here, unlike to Qwen3-4B: Qwen3-1.7B and Llama-3.2-3B share
+# kv_values_per_token = 57,344, so the same ratio is the same per-value budget. Every arm holds it fixed, so the
+# comparison between scorers is internal to this family and does not depend on the ratio being optimal for it.
+#
+# Qwen applies QK-Norm and Llama does not (D1, D15), and D47 already found key magnitude a 4x stronger anti-signal
+# on Llama. `key_norm` failing 105 of 105 on Qwen (D64) therefore has a specific prediction here: it should fail at
+# least as completely, and if it does not, the anti-signal account is wrong about why.
+
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/bfcl_v3_catalogue.yaml
+name: m9l_bfcl_magnitude
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_guard: range
+compression:
+  scorer: key_norm
+  ratio: 0.2467
+  unit: token
+  protect_initial: 4
+task:
+  kind: retention
+  n_samples: 120
+seed: 0
