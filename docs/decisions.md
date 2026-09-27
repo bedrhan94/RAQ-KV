@@ -4300,3 +4300,86 @@ sample's rate is a coarse number over 16 trials. The bound is on a **rank** corr
 a design measuring fragility per sample more finely — more trials, or the graded KL as the outcome instead of the rate
 — could resolve a smaller effect. The KL route is the obvious one and is not run here, because D62 already established
 that Qwen's KL is saturation-limited on this probe and would be measuring the floor.
+
+## D73 — Qwen's KL was saturation-limited, confirmed at 39,000×; and the hazard gap widens where I predicted it would narrow (2026-09-27)
+
+The measurement that closes the line D59 opened. D62 explained the cross-family hazard difference by output
+saturation and its key evidence was that **Qwen's median per-flip KL is flat at ~3e-11 across a million-fold exposure
+range** — what a saturated distribution does. D63 then showed the saturation is task-dependent: on LongBench
+`2wikimqa` Qwen desaturates completely. What was never measured is whether the **hazard** follows.
+
+Two arms, 20 samples × 8 trials each, one metadata flip per trial, 9 minutes.
+`scripts/report_d62.py --vehicle longbench --condition stable`.
+
+**Conditioning, and a mismatch of mine that had to be fixed first.** `d73`'s config pre-registered that the outcome
+needs the golden **stable** rather than **correct**, because LongBench accuracy is low and conditioning on correctness
+would leave almost nothing. The report still applied the probe's convention, and it left **4 samples**. Fixed with an
+explicit `--condition` flag; the numbers below are on 16 paired samples and 128 flips per family. The controls are
+**exactly zero** in both arms, which is what makes a KL of 1e-6 signal rather than noise.
+
+### The prediction is confirmed, and by four orders of magnitude
+
+| family | median per-flip KL, probe | LongBench | rise |
+|---|---|---|---|
+| Qwen3-1.7B | 3.085e-11 | **1.203e-06** | **39,005×** |
+| Llama-3.2-3B | 2.216e-05 | 2.663e-04 | 12× |
+
+**Qwen's KL response rises 39,005× on a task that desaturates it; Llama's rises 12×.** The family gap compresses from
+**718,463×** to **221×**, a factor of **3,246**, and the paired log10 contrast from **+4.503 dex** (31,878×) to
+**+2.055 dex** (113×, p = 0.018, still meeting D31).
+
+So D62's central inference holds: **Qwen's flat KL was saturation-limited, not evidence that faults do less to it.**
+Remove the saturation and the same exposure moves its distribution four orders of magnitude further. That is as direct
+a confirmation as this design can give, and it was pre-registered.
+
+### And the hazard gap widened, where the config predicted it would narrow
+
+| | Qwen | Llama | ratio |
+|---|---|---|---|
+| probe (D59, per metadata flip) | 1.17% | 2.63% | 2.25× |
+| **LongBench** | **1 / 128 = 0.78%** [0.14%, 4.29%] | **12 / 128 = 9.38%** [5.44%, 15.67%] | **12×**, Fisher **p = 0.0027** |
+
+**I predicted compression and got the opposite.** The config says "the Qwen/Llama KL gap should COMPRESS" — it did,
+by 3,246× — but it read that as the hazard ordering following suit, and the hazard ratio went from 2.25× to 12×.
+Qwen's hazard *fell* slightly (1.17% → 0.78%) while Llama's rose 3.6×.
+
+### What fits all of it, including D71's null
+
+The margins say why. Probe: **17.07 against 3.27** nats. LongBench: **7.500 against 1.906**
+(difference −5.59 [−8.55, −2.82], p = 0.00131, still meeting D31).
+
+* **Llama crossed into the region where a margin is contestable.** 1.906 nats means the top answer is about 6.7×
+  more likely than its rival; a single metadata flip can plausibly overturn that, and its hazard rose accordingly.
+* **Qwen did not.** It fell from 17.07 to 7.50, which is a large drop in nats and still leaves the top answer ~1,800×
+  ahead. Its hazard barely moved.
+
+So the reading that fits is that **hazard responds to the absolute margin non-linearly — steeply below roughly two to
+three nats and flatly above** — and the two families moved within different parts of that curve. **This is also why
+D71's within-family dose-response came back null with a tight bound:** every Qwen probe sample sits at 17–19 nats,
+deep in the flat region, so within-family margin variation there predicts nothing. D71's null and D73's widening are
+the same fact seen from two sides.
+
+**Stated as what it is: a reading that fits four points and one null, not a demonstrated functional form.** What would
+test it is a vehicle that places one model across the 1–5 nat range and measures hazard against margin *within* it —
+the D71 design on a task where Qwen is not saturated, which this vehicle now makes possible and which is not run.
+
+### Two things carried over from other records, both consistent
+
+**Non-finite collapse:** Llama **3 of 128** (2.34% [0.80%, 6.66%]), **all three from zero-point flips**, and Qwen
+**0 of 128**. That is D68's three-model finding — the zero-point is the most dangerous word in the cache — appearing
+on a fourth vehicle.
+
+**The anchor formally fails here and no claim rests on it.** With 1 changed flip on Qwen and 9 on Llama, KL cannot be
+established as a discriminator of breaking on this vehicle (Qwen's class is nearly empty; Llama's AUC is 0.727 [0.469,
+0.935]). So this record does **not** claim the LongBench KL predicts task failure. It claims the KL measures
+distributional perturbation, which the exactly-zero controls and D62's probe anchor (AUC 0.999 / 0.885) support, and
+the hazard is reported from the binary counts on their own.
+
+### Scope
+
+`2wikimqa`, contexts bounded at **6144** cached tokens — a stated condition, because eager attention OOMs at ~7k on
+this hardware and sdpa at ~15k on the 3B model, so the attention-scorer path is unavailable here at any length. 20
+samples, 8 trials, one flip, no protection, no pruning, `max_new_tokens` 24. One flip in a 6144-token cache is a
+proportionally smaller perturbation than in the probe's ~2066, which would depress both hazards equally and cannot
+explain a ratio moving in opposite directions for the two families — but it does mean the absolute rates are not
+interchangeable with D59's.

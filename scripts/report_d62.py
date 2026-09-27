@@ -35,7 +35,11 @@ from raq_kv.analysis.contrasts import contrast, contrast_rng
 from raq_kv.analysis.stats import wilson
 from raq_kv.utils.paths import resolve_output_root
 
-ARMS = {"qwen": "d62_qwen_meta", "llama": "d62_llama_meta"}
+# The probe pair by default; D73 runs the same comparison on LongBench, where Qwen is not saturated. Parameterised
+# rather than fixed, because a hardcoded pair is how a report ends up able to describe only the vehicle it was written
+# for -- the same repair D70 needed in the failure-mode report.
+VEHICLES = {"probe": {"qwen": "d62_qwen_meta", "llama": "d62_llama_meta"},
+            "longbench": {"qwen": "d73_lb_fault_qwen", "llama": "d73_lb_fault_llama"}}
 
 
 def controls_are_exactly_zero(data: dict[str, dict]) -> tuple[int, int, float]:
@@ -128,13 +132,32 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-root", default="outputs")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--vehicle", default="probe", choices=sorted(VEHICLES))
+    parser.add_argument("--condition", default="correct", choices=("correct", "stable"),
+                        help="'correct' keeps samples both arms answer correctly unfaulted (the probe convention); "
+                             "'stable' keeps samples whose no-fault controls did not move")
     args = parser.parse_args()
 
     raw_root = resolve_output_root(args.output_root) / "raw"
-    arms = {fam: load_arm(raw_root, name) for fam, name in ARMS.items()}
-    samples = shared_samples(arms)
+    arms = {fam: load_arm(raw_root, name) for fam, name in VEHICLES[args.vehicle].items()}
+    if args.condition == "correct":
+        samples = shared_samples(arms)
+    else:
+        # LongBench accuracy is low -- the D63 pilot put Qwen's F1 mean at 0.071 -- so conditioning on a CORRECT
+        # golden leaves almost nothing: it left 4 samples here, which is why this option exists. `d73`'s config
+        # pre-registered the looser condition and the first version of this report did not implement it, so the two
+        # disagreed. The quantity needs the golden STABLE, not right: a KL is measured against the arm's own
+        # unfaulted distribution, and `answer_changed` is measured against its own unfaulted answer, so both are
+        # well defined on a sample the model gets wrong as long as it gets it wrong *consistently*.
+        keep: set[str] | None = None
+        for data in arms.values():
+            stable = {s for s, r in data.items()
+                      if all(not t["answer_changed"] for t in r["faults"] if t["trial"] < 0)}
+            keep = stable if keep is None else (keep & stable)
+        samples = sorted(keep or ())
     if not samples:
-        raise SystemExit("no sample is answered correctly with no faults by both arms")
+        raise SystemExit(f"no sample satisfies --condition {args.condition} in both arms")
+    print(f"[condition: {args.condition}]")
     out: dict = {"n_samples": len(samples), "samples": samples}
 
     print(f"D62: one metadata flip at a time, graded. {len(samples)} samples shared by both arms\n")
@@ -250,7 +273,7 @@ def main() -> int:
             "p99": float(np.percentile(kl, 99)), "max": float(kl.max()),
             "n_answer_changed": int(changed.sum()), "n_argmax_flipped": int(flipped.sum())}
 
-    dest = resolve_output_root(args.output_root) / "reports" / "d62_flip_severity.json"
+    dest = resolve_output_root(args.output_root) / "reports" / f"flip_severity_{args.vehicle}_{args.condition}.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(f"\nwrote {dest}")
