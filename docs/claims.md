@@ -47,7 +47,7 @@ and it happened.
 **Re-audited 2026-09-26, and the matrix held.** All of D59–D63 land on `H7` and it carries them. What the audit
 found instead was outside the matrix, in three places:
 
-1. **M6 has no exit document** — M0 through M5 all do. M2's missing one hid an unmet criterion for four days
+1. ~~**M6 has no exit document**~~ **Written 2026-09-27: `docs/m6_exit.md`, M6 CLOSED.** All six deliverables built and measured, the tau-bench decision point declined with its reason, and C4 closed. Four of the six were unbuilt when this audit ran and were found by reading the plan against the repository — the same gap M2 had, and M2's hid an unmet criterion for four days. M2's missing one hid an unmet criterion for four days
    (`docs/m2_exit.md`), so this is the same gap in the same shape. Four M6 deliverables from the plan are
    unbuilt: ~~**Pass^k**~~ (**done: D65**), ~~**deterministic multi-turn state-carrying tasks**~~ (**done: D69**),
    ~~**Qwen3-4B generalisation**~~ (**done: D68**), and ~~**C4's closure**~~ (**done: D66**).
