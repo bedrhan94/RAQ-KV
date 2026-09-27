@@ -4564,8 +4564,16 @@ mass **2.30×**). So:
 * **The δ family gap is a lower bound.** δ scales as `1/√(p₁p₂)`, and correcting each family by its measured tail
   inflation moves the probe gap from 3.38× to **4.42×** — the correction widens it.
 
-The fix is cheap and specified: **record `top1_prob` (and the top-2 gap) per sample in the fault arms**, which removes
-the assumption entirely and costs one tensor read per sample. Also: one d71 sample has a median KL of exactly zero —
+**The fix is cheap and is now implemented rather than specified.** `_first_token_shift` records `top1_prob_clean` and
+`nontop_mass_clean` on every trial and `log_curvature_observed` consumes them, so every arm run from here needs no
+two-state reading at all. Two details worth keeping. The observed form uses the **total** non-top mass rather than the
+runner-up alone, which is the scale a perturbation spread over the vocabulary actually sees and the reason the assumed
+δ is an over-estimate — by exactly `√inflation`, pinned in a test. And `nontop_mass_clean` is `-expm1(logp)` rather
+than `1 − exp(logp)`, because past about **36.7 nats** of margin the runner-up mass falls below the gap between 1.0 and
+its float64 neighbour and the subtraction returns exactly zero. **No recorded arm has reached that**: all 80 rows of
+`answer_confidence.json` still have `top1_prob` < 1.0, the deepest at 25.25 nats, and D62's "top-1 probability 1.0000
+at float64" is a report rounded to four places, not an underflow. The ceiling is set by what has been run, not by the
+method. Also: one d71 sample has a median KL of exactly zero —
 at least half its flips were null events, consistent with code-0 invariance — so "exposure" is not uniform across
 trials and a median δ mixes null flips with real ones. Unpaired across vehicles by construction, since the two use
 different datasets. And the rate-based tests remain the only ones with a task-level outcome that curvature cannot

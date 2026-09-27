@@ -19,6 +19,7 @@ from raq_kv.analysis.curvature import (
     effective_perturbation,
     identity_slope,
     log_curvature,
+    log_curvature_observed,
     two_state_probs,
 )
 
@@ -127,3 +128,40 @@ def test_calibrated_null_is_shallower_than_two_state_in_the_thin_regime():
     # Deep margins collapse the distinction; and an unknown family declines rather than guessing.
     assert calibrated_slope_null(18.0, "qwen3-1.7b") == pytest.approx(-1.0, abs=0.02)
     assert calibrated_slope_null(1.312, "mistral-7b") is None
+
+
+def test_observed_curvature_survives_a_top1_probability_of_one():
+    """Why the arms record ``nontop_mass`` with expm1 instead of letting an analysis recompute ``1 - p1``.
+
+    Past about 36.7 nats of margin the runner-up mass falls below the gap between 1.0 and its neighbour, so ``1 - p1``
+    is exactly 0.0 and the curvature term is -inf; ``-expm1(logp)`` recovers the tail from the logprob instead.
+    """
+    # Stated as what it is: NOT a regime any recorded arm has reached. Every one of the 80 rows in
+    # answer_confidence.json still has top1_prob < 1.0, the deepest at 25.25 nats, and the rounding needs about
+    # **36.7** nats. D62's "top-1 probability 1.0000 at float64" is a report rounded to four places, not an
+    # underflow. The field is written with expm1 anyway because the cost is nil and the margin ceiling here is set by
+    # what has been run, not by anything in the method.
+    logp_top = -1.11e-17
+    p1 = float(np.exp(logp_top))
+    assert p1 == 1.0 and 1.0 - p1 == 0.0, "the failure mode this field exists to avoid"
+    tail = float(-np.expm1(logp_top))
+    assert tail == pytest.approx(1.11e-17, rel=1e-2)
+    got = log_curvature_observed(np.array([p1]), np.array([tail]))
+    assert np.all(np.isfinite(got))
+    # And with a one-hot-to-float64 p1 the observed form agrees with the two-state form fed the same tail as a margin.
+    assert got[0] == pytest.approx(np.log(tail), abs=1e-9)
+
+
+def test_observed_curvature_uses_the_whole_tail_not_the_runner_up():
+    # A distribution whose non-top mass is spread over many tokens has a larger curvature than the margin alone
+    # implies, so delta recovered from the margin is an OVERestimate -- which is why D75's family gap is a lower bound.
+    margin = 1.312
+    p1, p2 = two_state_probs(margin)
+    inflation = 2.30  # Llama's measured non-top mass against its runner-up alone
+    observed = log_curvature_observed(np.array([p1]), np.array([p2 * inflation]))
+    assert observed[0] > log_curvature(np.array([margin]))[0]
+    kl = 1e-4
+    delta_assumed = effective_perturbation(np.array([margin]), np.array([kl]))[0]
+    delta_observed = float(np.sqrt(2.0 * kl / np.exp(observed[0])))
+    assert delta_observed < delta_assumed
+    assert delta_assumed / delta_observed == pytest.approx(np.sqrt(inflation), rel=1e-9)

@@ -1090,8 +1090,22 @@ def _first_token_shift(model: Any, faulty: Any, query_ids: Any, clean: Any) -> d
         rival = lp.clone()
         rival[top] = float("-inf")
         return float(lp[top] - rival.max())
+    # D75 needs these and had to assume them. The first-token KL is a quadratic form in the softmax Fisher
+    # information, so `ln KL = ln(p1 p2) + 2 ln delta`: a fault of fixed size produces a KL that falls by about a
+    # factor of e per nat of margin through nothing but the shape of the softmax. Recovering `delta` -- the
+    # perturbation in logit units, which unlike a KL is comparable across models and tasks -- therefore needs the
+    # curvature, and D75 had to reconstruct it from the margin under a two-effective-state reading. That reading is
+    # accurate where margins are deep and **measurably optimistic where they are thin** (checked against the D63
+    # ladder's recorded top1_prob: the true non-top mass is 1.34x the runner-up alone for Qwen at 15-25 nats but
+    # 2.30x for Llama at 0.4-10), which left every thin-margin number in D75 assumption-limited. These two fields
+    # remove the assumption for one tensor read.
+    #
+    # `nontop_mass_clean` is the one that matters and it is `-expm1(logp)`, not `1 - exp(logp)`: on this probe Qwen's
+    # top-1 probability is 1.0 to float64, so the subtraction returns exactly 0.0 and the curvature term becomes
+    # -inf, while expm1 recovers 1.58e-10 from the logprob it was handed.
     return {"kl_first_token": kl, "faulty_nonfinite": nonfinite,
             "margin_clean": lead(clean), "margin_faulty": lead(faulty_lp),
+            "top1_prob_clean": float(clean_p[top]), "nontop_mass_clean": float(-torch.expm1(clean[top])),
             "argmax_flipped": bool(int(faulty_lp.argmax()) != top),
             "first_token_clean": top, "first_token_faulty": int(faulty_lp.argmax())}
 

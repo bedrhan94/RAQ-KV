@@ -58,6 +58,22 @@ def log_curvature(margin: np.ndarray) -> np.ndarray:
     return special.log_expit(margin) + special.log_expit(-margin)
 
 
+def log_curvature_observed(top1_prob: np.ndarray, nontop_mass: np.ndarray) -> np.ndarray:
+    """``ln(p1 (1 - p1))`` from an arm's recorded fields -- the assumption-free form, and the more correct one.
+
+    Two improvements over ``log_curvature`` at once. It needs no two-state reading of the margin, and the scale it uses
+    is the **total** non-top mass rather than the runner-up alone, which is what a perturbation spread over the whole
+    vocabulary actually sees: ``Var_p(delta)`` for a peaked ``p`` goes as ``p1 * (1 - p1)``, and the runner-up is only
+    part of ``1 - p1`` (measured at 1/1.34 of it for Qwen and 1/2.30 for Llama).
+
+    ``nontop_mass`` is taken as recorded rather than recomputed as ``1 - top1_prob``, because the arms compute it with
+    ``-expm1`` on the logprob and that is the only way it survives a top-1 probability of 1.0 in float64.
+    """
+    p1 = np.asarray(top1_prob, dtype=float)
+    tail = np.asarray(nontop_mass, dtype=float)
+    return np.log(p1) + np.log(tail)
+
+
 def effective_perturbation(margin: np.ndarray, kl: np.ndarray) -> np.ndarray:
     """``delta`` in logit units: how far the fault moved the scores, with the softmax's amplification divided out.
 
