@@ -28,8 +28,12 @@ from raq_kv.analysis.stats import wilson
 from raq_kv.utils.io import read_json, read_jsonl
 from raq_kv.utils.paths import resolve_output_root
 
-# The five arms whose records carry the field, golden first so its floor is read before the arms are judged.
-ARMS = ("m6_bfcl_golden", "m6_bfcl_joint", "m6_bfcl_prefixcache", "m6_bfcl_magnitude", "m6_bfcl_recency")
+# Golden first, so its floor is read before the arms are judged. Parameterised rather than fixed because D70
+# replicates the whole set on a second family, and a hardcoded arm list is how a report ends up able to describe only
+# the model it was written for.
+QWEN = ("m6_bfcl_golden", "m6_bfcl_joint", "m6_bfcl_prefixcache", "m6_bfcl_magnitude", "m6_bfcl_recency")
+LLAMA = ("m9l_bfcl_golden", "m9l_bfcl_joint", "m9l_bfcl_prefixcache", "m9l_bfcl_magnitude", "m9l_bfcl_recency")
+FAMILIES = {"qwen": QWEN, "llama": LLAMA}
 
 
 def live_runs(raw_root: Path, name: str) -> list[list[dict]]:
@@ -80,19 +84,23 @@ def split(records: list[dict], prefix: str) -> dict[str, int]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-root", default="outputs")
+    parser.add_argument("--family", default="qwen", choices=sorted(FAMILIES), help="which arm set to read")
+    parser.add_argument("--arms", help="comma-separated arm names, golden first; overrides --family")
     args = parser.parse_args()
     raw_root = resolve_output_root(args.output_root) / "raw"
+    arm_names = tuple(a.strip() for a in args.arms.split(",")) if args.arms else FAMILIES[args.family]
+    golden_name = arm_names[0]
 
     print("M6 agent failure modes -- wrong tool against wrong arguments\n")
     print(f"{'arm':22s}{'n':>5s}{'correct':>9s}{'fail':>6s}{'wrong fn':>10s}{'wrong args':>12s}"
           f"{'args share of failures':>25s}")
     out: dict[str, dict] = {}
-    for name in ARMS:
+    for name in arm_names:
         runs = live_runs(raw_root, name)
         if not runs:
             print(f"{name:22s}   no complete live run found")
             continue
-        prefix = "" if name == "m6_bfcl_golden" else "pruned_"
+        prefix = "" if name == golden_name else "pruned_"
         for records in runs:
             s = split(records, prefix)
             if not s["n"]:
@@ -104,15 +112,15 @@ def main() -> int:
                   f"{s['wrong_arguments']:12d}      {share:6.3f} [{lo:.3f}, {hi:.3f}]")
             out[name] = s | {"n_failures": fails, "wrong_arguments_share": share, "ci": (lo, hi)}
 
-    if "m6_bfcl_golden" in out:
-        g = out["m6_bfcl_golden"]
+    if golden_name in out:
+        g = out[golden_name]
         gf = g["n_failures"]
         print(f"\nThe vehicle's floor: with NO compression the model already fails {gf} of {g['n']} calls, "
               f"{g['wrong_arguments']} of them\nwith the right function named. Every arm below is measured only on "
               f"the calls the golden gets right, so\nthat floor is excluded from their counts rather than charged "
               f"to compression.")
 
-    arms = [(k, v) for k, v in out.items() if k != "m6_bfcl_golden" and v["n_failures"]]
+    arms = [(k, v) for k, v in out.items() if k != golden_name and v["n_failures"]]
     if arms:
         print("\nreading:")
         for k, v in arms:
@@ -125,7 +133,7 @@ def main() -> int:
               "how much of a schema\n  the span unit keeps. The same task-failure rate can be either, and the "
               "allocator's levers differ.")
 
-    dest = resolve_output_root(args.output_root) / "reports" / "m6_failure_modes.json"
+    dest = resolve_output_root(args.output_root) / "reports" / f"m6_failure_modes_{args.family}.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(f"\nwrote {dest}")
