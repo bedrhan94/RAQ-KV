@@ -93,6 +93,16 @@ def effective_perturbation(margin: np.ndarray, kl: np.ndarray) -> np.ndarray:
     return np.sqrt(2.0 * np.asarray(kl, dtype=float) / np.exp(log_curvature(margin)))
 
 
+def effective_perturbation_observed(top1_prob: np.ndarray, nontop_mass: np.ndarray,
+                                    kl: np.ndarray) -> np.ndarray:
+    """``delta`` from an arm's recorded ``top1_prob_clean`` and ``nontop_mass_clean`` -- no two-state reading at all.
+
+    The same inversion as ``effective_perturbation``, with the curvature taken from what the arm measured instead of
+    from what a margin implies. Reporting both on the same trials is how D76 turns D75's assumption into a measurement.
+    """
+    return np.sqrt(2.0 * np.asarray(kl, dtype=float) / np.exp(log_curvature_observed(top1_prob, nontop_mass)))
+
+
 def calibrated_slope_null(margin: float, family: str) -> float | None:
     """The null slope of ``ln KL`` against margin using a recorded-``p1`` fit instead of the two-state idealisation.
 

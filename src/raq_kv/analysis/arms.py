@@ -68,6 +68,34 @@ def sole_run(raw_root: Path, name: str) -> tuple[Path, dict, list[dict]]:
     return found[0]
 
 
+def sweep_runs(raw_root: Path, name: str) -> list[tuple[Path, dict, list[dict]]]:
+    """Every live, complete run of a **sweep** config, in `exp_id` order -- the thing ``sole_run`` refuses to guess at.
+
+    ``sole_run``'s own docstring names this as the fix and nothing implemented it: "a caller that needs a sweep should
+    select on those settings rather than on the name". So this returns all of them and leaves the keying to the caller,
+    which is the only party that knows which setting the sweep varies.
+
+    It keeps ``sole_run``'s two real guarantees and drops only the uniqueness one: superseded runs are skipped, and an
+    **incomplete** run still raises rather than being summarised as if it were finished. Without that second check a
+    sweep report would silently average a half-finished rung against four complete ones.
+    """
+    found: list[tuple[Path, dict, list[dict]]] = []
+    for exp in sorted(raw_root.glob("*")):
+        if ".superseded-" in exp.name or not (exp / "manifest.json").exists():
+            continue
+        manifest = read_json(exp / "manifest.json")
+        if manifest.get("superseded_by") or manifest["config"]["name"] != name:
+            continue
+        records = read_jsonl(exp / "results.jsonl")
+        if len(records) != manifest["unit_keys_total"]:
+            raise SystemExit(f"{name}: rung {exp.name} is incomplete ({len(records)}/{manifest['unit_keys_total']}); "
+                             f"a sweep report that averaged it against the finished rungs would be wrong")
+        found.append((exp, manifest, records))
+    if not found:
+        raise SystemExit(f"no complete run found for sweep {name!r}")
+    return found
+
+
 def load_arm(raw_root: Path, name: str) -> dict[str, dict]:
     """The arm's records keyed by sample id."""
     return {r["sample_id"]: r for r in sole_run(raw_root, name)[2]}

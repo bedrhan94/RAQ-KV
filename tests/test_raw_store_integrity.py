@@ -129,3 +129,45 @@ def test_the_supersede_helper_writes_the_shape_the_integrity_test_reads(tmp_path
     assert not d.exists() and (renamed / "results.jsonl").exists(), "records are kept, never deleted"
     stored = json.loads((renamed / "manifest.json").read_text(encoding="utf-8"))["superseded_by"]
     assert stored["reason"] == "a 2-sample smoke run" and stored["exp_id"] == "the_full_arm"
+
+
+def test_sweep_runs_returns_every_rung_that_sole_run_refuses_to_choose_between(tmp_path):
+    """The gap ``sole_run``'s own docstring named and nothing implemented.
+
+    A sweep config emits many experiments under one name -- `m1_kv_quant_ppl` is 13, D76's group-span sweep is 5 -- and
+    `sole_run` correctly refuses them all rather than picking by hash order. `sweep_runs` is the other half: it returns
+    them, keeps the superseded and incompleteness guards, and leaves the keying to the caller, which is the only party
+    that knows which setting the sweep varies.
+    """
+    import pytest
+
+    from raq_kv.analysis.arms import sole_run, sweep_runs
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    for suffix, n in (("a1", 4), ("b2", 4), ("c3", 4)):
+        _fake_run(raw, f"sweep_g_{suffix}", "d76_group_span_qwen", n)
+    _fake_run(raw, "sweep_g_old", "d76_group_span_qwen", 4,
+              superseded={"by": "sweep_g_a1", "reason": "re-run"})
+    _fake_run(raw, "other_arm", "some_other_config", 4)
+
+    # sole_run cannot serve a sweep; that is by design and is the reason this function exists.
+    with pytest.raises(SystemExit, match="live complete runs"):
+        sole_run(raw, "d76_group_span_qwen")
+
+    got = sweep_runs(raw, "d76_group_span_qwen")
+    assert [e.name for e, _, _ in got] == ["sweep_g_a1", "sweep_g_b2", "sweep_g_c3"], "superseded must be skipped"
+    assert all(len(records) == 4 for _, _, records in got)
+    assert all(m["config"]["name"] == "d76_group_span_qwen" for _, m, _ in got)
+
+    # An incomplete rung still raises: averaging a half-finished rung against four finished ones is the failure mode.
+    import json
+    bad = _fake_run(raw, "sweep_g_partial", "d76_group_span_qwen", 4)
+    m = json.loads((bad / "manifest.json").read_text(encoding="utf-8"))
+    m["unit_keys_total"] = 40
+    (bad / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    with pytest.raises(SystemExit, match="incomplete"):
+        sweep_runs(raw, "d76_group_span_qwen")
+
+    with pytest.raises(SystemExit, match="no complete run"):
+        sweep_runs(raw, "a_name_that_does_not_exist")
