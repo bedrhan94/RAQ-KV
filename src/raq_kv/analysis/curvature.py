@@ -27,8 +27,12 @@ prediction of -1.000, and the true non-top mass is 1.34x the runner-up alone: th
 deep. For Llama at margins 0.38-10.38 it is **-0.774** [-0.823, -0.725] against a two-state prediction of -0.925, and
 the non-top mass is **2.30x** the runner-up: in the thin-margin regime the tail matters and the two-state form is
 measurably optimistic. So a *calibrated* null belongs beside the idealised one whenever margins are thin, which is
-what ``calibrated_slope_null`` is for, and a per-sample ``p1`` recorded by the arm itself would remove the assumption
-entirely. No arm records it yet.
+what ``calibrated_slope_null`` is for.
+
+**Arms now record it, so new work needs none of this.** ``_first_token_shift`` writes ``top1_prob_clean`` and
+``nontop_mass_clean`` on every trial and ``log_curvature_observed`` consumes them. The two-state path remains for the
+arms already on disk -- D62, D71, D73 and D74 were run before those fields existed and cannot be re-analysed any other
+way without a rerun.
 """
 
 from __future__ import annotations
@@ -36,7 +40,12 @@ from __future__ import annotations
 import numpy as np
 from scipy import special, stats
 
-# d ln(1 - p1) / d margin fitted on the recorded top1_prob of `outputs/reports/answer_confidence.json`, per family.
+# d ln(1 - p1) / d margin fitted on the recorded top1_prob of `outputs/reports/answer_confidence.json`, per
+# family. **That file is the D63 difficulty ladder on the RAQ probe** (sample ids `number-L512-*`), so the fit
+# is calibrated on a NUMERIC answer space. Applying it to a LongBench margin assumes the tail's shape at a
+# given margin is a property of the model rather than of the task's answer space, which is not established --
+# LongBench answers are entity-valued. The margin ranges do overlap (0.38-10.38 covers d74's 1.312), so it is
+# defensible as a calibration and not as a measurement on that vehicle.
 # These calibrate the null slope in the thin-margin regime where the two-state form is measurably optimistic; the
 # intercept is carried so p1 itself can be reconstructed. R^2 is 0.962 (Llama, n=40) and 0.988 (Qwen, n=40).
 TAIL_FIT = {"llama": (-0.283, -0.774), "qwen": (-0.017, -0.994)}

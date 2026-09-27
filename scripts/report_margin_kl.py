@@ -160,7 +160,14 @@ def main() -> int:
         # negative rho read without it is not interpretable.
         mx, my, _ = per_sample(data, args.condition, "median")
         if len(mx) >= 10:
-            c = identity_slope(mx, my, family=args.family)
+            # Default the family from the arm name rather than letting the calibrated null vanish: every arm
+            # here carries "qwen" or "llama" in its name, and a reader who omits --family out of habit would
+            # otherwise see only the two-state null with nothing saying the other was skipped.
+            family = args.family or next((f for f in ("qwen", "llama") if f in name.lower()), None)
+            c = identity_slope(mx, my, family=family)
+            if c["null_calibrated"] is None:
+                print(f"{'':28s}  NOTE: no recorded-p1 calibration for family {family!r}; the calibrated "
+                      f"null is omitted below and only the two-state idealisation is shown.")
             print(f"{'':28s}  CONTROL 1, ln KL against ln(p1 p2) -- identity predicts slope 1.0, and this form does "
                   f"not depend on where the margins sit:")
             print(f"{'':28s}    slope {c['slope_vs_curvature']:+.3f} "

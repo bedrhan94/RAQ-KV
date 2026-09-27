@@ -4559,10 +4559,19 @@ recorded `top1_prob` of the D63 ladder: accurate where margins are deep (Qwen, m
 mass **2.30×**). So:
 
 * **The Qwen results, and with them the D73 correction, sit in the validated regime.**
-* **d74's numbers are assumption-limited** and no claim is made from them either way. Its `ln(p₁p₂)` slope of +0.710
-  excluding 1.0 is as likely the two-state form failing as anything physical.
-* **The δ family gap is a lower bound.** δ scales as `1/√(p₁p₂)`, and correcting each family by its measured tail
-  inflation moves the probe gap from 3.38× to **4.42×** — the correction widens it.
+* **Everything on the Llama side uses the two-state form in the regime where it is wrong** — Llama's margins are 2.688
+  nats on the probe and 1.312 on LongBench — so the δ cells and the d74 slope rest on the *same* assumption, and it
+  would be a contradiction to accept one and discard the other on those grounds alone. **What separates them is not
+  how much the assumption is violated but whether its violation is signed.** The error's direction is measured, not
+  merely unknown: Llama's true non-top mass is **2.30×** the runner-up against Qwen's **1.34×**, and δ scales as
+  `1/√(p₁p₂)`, so correcting it shrinks Llama's δ more than Qwen's in every case.
+* **So the δ family gap is a lower bound and can be claimed.** It is a *ratio*, and a bias whose sign is known moves it
+  one way only — the tail correction takes the probe gap from 3.38× to **4.42×**. A claim that survives its own
+  correction in the adverse direction is a claim.
+* **The d74 slope is not, and no claim is made from it either way.** It is a *point estimate against a null the bias
+  moves*, and it moves it into range: the two-state null is −0.580, the calibrated one −0.484, and the measured
+  −0.571 [−0.767, −0.375] contains both. Its `ln(p₁p₂)` slope of +0.710 excluding 1.0 is as likely the two-state form
+  failing as anything physical. Nothing is resolved there in either direction.
 
 **The fix is cheap and is now implemented rather than specified.** `_first_token_shift` records `top1_prob_clean` and
 `nontop_mass_clean` on every trial and `log_curvature_observed` consumes them, so every arm run from here needs no
