@@ -36,16 +36,24 @@ from raq_kv.analysis.contrasts import contrast_rng
 from raq_kv.utils.paths import resolve_output_root
 
 
-def per_sample(data: dict[str, dict], field: str) -> tuple[np.ndarray, np.ndarray]:
-    """``(margin, break rate)`` per sample, over the samples the arm's own golden answers correctly.
+def per_sample(data: dict[str, dict], condition: str = "correct") -> tuple[np.ndarray, np.ndarray]:
+    """``(margin, break rate)`` per sample. The margin comes from the fault-free distribution, so it is identical
+    across a sample's trials and is read from the first; the rate is the share of that sample's trials that changed.
 
-    The margin is read from the first trial because it is a property of the *fault-free* distribution and is
-    therefore identical across a sample's trials; the break rate is the fraction of that sample's trials whose
-    answer changed.
+    ``condition`` selects which samples count, and on a hard vehicle the choice changes the population sharply --
+    so both are reported rather than one being picked:
+
+    * ``correct`` -- the probe convention: samples the arm's own golden answers correctly. On LongBench this keeps 37
+      of 80 and **biases toward the samples the model handles well**, which are plausibly the robust ones.
+    * ``stable`` -- D73's condition for this vehicle: samples whose no-fault controls did not move. A margin and a
+      break rate are both defined against the arm's *own* unfaulted answer, so they are meaningful on a sample the
+      model gets wrong as long as it gets it wrong consistently.
     """
     margins, rates = [], []
     for record in data.values():
-        if not record.get("golden_correct"):
+        if condition == "correct" and not record.get("golden_correct"):
+            continue
+        if condition == "stable" and any(t["answer_changed"] for t in record["faults"] if t["trial"] < 0):
             continue
         trials = _trials(record)
         if not trials or "margin_clean" not in trials[0]:
@@ -73,6 +81,9 @@ def main() -> int:
     parser.add_argument("--arm", default="d71_margin_dose_qwen")
     parser.add_argument("--compare", default="d62_qwen_meta", help="the smaller arm this one supersedes in power")
     parser.add_argument("--arms", help="comma-separated arm names; overrides --arm/--compare entirely")
+    parser.add_argument("--condition", default="correct", choices=("correct", "stable"),
+                        help="which samples count; see per_sample. On a low-accuracy vehicle these differ sharply "
+                             "and both should be reported")
     parser.add_argument("--output-root", default="outputs")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -88,9 +99,9 @@ def main() -> int:
         except SystemExit:
             print(f"{name:24s}  not found or incomplete")
             continue
-        x, y = per_sample(data, "answer_changed")
+        x, y = per_sample(data, args.condition)
         if len(x) < 10:
-            print(f"{name:24s}  only {len(x)} usable samples")
+            print(f"{name:24s}  only {len(x)} usable samples under --condition {args.condition}")
             continue
         rho = float(stats.spearmanr(x, y).statistic)
         pval = float(stats.spearmanr(x, y).pvalue)
@@ -131,7 +142,7 @@ def main() -> int:
               f"to read:\n  a resolved negative rho promotes margin from correlate to mechanism, and a null bounds "
               f"how large the\n  within-family effect can be -- which is the thing D62 could not do at n = 31.")
 
-    dest = resolve_output_root(args.output_root) / "reports" / "margin_dose.json"
+    dest = resolve_output_root(args.output_root) / "reports" / f"margin_dose_{args.condition}.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(out, indent=1), encoding="utf-8")
     print(f"\nwrote {dest}")

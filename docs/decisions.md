@@ -4383,3 +4383,83 @@ samples, 8 trials, one flip, no protection, no pruning, `max_new_tokens` 24. One
 proportionally smaller perturbation than in the probe's ~2066, which would depress both hazards equally and cannot
 explain a ratio moving in opposite directions for the two families — but it does mean the absolute rates are not
 interchangeable with D59's.
+
+## D74 — The non-linear margin reading is refuted on its own test, and the margin carries no within-model information at all (2026-09-27)
+
+D73 closed D59's line and left a reading in its place: *hazard responds to the absolute answer margin non-linearly —
+steeply below roughly two to three nats and flatly above.* It rested on four aggregate points and one null, and D73
+named the test: **D71's design on a vehicle that places one model across the steep region.** That is this arm.
+
+Llama-3.2-3B on LongBench `2wikimqa` is that vehicle, and it was chosen on a measurement rather than a preference:
+its margins there span **0.250 to 6.500 nats**, median 1.312, with **75% below 3 nats** and 35% below 1, while Qwen on
+the same vehicle spans 1.500 to 20.250 with only 20% below 3. 80 of the 93 rows that fit the 6144-token bound, 16
+trials each.
+
+### The answer is no, under both conditionings
+
+| condition | n | margin median | break rate | **Spearman ρ** | 95% CI | p |
+|---|---|---|---|---|---|---|
+| `correct` (probe convention) | 37 | 2.000 | 0.0236 | −0.104 | [−0.409, +0.218] | 0.54 |
+| **`stable`** (D73's condition here) | **80** | 1.312 | 0.0406 | **+0.046** | **[−0.160, +0.251]** | 0.68 |
+
+Both conditionings are reported because on a low-accuracy vehicle they are different populations — `correct` keeps 37
+of 80 and biases toward the samples the model handles well — and because D74's config pre-registered the statistic
+without naming the conditioning, which was an omission. **They agree, so nothing turns on the choice.**
+
+**And the binned curve is not merely flat, it runs the wrong way in the middle.** Under `stable`:
+
+| margin (nats) | n | break rate |
+|---|---|---|
+| [0, 1) | 27 | 0.0255 |
+| [1, 2) | 26 | **0.0553** |
+| [2, 3) | 13 | **0.0577** |
+| [3, 5) | 9 | 0.0347 |
+| [5, ∞) | 5 | 0.0125 |
+
+The thinnest-margin bin breaks *less* than the 1–3 nat bins. A monotone decrease was the prediction; this is
+non-monotone, and the median split is **0.93×** — no direction at all.
+
+### So the reading is withdrawn, and something stronger takes its place
+
+**D73's non-linear account is refuted on the test D73 itself specified.** I framed it as "the reading that fits four
+points and one null, not a demonstrated functional form", and the form is now measured and absent.
+
+**Combined with D71, the statement gets stronger than either alone.** Two vehicles, two margin regimes, two nulls with
+tight bounds:
+
+* **D71** — Qwen on the probe, 196 samples all at 17–19 nats: ρ = −0.045 [−0.184, +0.095].
+* **D74** — Llama on LongBench, 80 samples spanning 0.25–6.5 nats: ρ = +0.046 [−0.160, +0.251].
+
+So the earlier escape — *D71 was null because all its samples sit in the flat region* — is closed. **The margin carries
+no information about which inputs of a given model are fragile, in either regime.** It is a correlate of the model ×
+task combination and nothing below that.
+
+### What this leaves of D62, and what it costs D73
+
+**D62's measurements stand and its scope narrows again.** The cross-family margin difference (17.07 against 3.27 nats,
+p = 1.2e-06), the matched-exposure control, and D73's confirmation that Qwen's flat KL was saturation-limited
+(**39,005×** rise on desaturation) are all measurements on their own data. What is now dead is every attempt to read
+them as a per-sample causal story: **whatever produces the family and vehicle pattern varies with model × task and not
+with individual answers**, which points at a global property of the output distribution rather than at any answer's
+distance from its rival.
+
+**And D73's cross-vehicle hazard inference was over-read.** Llama's hazard rose 2.63% → 9.38% and Qwen's fell
+1.17% → 0.78% between vehicles, and I attributed that to their margins moving within a non-linear curve. With the
+curve refuted, the honest reading is that the vehicles differ in many ways at once — task, context length, answer
+format, and the fact that one flip in a 6144-token cache is a proportionally smaller perturbation than in the probe's
+~2066 — and the hazard change is not attributable to the margin. D73's *confirmed* half, the KL rise, is untouched
+because it is a within-vehicle comparison of the same exposure.
+
+### One observation that survives and is worth flagging against itself
+
+D71's own binned curve shows its seven sub-5-nat samples breaking at 0.1250, 0.4375, 0.0625 and 0.0312 against the
+189 samples above 5 nats at 0.0188. Read alone that looks like exactly the steep region the reading predicted — and
+**D74 is the properly powered version of that observation and finds nothing.** Two samples at n = 1 each are not a
+curve, which is the whole reason this arm was run rather than the earlier binning being reported as support.
+
+### Scope
+
+One model, one vehicle, one exposure (a single metadata flip), 80 samples, break rate 2.4–4.1% so each sample's rate
+is coarse over 16 trials. The bound is on a **rank** correlation with that coarseness included; a finer per-sample
+fragility measure — the graded KL as the outcome instead of the rate — could resolve a smaller effect, and on this
+vehicle Qwen is no longer saturation-limited so that route is now open. It is not run.
