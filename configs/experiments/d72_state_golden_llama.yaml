@@ -1,0 +1,24 @@
+# D72: the multi-turn state baseline on the SECOND FAMILY. D69 is Qwen3-1.7B only.
+#
+# D69 found that with a perfect bf16 cache the model answers from the SUPERSEDED turn 43.06% of the time, almost
+# perfectly binary -- 1 of 360 samples said anything other than the new or the old value -- and wildly fact-type
+# dependent: tool_arg 0%, constraint 10%, number 15%, date 47%, entity 95%, id 92%. That is a striking claim about
+# multi-turn state and it rests on one model.
+#
+# PRE-REGISTERED PREDICTION, from D70 rather than from intuition. D70 found Llama-3.2-3B argument-fragile on tool
+# calls: with no compression it names the gold function in 96.7% of calls and still fails 51 of 120, 92.2% of those
+# failures having the right function and the wrong ARGUMENTS, against Qwen's 53.3%. `tool_arg` is the state probe's
+# only cell whose answer is an argument value, and it is the cell where Qwen scored 100% correct and 0% regressed.
+# So Llama is expected to do WORSE there specifically, and its failures there should be wrong values rather than
+# reversions -- which `mentions_distractor` separates.
+#
+# The other prediction is the one worth being wrong about: if the fact-type ordering (numeric and short reliable,
+# invented multi-word and alphanumeric not) reproduces on a second family, it is a property of the task; if it does
+# not, D69's breakdown was a property of Qwen and the vehicle measures something narrower than it looks.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/state_probe_v0.yaml
+name: d72_state_golden_llama
+task:
+  kind: qa_generate
+seed: 0
