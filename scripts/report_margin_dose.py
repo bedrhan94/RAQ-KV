@@ -72,6 +72,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--arm", default="d71_margin_dose_qwen")
     parser.add_argument("--compare", default="d62_qwen_meta", help="the smaller arm this one supersedes in power")
+    parser.add_argument("--arms", help="comma-separated arm names; overrides --arm/--compare entirely")
     parser.add_argument("--output-root", default="outputs")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -80,7 +81,8 @@ def main() -> int:
     out: dict = {}
     print("margin against per-sample break rate -- is the margin the mechanism?\n")
     print(f"{'arm':24s}{'n':>5s}{'margin median':>15s}{'break rate':>12s}{'Spearman':>11s}{'95% CI':>22s}{'p':>10s}")
-    for name in (args.arm, args.compare):
+    names = tuple(a.strip() for a in args.arms.split(",")) if args.arms else (args.arm, args.compare)
+    for name in names:
         try:
             data = load_arm(raw_root, name)
         except SystemExit:
@@ -103,10 +105,26 @@ def main() -> int:
         print(f"{'':24s}  secondary, median split: thin {split['thin_rate']:.4f} against thick "
               f"{split['thick_rate']:.4f}"
               + (f", ratio {split['ratio']:.2f}x" if split["ratio"] else ""))
+        # SECONDARY, pre-registered in D74: the curve's shape, not only its rank. The specific claim is that hazard
+        # is steep below ~2-3 nats and flat above, which a monotone rank alone cannot distinguish from a straight
+        # line. Fixed bin edges rather than quantiles, because the claim is about nats and quantile bins would move
+        # with each arm's own margin distribution.
+        edges = [0.0, 1.0, 2.0, 3.0, 5.0, float("inf")]
+        curve = []
+        for lo_e, hi_e in zip(edges, edges[1:], strict=False):
+            m = (x >= lo_e) & (x < hi_e)
+            if m.sum():
+                curve.append({"lo": lo_e, "hi": hi_e, "n": int(m.sum()), "break_rate": float(y[m].mean())})
+        if len(curve) > 1:
+            print(f"{'':24s}  secondary, break rate by margin bin (nats):")
+            for c in curve:
+                hi_s = "inf" if c["hi"] == float("inf") else f"{c['hi']:.0f}"
+                print(f"{'':26s}[{c['lo']:.0f}, {hi_s:>3s})  n={c['n']:3d}  {c['break_rate']:.4f}")
         out[name] = {"n": len(x), "spearman": rho, "ci": (lo, hi), "p": pval, "meets_d31": meets,
-                     "margin_median": float(np.median(x)), "break_rate": float(y.mean()), "median_split": split}
+                     "margin_median": float(np.median(x)), "break_rate": float(y.mean()),
+                     "median_split": split, "curve": curve}
 
-    if args.arm in out and args.compare in out:
+    if not args.arms and args.arm in out and args.compare in out:
         a, b = out[args.arm], out[args.compare]
         print(f"\n  {args.arm} carries {a['n'] / b['n']:.1f}x the samples of {args.compare} at the same 16 trials "
               f"each,\n  so it is a strict superset in power rather than a different experiment. The interval is what "

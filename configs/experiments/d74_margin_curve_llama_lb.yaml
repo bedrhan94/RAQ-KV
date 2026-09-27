@@ -1,0 +1,45 @@
+# D74: the within-model margin-hazard curve, measured where margins are actually contestable.
+#
+# D73 left a reading rather than a result. Hazard appears to respond to the absolute answer margin NON-LINEARLY --
+# steeply below roughly two to three nats and flatly above -- and that reading currently rests on four points (two
+# families x two vehicles) plus one null. The null is D71: Spearman(margin, per-sample break rate) = -0.045
+# [-0.184, +0.095] on 196 Qwen probe samples, every one of which sits at 17-19 nats, deep in the flat region. So D71
+# is not evidence against the margin mattering; it is evidence that it does not matter *there*.
+#
+# This is D71's design on a vehicle that places one model across the steep region. Measured before writing this file,
+# on D73's 20-sample Llama arm: margins span 0.250 to 6.500 nats, median 1.312, with 75% below 3 nats and 35% below 1.
+# Qwen on the same vehicle spans 1.500 to 20.250 with only 20% below 3, so Llama is the model this has to run on --
+# not a preference, a property of where its margins fall.
+#
+# 80 samples of the 93 that fit the 6144-token bound, x 16 trials, so the per-sample break rate is as fine as this
+# vehicle allows. D73's Llama arm already showed 0.1125 against 0.0500 on a median split of 20 samples; this is the
+# same contrast with four times the samples and twice the trials, plus the continuous form.
+#
+# PRE-REGISTERED, with the refutation stated because the confirming outcome is the one I expect and that is exactly
+# when a threshold gets chosen after the fact:
+#
+#   PRIMARY   Spearman(margin_clean, per-sample break rate) with a bootstrap CI, D31's rule. CONFIRMS the non-linear
+#             reading if clearly NEGATIVE and resolvable -- thinner margin, higher hazard -- against D71's matched
+#             null in the flat region. The pair is the test, not this arm alone.
+#   REFUTES   a null here too, with a bound comparable to D71's. That would mean the margin does not predict
+#             fragility within a model even where margins are contestable, the non-linear reading is wrong, and the
+#             cross-family difference D62 found needs a mechanism that is not the margin at all.
+#   SECONDARY the break rate per margin bin, descriptive, to show the curve's shape rather than only its rank. A
+#             monotone rank with a visibly flat tail above ~3 nats would support the specific claim; a straight line
+#             would support "margin matters" without the non-linearity.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/longbench_2wikimqa_6k.yaml
+name: d74_margin_curve_llama_lb
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 80
+  n_flips: 1
+  fault_target: metadata
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0
