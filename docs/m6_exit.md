@@ -7,23 +7,29 @@ documents and M6 did not.** That is the same gap M2 had, and M2's gap hid an unm
 (`docs/m2_exit.md`). Writing this is what closed the others.
 
 Headline: **the agent axis behaves unlike the retrieval axis in one specific way that matters for the allocator.**
-On the probe, protection decisions descend from *what gets corrupted*; on the tool-call vehicle, every measured
-failure descends from *what gets kept*. Across the three failing retention arms, **0 of 271 failures are argument
-errors** — when compression drops the gold schema the model names a different tool, and it never names the right tool
-and then mis-transcribes it. The same 4-bit quantization runs under all of them, so fidelity is not the lever there
-and retention is.
+On the probe, protection decisions descend from *what gets corrupted*; on the tool-call vehicle, damage descends from
+*what gets kept*. **Compression damage is selection damage** — when compression drops the gold schema the model names
+a different tool. The same 4-bit quantization runs under every arm, so fidelity is not the lever there and retention
+is, and query-aware span retention beats query-agnostic by **+0.78 and +0.76** on the two families (D70), overlapping
+intervals, both far past the pre-registered rule.
 
-**What M6 closing does NOT mean.** The agent work is **one model** on the task side. The BFCL arms are Qwen3-1.7B
-only, the state probe is Qwen3-1.7B only, and the second family's M6 contribution is the perplexity half of C4 plus
-the fault arms it already had. A third *family* remains unrun; D68 adds a third *model* on a scale axis inside one
-family, which is a different and weaker kind of generalisation, and D68 itself found that the QK-Norm account those
+**The exclusivity of that claim is a property of one model, and D70 narrowed it.** D64 measured **0 of 271** failures
+as argument errors on Qwen; on Llama the same holds for `magnitude` (0/69) and `recency` (0/69) but `prefixcache` gives
+**9 of 57 = 15.8%** [8.5%, 27.4%], excluding zero. The reason is in the baselines: **Llama is argument-fragile before
+compression touches it** — with none at all it names the gold function in 96.7% of calls and still fails 51 of 120,
+92.2% of those with the right function and the wrong arguments, against Qwen's 53.3%. An argument error needs the
+right function selected first, and the arms that never select it cannot produce one.
+
+**What M6 closing does NOT mean.** The **BFCL** arms now run on both families (D70), but the **state probe** (D69) and
+**C4's task half** (D66) remain Qwen3-1.7B only. A third *family* is unrun; D68 adds a third *model* on a scale axis
+inside one family, which is a weaker kind of generalisation, and D68 itself found that the QK-Norm account those
 family differences rested on does not survive a scale change cleanly.
 
 Criteria, from `docs/00_research_plan.md` §M6. M6 closes when every row is ✅ with evidence.
 
 | # | Deliverable | Status | Evidence |
 |---|---|---|---|
-| 1 | Tool-call evaluation: JSON parsing, function-name accuracy, type-aware argument matching, task success | ✅ | `evaluation/scoring.py::score_bfcl_ast` (D46): family-agnostic parsing that accepts `arguments`/`parameters`/`args`, tagged or bare JSON, BFCL's acceptable-value lists, and `""` as optional, reporting `named_gold_function` separately from `correct`. `score_tool_arg` is deliberately **frozen** (D46) so the older probe arms stay comparable. **D64 then used the split the field was built for:** across the three failing arms, **0 of 271** failures are argument errors, Wilson upper bounds 3.5–4.5%, while the uncompressed golden splits its own failures roughly evenly (8 of 15 with the right function named) |
+| 1 | Tool-call evaluation: JSON parsing, function-name accuracy, type-aware argument matching, task success | ✅ | `evaluation/scoring.py::score_bfcl_ast` (D46): family-agnostic parsing that accepts `arguments`/`parameters`/`args`, tagged or bare JSON, BFCL's acceptable-value lists, and `""` as optional, reporting `named_gold_function` separately from `correct`. `score_tool_arg` is deliberately **frozen** (D46) so the older probe arms stay comparable. **D64 then used the split the field was built for** and **D70 replicated it on a second family**: across Qwen's three failing arms 0 of 271 failures are argument errors, and on Llama `magnitude` and `recency` give 0 of 69 each while `prefixcache` gives **9 of 57** — so the mode is selection damage on both families and the *absolute* zero was Qwen-specific. `key_norm` fails **105 of 105** and **69 of 69**, as the Llama config predicted before the run |
 | 2 | BFCL AST subsets | ✅ | `data/bfcl.py`. Measured **before** building: BFCL's own AST categories cache 157–333 tokens at the median against this project's 512–4096, so they cannot host a retention experiment. The vehicle is the scenario the benchmark leaves out — a tool **catalogue** of 10–25 real schemas drawn from BFCL's 769 distinct ones, which is what a real agent carries and what makes the cache long enough to compress. `cache_len` sits at the user-question boundary, so the catalogue is a shared prefix cache |
 | 3 | Deterministic multi-turn state-carrying tasks | ✅ **D69** | BFCL cannot serve: `multi_turn_long_context` caches **157 tokens** at the median and its "long_context" comes from tool responses accumulated during execution, which needs the stateful harness row 8 records as declined. `data/state_probe.py` instead: document → correction → question, with the **superseded value registered as a scored distractor** so `mentions_distractor` names a reversion rather than flagging a generic error. Both assistant turns are fixed strings, which is what "deterministik" requires |
 | 4 | Pass@1 (greedy) | ✅ | Every arm's primary outcome throughout, greedy decoding on a modified cache with `model.generate()` banned (D4) |
@@ -34,11 +40,13 @@ Criteria, from `docs/00_research_plan.md` §M6. M6 closes when every row is ✅ 
 
 ## What M6 found that the plan did not anticipate
 
-**The agent axis and the retrieval axis fail through different channels (D64).** Compression damage on the tool-call
-vehicle is **entirely** tool selection — `m6_bfcl_joint` answers 102 of 105 against prefix-cache's 20, and the
-difference is whether the gold schema survives, not how precisely it is stored. `m6_bfcl_magnitude` fails **105 of
-105**, never selecting the gold schema on any sample, which is the strongest form yet of D47's correction of D42:
-key magnitude is not a weak signal for retention, it is an anti-signal.
+**The agent axis and the retrieval axis fail through different channels (D64, D70).** Compression damage on the
+tool-call vehicle is tool *selection* — `m6_bfcl_joint` answers 102 of 105 against prefix-cache's 20, `m9l_bfcl_joint`
+66 of 70 against 13, and the difference is whether the gold schema survives rather than how precisely it is stored.
+`magnitude` fails **105 of 105** and **69 of 69**, never selecting the gold schema on any sample of either family,
+which is the strongest form yet of D47's correction of D42: key magnitude is not a weak retention signal, it is a total
+anti-signal. **And D70 added the project's first Llama-only finding** — argument fragility on tool calls, which is the
+first result here belonging to the second family rather than being the absence of a first-family effect.
 
 **Pass^k restates the project's central protection result far more sharply than any rate did (D65).** "The guard
 removes 100% of measured task failure at BER 1e-6" is true and sounds like a small-count artefact. **0.1356 against
