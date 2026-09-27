@@ -1,0 +1,28 @@
+# D69: does cache damage make the model answer from a SUPERSEDED turn? The question the vehicle exists for.
+#
+# One metadata flip per trial, uniform over the arm's metadata bits -- the population D59/D62 established as the one
+# that matters, since a single code flip is harmless at the task level (D19) and not one of 12,000 drove the NLL
+# non-finite (D68). No protection, so nothing corrects the flip.
+#
+# Restricted to the three fact types whose unfaulted regression floor is 0-15% (see the dataset config): a cell at
+# 95% regression before any fault cannot show a fault effect.
+#
+# What makes this different from every other fault arm here: `mentions_distractor` names the SUPERSEDED value, so a
+# wrong answer is not merely wrong -- it is attributable to the model having lost turn 2 and fallen back on turn 1.
+# Every other vehicle in this project can say that damage broke an answer; none can say what the broken answer came
+# from.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/state_probe_v0_lowfloor.yaml
+name: d69_state_fault_meta
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 60
+  n_flips: 1
+  fault_target: metadata
+  n_trials: 8
+  n_control: 1
+seed: 0

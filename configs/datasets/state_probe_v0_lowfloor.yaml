@@ -1,0 +1,30 @@
+# State probe restricted to the fact types whose UNFAULTED regression floor is low enough to measure against (D69).
+#
+# Measured on the full vehicle before this file existed, 360 samples on a bf16 cache with no faults:
+#
+#   tool_arg   100.0% correct,  0.0% regressed      <- usable
+#   constraint  90.0%          10.0%                <- usable
+#   number      85.0%          15.0%                <- usable
+#   date        53.3%          46.7%                <- floor too high
+#   entity       5.0%          95.0%                <- at the regression ceiling
+#   id           6.7%          91.7%                <- at the regression ceiling
+#
+# entity and id are excluded because a model that already answers from the superseded turn 9 times in 10 cannot show
+# a fault-INDUCED regression; the measurement would be reading its own floor. That is the same reasoning that gives
+# every arm in this project its own golden, applied to the choice of cells rather than to the analysis. The exclusion
+# is a stated condition of the result, not a filter applied after seeing the fault outcomes -- these numbers come
+# from the unfaulted baseline and nothing else.
+dataset:
+  name: state_probe
+  version: v0
+  generator_seed: 0
+  fact_types: [tool_arg, constraint, number]
+  context_lengths: [1024, 2048]
+  depths: [0.1, 0.5, 0.9]
+  groups_per_cell: 10
+  n_distractors: 2
+  filler_hf_id: Salesforce/wikitext
+  filler_subset: wikitext-2-raw-v1
+  filler_split: train
+  filler_revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  max_new_tokens: 64

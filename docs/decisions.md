@@ -4031,3 +4031,86 @@ from scratch. Copying a config copies its claims.
 WikiText-2, 40 chunks, same strata and seed as both earlier campaigns. This is a **scale** axis inside one family:
 it says nothing new about Llama, and a third *family* remains unrun. No protection arm was run on Qwen3-4B, because
 the layer-indexed maps (`data_layers: [9..27]`) were written for 28 layers and do not transfer.
+
+## D69 — The multi-turn state probe, and a baseline that is a finding in its own right (2026-09-27)
+
+The plan's §M6 asks for "deterministik cok turlu durum tasiyan gorevler" and it was the last unbuilt deliverable.
+BFCL cannot serve it: `multi_turn_long_context` caches **157 tokens at the median** (measured in `data/bfcl.py`)
+against this project's 512–4096, and its "long_context" comes from tool responses accumulated during execution rather
+than a static prompt — which needs the stateful harness the plan flagged as its own decision point.
+
+**What a multi-turn vehicle adds that no single-turn one can: a wrong answer with a known provenance.** Three user
+turns — a document establishing ``<key> is <old_value>`` among same-type distractors, a correction saying it changed
+to ``<new_value>``, then the question. Gold is the new value and the **superseded** one is registered as a scorer
+distractor, so `mentions_distractor` measures **state regression** directly. Every other vehicle here can say damage
+broke an answer; none can say what the broken answer came from.
+
+Both assistant turns are fixed strings, because a vehicle whose intermediate turns were model-generated would not
+rebuild the same cache and none of this project's provenance rules would apply to it. The document, filler and depth
+placement are `RAQProbeBuilder`'s unchanged, so a state sample's document is the same object a probe sample's is.
+
+### The baseline, on a bf16 cache with no faults and no compression
+
+360 samples, `d69_state_golden`.
+
+| | correct | **state regression** | other wrong |
+|---|---|---|---|
+| all types | **56.67%** [51.50, 61.69] | **43.06%** [38.04, 48.22] | **0.28%** |
+
+**The outcome is almost perfectly binary: 1 sample of 360 answered anything other than the new value or the old
+one.** That is what makes the vehicle work — a wrong answer here is a *regression*, not noise.
+
+And the rate is wildly fact-type dependent:
+
+| fact type | correct | regressed |
+|---|---|---|
+| tool_arg | **100.0%** | **0.0%** |
+| constraint | 90.0% | 10.0% |
+| number | 85.0% | 15.0% |
+| date | 53.3% | 46.7% |
+| **entity** | **5.0%** | **95.0%** |
+| **id** | **6.7%** | **91.7%** |
+
+**A 1.7B model carries a correction reliably for some value types and almost never for others, with a perfect
+cache.** Nine times in ten it answers `entity` and `id` questions from the turn that was explicitly superseded. The
+mechanism is not measured here and I will not guess at it beyond noting that the two failing types are the ones whose
+values are invented multi-word or alphanumeric strings while the three reliable ones are numeric or short — which is
+a correlation across six cells, not an explanation.
+
+**Consequence for the damage measurement, and it is a design decision rather than an observation:** a cell already
+regressing 95% of the time cannot show a *fault-induced* regression, so the fault arm runs on `tool_arg`,
+`constraint` and `number` only (floors 0%, 10%, 15%). The exclusion comes from this unfaulted baseline and nothing
+else, which is the same reasoning that gives every arm here its own golden, applied to the choice of cells.
+
+### The bug that would have invalidated all of it, and how it surfaced
+
+The first baseline run reported **44.4% regression and 38.3% correct** with a plausible fact-type breakdown, and it
+was **a malformed prompt**. The probe's `query` span runs to the *end* of its prompt, so it contains the question and
+the trailing chat-template scaffolding; embedding that as a message's content made the rendered conversation end with
+**two assistant headers**, one closed and empty, and the model answered inside that.
+
+It surfaced through `tool_arg` scoring **0% correct and 0% regressed** — a third failure mode no model explanation
+fits. Reading the predictions showed the model emitting the *right* account number with the opening `<tool_call>` tag
+missing, which traced to the duplicated header rather than to the scorer. **The symptom appeared on one fact type and
+the cause was on all six.** After the fix `tool_arg` is 100% correct.
+
+`_question` now cuts at the earliest special token, taken from the tokenizer's own `all_special_tokens` rather than a
+hardcoded `<|im_end|>`, and raises if only scaffolding remains. Two tests pin it: exactly three assistant headers per
+sample and no template marker inside the question turn. The malformed run is superseded with the reason in its
+manifest.
+
+**Worth stating plainly: I was one step from interpreting that breakdown as a model finding.** The golden arm is what
+caught it, and only because one cell failed in a way that could not be a model behaviour. A vehicle whose bug had
+degraded all six types uniformly would have passed.
+
+### A second dispatcher
+
+`build_probe_samples` was wired for the new dataset and `QAGenerate.__init__` has its own dispatch, which was not —
+so the first run died on `NotImplementedError: state_probe`. It died **loudly**, which is why that branch is a raise
+and not a fallback: a silent default would have run the probe and recorded it under the state probe's name.
+
+### Scope
+
+One model, one seed, 6 fact types × 2 lengths × 10 groups × 3 depths, cache 1091–2186 tokens. The correction always
+targets the document's own target fact and always supersedes exactly one value; multi-update conversations, contested
+updates and longer histories are all unbuilt. Nothing here is a fault result — that is `d69_state_fault_meta`.

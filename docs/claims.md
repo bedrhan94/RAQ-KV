@@ -49,7 +49,7 @@ found instead was outside the matrix, in three places:
 
 1. **M6 has no exit document** — M0 through M5 all do. M2's missing one hid an unmet criterion for four days
    (`docs/m2_exit.md`), so this is the same gap in the same shape. Four M6 deliverables from the plan are
-   unbuilt: ~~**Pass^k**~~ (**done: D65**), **deterministic multi-turn state-carrying tasks**,
+   unbuilt: ~~**Pass^k**~~ (**done: D65**), ~~**deterministic multi-turn state-carrying tasks**~~ (**done: D69**),
    ~~**Qwen3-4B generalisation**~~ (**done: D68**), and ~~**C4's closure**~~ (**done: D66**).
 2. ~~**The perplexity axis is single-family.**~~ **Fixed: D66.** `cache_ppl` has 27 live runs and every one is Qwen3-1.7B; it has
    never run on Llama-3.2-3B. So M1's whole token-level metric story — and C4's evidence, which rests on D16's
