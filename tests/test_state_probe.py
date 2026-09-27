@@ -1,0 +1,96 @@
+"""The multi-turn state probe: the vehicle's whole value is that one wrong answer is diagnostic.
+
+If the stale value is not registered as a distractor, or the two values are not distinct, or either appears twice in
+the prompt, then `mentions_distractor` stops meaning "answered from the superseded turn" and becomes a generic
+wrong-answer flag -- at which point the vehicle measures nothing a single-turn probe could not.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from raq_kv.config.loader import load_yaml
+from raq_kv.config.schema import ModelConfig, StateProbeConfig
+from raq_kv.data.state_probe import ACK_DOCUMENT, ACK_UPDATE, build_state_probe
+from raq_kv.evaluation.scoring import SCORERS
+from raq_kv.models.loader import load_tokenizer
+from raq_kv.utils.paths import configs_dir
+
+
+@pytest.fixture(scope="module")
+def samples():
+    cfg = StateProbeConfig.model_validate(
+        load_yaml(configs_dir() / "datasets" / "state_probe_v0.yaml")["dataset"])
+    cfg = cfg.model_copy(update={"fact_types": ("number", "id", "tool_arg"), "context_lengths": (1024,),
+                                 "groups_per_cell": 2})
+    model = ModelConfig.model_validate(load_yaml(configs_dir() / "models" / "qwen3_1p7b.yaml")["model"])
+    return build_state_probe(cfg, load_tokenizer(model), dict(model.chat_template_kwargs))
+
+
+def test_the_stale_value_is_scored_as_a_distractor_so_regression_is_measurable(samples):
+    """The one property the vehicle exists for: answering from turn 1 is distinguishable from any other error."""
+    for s in samples:
+        stale, gold = s.meta["stale_value"], s.reference["gold"]
+        assert stale != gold
+        assert stale in s.reference["distractors"], "the superseded value must be a scored distractor"
+        good = SCORERS[s.scorer](s.gold_text, s.reference)
+        assert good["correct"] and not good["mentions_distractor"]
+        regressed = SCORERS[s.scorer](s.gold_text.replace(gold, stale), s.reference)
+        assert not regressed["correct"] and regressed["mentions_distractor"], (
+            f"{s.sample_id}: answering with the stale value must flag mentions_distractor")
+
+
+def test_both_values_are_distinct_from_every_other_value_in_the_prompt(samples):
+    """A new value overlapping the old one, or a distractor, would make `mentions_distractor` fire on a CORRECT
+    answer and the vehicle would report regressions that never happened."""
+    for s in samples:
+        vals = [s.meta["stale_value"], s.meta["updated_value"], *s.reference["distractors"]]
+        for i, a in enumerate(vals):
+            for b in vals[i + 1:]:
+                if a == b:
+                    continue
+                assert a not in b and b not in a, f"{s.sample_id}: {a!r} and {b!r} overlap"
+
+
+def test_each_value_occurs_exactly_once_in_the_prompt(samples):
+    for s in samples:
+        for value in (s.meta["stale_value"], s.meta["updated_value"]):
+            assert s.prompt_text.count(value) == 1, f"{s.sample_id}: {value!r} is not unique in the prompt"
+
+
+def test_the_conversation_is_five_messages_with_fixed_assistant_turns(samples):
+    """Deterministic is the plan's word. Model-generated intermediate turns would not rebuild the same cache."""
+    for s in samples:
+        assert s.meta["n_turns"] == 5
+        assert s.prompt_text.count(ACK_DOCUMENT) == 1 and s.prompt_text.count(ACK_UPDATE) == 1
+
+
+def test_every_labelled_value_is_inside_the_cache_and_the_question_is_not(samples):
+    """The split this project's whole protocol rests on: transforms act on the cache, the query is read through it."""
+    for s in samples:
+        for span in s.spans:
+            if span.role in ("target", "stale", "distractor"):
+                assert span.token_end <= s.cache_len, f"{s.sample_id}: {span.label}/{span.role} escaped the cache"
+        query = next(sp for sp in s.spans if sp.label == "query")
+        assert query.token_start == s.cache_len
+        assert s.meta["updated_value"] not in query.text, "the answer must not be visible in the query"
+
+
+def test_generation_is_deterministic_given_the_config(samples):
+    cfg = StateProbeConfig.model_validate(
+        load_yaml(configs_dir() / "datasets" / "state_probe_v0.yaml")["dataset"])
+    cfg = cfg.model_copy(update={"fact_types": ("number", "id", "tool_arg"), "context_lengths": (1024,),
+                                 "groups_per_cell": 2})
+    model = ModelConfig.model_validate(load_yaml(configs_dir() / "models" / "qwen3_1p7b.yaml")["model"])
+    again = build_state_probe(cfg, load_tokenizer(model), dict(model.chat_template_kwargs))
+    assert [s.sample_id for s in again] == [s.sample_id for s in samples]
+    assert [s.prompt_text for s in again] == [s.prompt_text for s in samples]
+
+
+def test_the_document_is_the_single_turn_probe_s_own(samples):
+    """Reuse, not reimplementation: a state sample's document has to be comparable to a probe sample's."""
+    for s in samples:
+        doc = next(sp for sp in s.spans if sp.label == "document")
+        assert doc.text and doc.text in s.prompt_text
+        # The correction restates the fact, so the target KEY appears in both turn 1 and turn 2.
+        assert s.prompt_text.count(s.meta["updated_value"]) == 1

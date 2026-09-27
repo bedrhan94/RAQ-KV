@@ -1,0 +1,15 @@
+# D69 baseline: can the model carry state across turns AT ALL, with no faults and no compression?
+#
+# This has to be established before any damage measurement means anything. If the model already answers from turn 1
+# on an undamaged bf16 cache, then a regression observed under faults is the vehicle's floor rather than the faults'
+# doing -- the same reasoning that makes every arm in this project carry its own golden.
+#
+# `mentions_distractor` is the quantity: the superseded value is registered as a distractor, so it separates
+# "answered from the stale turn" from every other kind of wrong answer.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/state_probe_v0.yaml
+name: d69_state_golden
+task:
+  kind: qa_generate
+seed: 0

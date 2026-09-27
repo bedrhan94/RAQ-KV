@@ -1,0 +1,24 @@
+# Three-turn state-carrying probe (D69). Filler revision verified 2026-09-17, same corpus as the single-turn probe.
+#
+# Turn 1 establishes a fact among same-type distractors, turn 2 corrects its value, turn 3 asks for it. The gold
+# answer is the CORRECTED value and the superseded one is registered as a distractor, so `mentions_distractor`
+# measures state regression -- the model answering from turn 1 after turn 2 replaced it. No single-turn vehicle can
+# distinguish that from any other wrong answer.
+#
+# Lengths are 1024 and 2048 rather than the probe's four: turns 2 and 3 add scaffolding on top of turn 1's document,
+# so a nominal 4096 would push the cache past where the 512 condition already showed nothing to measure, and two
+# lengths are enough to see whether the effect moves with cache size.
+dataset:
+  name: state_probe
+  version: v0
+  generator_seed: 0
+  fact_types: [number, id, date, entity, constraint, tool_arg]
+  context_lengths: [1024, 2048]
+  depths: [0.1, 0.5, 0.9]
+  groups_per_cell: 10
+  n_distractors: 2
+  filler_hf_id: Salesforce/wikitext
+  filler_subset: wikitext-2-raw-v1
+  filler_split: train
+  filler_revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  max_new_tokens: 64

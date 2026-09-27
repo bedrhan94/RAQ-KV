@@ -76,6 +76,39 @@ class RAQProbeConfig(StrictModel):
         return self
 
 
+class StateProbeConfig(StrictModel):
+    """Three-turn state-carrying probe (D69): a document, a correction, then the question.
+
+    Deliberately a superset of `RAQProbeConfig`'s field names rather than a wrapper around it. `RAQProbeBuilder`
+    reads those fields structurally to build the document, the filler and the depth placement, so the two vehicles
+    share one generator and a state sample's document is the same object a probe sample's is. A wrapper would have
+    meant either duplicating the generator or converting between two configs, and the first is how a project ends up
+    with two definitions of "depth".
+    """
+
+    name: Literal["state_probe"] = "state_probe"
+    version: Literal["v0"] = "v0"
+    generator_seed: int = 0
+    fact_types: tuple[FactType, ...] = ALL_FACT_TYPES  # type: ignore[assignment]
+    context_lengths: tuple[int, ...] = Field(default=(1024, 2048), description="Nominal cached tokens of turn 1")
+    depths: tuple[float, ...] = Field(default=(0.1, 0.5, 0.9), description="Nominal relative needle depth")
+    groups_per_cell: int = Field(default=10, gt=0)
+    n_distractors: int = Field(default=2, ge=0)
+    filler_hf_id: str = "Salesforce/wikitext"
+    filler_subset: str = "wikitext-2-raw-v1"
+    filler_split: str = "train"
+    filler_revision: str = Field(min_length=7)
+    max_new_tokens: int = Field(default=64, gt=0)
+
+    @model_validator(mode="after")
+    def _check(self) -> StateProbeConfig:
+        if any(not 0.0 <= d <= 1.0 for d in self.depths) or len(set(self.depths)) != len(self.depths):
+            raise ValueError("depths must be distinct values in [0, 1]")
+        if len(set(self.fact_types)) != len(self.fact_types):
+            raise ValueError("fact_types must be distinct")
+        return self
+
+
 class GSM8KConfig(StrictModel):
     name: Literal["gsm8k"] = "gsm8k"
     hf_id: str = "openai/gsm8k"
@@ -130,7 +163,8 @@ class BFCLConfig(StrictModel):
         return self
 
 
-Dataset = Annotated[WikiText2Config | RAQProbeConfig | GSM8KConfig | BFCLConfig, Field(discriminator="name")]
+Dataset = Annotated[WikiText2Config | RAQProbeConfig | StateProbeConfig | GSM8KConfig | BFCLConfig,
+                    Field(discriminator="name")]
 
 
 class CachePPLTask(StrictModel):
@@ -356,12 +390,14 @@ _TASK_DATASETS: dict[str, tuple[str, ...]] = {
     # metric finally sit on one domain, instead of a WikiText perplexity being compared with a probe task rate.
     "cache_ppl": ("wikitext2", "bfcl"),
     "latency": ("wikitext2",),
-    "qa_generate": ("raq_probe", "gsm8k", "bfcl"),
+    "qa_generate": ("raq_probe", "gsm8k", "bfcl", "state_probe"),
     "quant_sensitivity": ("wikitext2",),
     "fault_injection": ("wikitext2",),
     "fault_qa": ("raq_probe",),
-    "protection_arm": ("raq_probe",),
-    "retention": ("raq_probe", "bfcl"),
+    # state_probe added by D69: the multi-turn vehicle answers the same task kinds the probe does,
+    # because its samples are PromptSamples with the same span labels and scorers.
+    "protection_arm": ("raq_probe", "state_probe"),
+    "retention": ("raq_probe", "bfcl", "state_probe"),
 }
 
 

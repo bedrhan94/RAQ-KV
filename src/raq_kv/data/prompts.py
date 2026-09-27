@@ -68,6 +68,30 @@ def render_chat(
     )
 
 
+def render_conversation(
+    tokenizer: PreTrainedTokenizerBase,
+    messages: list[dict[str, str]],
+    template_kwargs: dict[str, Any],
+    tools: list[dict[str, Any]] | None = None,
+) -> str:
+    """Multi-turn analogue of :func:`render_chat`, for vehicles whose state lives in earlier turns.
+
+    Separate from `render_chat` rather than a widened signature, because every existing sample's identity depends on
+    that function producing byte-identical output: the probe, GSM8K and BFCL all hash their rendered prompts into a
+    data fingerprint, and a refactor that changed one whitespace would orphan every stored run.
+
+    The assistant turns are supplied by the caller and must be fixed strings. A vehicle whose intermediate turns
+    were model-generated would not be deterministic, and the plan asks for "deterministik cok turlu" tasks for
+    exactly that reason -- two runs of the same config have to build the same cache.
+    """
+    if not messages or messages[-1]["role"] != "user":
+        raise ValueError("a conversation must end with a user turn, since the answer is what gets generated")
+    kwargs = dict(template_kwargs)
+    if tools:
+        kwargs["tools"] = tools
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, **kwargs)
+
+
 def tokenize_with_offsets(tokenizer: PreTrainedTokenizerBase, text: str) -> tuple[list[int], list[tuple[int, int]]]:
     if not tokenizer.is_fast:
         raise TypeError("a fast tokenizer (offset mapping) is required")

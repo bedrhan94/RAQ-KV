@@ -31,11 +31,13 @@ from raq_kv.config.schema import (
     QuantSpec,
     RAQProbeConfig,
     RetentionTask,
+    StateProbeConfig,
 )
 from raq_kv.data.bfcl import bfcl_corpus_ids, build_bfcl, corpus_fingerprint
 from raq_kv.data.gsm8k import build_gsm8k
 from raq_kv.data.prompts import PromptSample, char_span_to_tokens, samples_fingerprint
 from raq_kv.data.raq_probe import build_raq_probe
+from raq_kv.data.state_probe import build_state_probe
 from raq_kv.data.wikitext import PPLChunk, chunks_fingerprint, make_chunks, tokenize_wikitext2
 from raq_kv.ecc.protect import build_protection
 from raq_kv.evaluation.latency import measure_generation_latency
@@ -670,6 +672,8 @@ def build_probe_samples(cfg: ExperimentConfig, tokenizer: Any) -> list[PromptSam
     kwargs = dict(cfg.model.chat_template_kwargs)
     if isinstance(cfg.dataset, BFCLConfig):
         return build_bfcl(cfg.dataset, tokenizer, kwargs)
+    if isinstance(cfg.dataset, StateProbeConfig):
+        return build_state_probe(cfg.dataset, tokenizer, kwargs)
     return build_raq_probe(cfg.dataset, tokenizer, kwargs)
 
 
