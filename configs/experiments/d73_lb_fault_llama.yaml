@@ -1,0 +1,44 @@
+# D73: does the fault-hazard ordering follow the confidence ordering? The measurement that closes D59's line.
+#
+# D59 asked why Llama-3.2-3B's per-metadata-flip hazard is 2.25x Qwen3-1.7B's. D62 answered it OUTSIDE the codec:
+# Qwen holds probe answers at top-1 probability 1.0000 against Llama's 0.9880, and at matched value-space exposure
+# Qwen's median KL is FLAT at ~3e-11 across a million-fold perturbation range -- which is what a saturated
+# distribution does and what no codec explanation produces. D62 stated its own limit, D63 tested it, and the limit is
+# real: on this vehicle Qwen desaturates completely (top-1 0.9284, margin 2.875 against 16.5-19.5 on the probe).
+#
+# So the question that remains is whether the HAZARD follows. It has never been measured on a task where Qwen is
+# unsaturated, and it is what the whole line turns on.
+#
+# THE OUTCOME IS THE GRADED ONE, and that is a power decision rather than a preference. A binary hazard of ~2% needs
+# hundreds of events to compare across families; the D63 pilot measured ~2 min per sample for Qwen and ~4 for Llama
+# here, so a properly powered binary arm is roughly 17 and 33 hours on this hardware and is not affordable. D62's own
+# finding is the way out: the KL is continuous and has far more power per trial than the rate it thresholds. 20
+# samples x 8 trials is well powered for a continuous outcome and hopeless for a binary one, and this arm reports the
+# former.
+#
+# PRE-REGISTERED PREDICTION. If saturation is the mechanism, Qwen's per-flip KL should RESPOND here where it was flat
+# on the probe -- its median should rise by orders of magnitude -- and the Qwen/Llama KL gap should COMPRESS, since
+# the margin ratio goes from 0.152-0.185x on the probe to 0.326x here. If Qwen's KL stays at ~1e-11 on a task where
+# it answers at p = 0.93, saturation was not the mechanism and D62's account is wrong.
+#
+# CONDITIONING, stated because it differs from every other arm here. LongBench accuracy is low -- the pilot put Qwen's
+# F1 mean at 0.071 -- so conditioning on a CORRECT golden would leave almost no samples. The outcome is therefore
+# `answer_changed` and the KL, which need the golden to be STABLE rather than right, and stability is what the no-fault
+# controls verify. `task_failure` is recorded and is not the primary.
+
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/longbench_2wikimqa_6k.yaml
+name: d73_lb_fault_llama
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 20
+  n_flips: 1
+  fault_target: metadata
+  record_perturbation: true
+  n_trials: 8
+  n_control: 1
+seed: 0

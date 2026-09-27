@@ -1,0 +1,17 @@
+# LongBench 2wikimqa bounded at 6144 cached tokens, for the fault arms (D73).
+#
+# A separate config from longbench_2wikimqa.yaml because the bound is a stated condition of any result drawn from it,
+# and two arms that disagree about it are two different populations. 6144 rather than 8192: the D63 pilot measured
+# ~2 min per sample for Qwen3-1.7B and ~4 for Llama-3.2-3B at a 7.7k median cache, and a fault arm multiplies that by
+# its trial count. Shorter contexts are what makes the arm finish.
+#
+# max_new_tokens 24 rather than 48 for the same reason and with the same honesty: 2wikimqa answers are 13 characters
+# at the median, so 24 tokens is ample, and a generation that runs to the cap was going to be wrong anyway.
+dataset:
+  name: longbench
+  hf_id: THUDM/LongBench
+  revision: 5e628be450b7e67fb7ae6e201bd6d8f7056f7672
+  subset: 2wikimqa
+  n_samples: 20
+  max_cache_tokens: 6144
+  max_new_tokens: 24

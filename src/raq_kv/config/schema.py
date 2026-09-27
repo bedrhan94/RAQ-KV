@@ -120,6 +120,37 @@ class GSM8KConfig(StrictModel):
     max_new_tokens: int = Field(default=512, gt=0)
 
 
+class LongBenchConfig(StrictModel):
+    """LongBench QA rows as a hard-task vehicle (D73), read from the pinned `data.zip` rather than its dataset script.
+
+    Why this exists: D62 answered why one family is more fault-fragile by output saturation, and stated its own limit
+    -- saturation is a property of model x task. A D63 pilot then showed the limit is real: on `2wikimqa` Qwen
+    desaturates completely (top-1 probability 0.9284 against 1.0000 on the probe, margin 2.875 against 16.5-19.5) and
+    the task is genuinely hard for it. What that pilot did **not** measure is whether the fault-hazard ORDERING follows
+    the saturation ordering, which is what would close the line D59 opened.
+    """
+
+    name: Literal["longbench"] = "longbench"
+    hf_id: str = "THUDM/LongBench"
+    revision: str = Field(min_length=7, description="Pinned commit SHA; the corpus is read from data.zip")
+    subset: Literal["2wikimqa", "hotpotqa", "multifieldqa_en", "musique", "qasper", "triviaqa"] = "2wikimqa"
+    n_samples: int = Field(default=40, gt=0)
+    # A STATED CONDITION, not a convenience. Measured in the D63 pilot on a 16 GB card: eager attention asks for
+    # 14.45 GiB at ~7k cached tokens and OOMs, and sdpa asks 19.36 GiB at ~15k on the 3B model and OOMs. So a vehicle
+    # that does not bound the context cannot run, and the bound has to be reported with every result drawn from it.
+    max_cache_tokens: int = Field(default=8192, gt=0,
+                                  description="Rows whose cached context exceeds this are skipped, and the skip "
+                                              "count is recorded")
+    max_new_tokens: int = Field(default=48, gt=0)
+
+    @model_validator(mode="after")
+    def _eager_is_impossible_here(self) -> LongBenchConfig:
+        if self.max_cache_tokens > 16384:
+            raise ValueError("no measurement in this project has run above ~15k cached tokens without OOM; raise this "
+                             "only alongside evidence that the hardware changed")
+        return self
+
+
 class BFCLConfig(StrictModel):
     """BFCL tool calls inside a synthetic tool catalogue, so the cache is long enough to compress.
 
@@ -163,8 +194,8 @@ class BFCLConfig(StrictModel):
         return self
 
 
-Dataset = Annotated[WikiText2Config | RAQProbeConfig | StateProbeConfig | GSM8KConfig | BFCLConfig,
-                    Field(discriminator="name")]
+Dataset = Annotated[WikiText2Config | RAQProbeConfig | StateProbeConfig | GSM8KConfig | BFCLConfig
+                    | LongBenchConfig, Field(discriminator="name")]
 
 
 class CachePPLTask(StrictModel):
@@ -390,13 +421,13 @@ _TASK_DATASETS: dict[str, tuple[str, ...]] = {
     # metric finally sit on one domain, instead of a WikiText perplexity being compared with a probe task rate.
     "cache_ppl": ("wikitext2", "bfcl"),
     "latency": ("wikitext2",),
-    "qa_generate": ("raq_probe", "gsm8k", "bfcl", "state_probe"),
+    "qa_generate": ("raq_probe", "gsm8k", "bfcl", "state_probe", "longbench"),
     "quant_sensitivity": ("wikitext2",),
     "fault_injection": ("wikitext2",),
     "fault_qa": ("raq_probe",),
     # state_probe added by D69: the multi-turn vehicle answers the same task kinds the probe does,
     # because its samples are PromptSamples with the same span labels and scorers.
-    "protection_arm": ("raq_probe", "state_probe"),
+    "protection_arm": ("raq_probe", "state_probe", "longbench"),
     "retention": ("raq_probe", "bfcl", "state_probe"),
 }
 

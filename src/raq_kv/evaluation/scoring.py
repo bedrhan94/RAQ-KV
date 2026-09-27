@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import re
+import string
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -203,9 +205,54 @@ def score_bfcl_ast(prediction: str, reference: dict[str, Any]) -> dict[str, Any]
             "named_gold_function": True, "calls_matched": len(matched_names)}
 
 
+_ARTICLES = re.compile(r"(a|an|the)")
+
+
+def _f1_normalise(text: str) -> list[str]:
+    """LongBench's own normalisation: casefold, drop punctuation, drop articles, split on whitespace.
+
+    Reimplemented rather than imported because LongBench ships it inside a dataset script this project does not
+    execute (D66 reads the corpus from the pinned `data.zip` instead). It is the standard SQuAD recipe and is stated
+    here so a reader can check it against the benchmark's own `metrics.py`.
+    """
+    text = text.casefold()
+    text = "".join(ch for ch in text if ch not in string.punctuation)
+    return _ARTICLES.sub(" ", text).split()
+
+
+def score_longbench_qa_f1(prediction: str, reference: dict[str, Any]) -> dict[str, Any]:
+    """Token-level F1 against the best of several references -- LongBench's metric for its QA subsets.
+
+    **Why F1 and not containment.** A free-form answer to a multi-hop question is a phrase, not a value, so exact
+    match scores a correct answer wrong for a trailing qualifier ("St Patrick's College, Dublin" against "St
+    Patrick's College"). `correct` is therefore a *thresholded* F1, and the threshold is stated rather than implied:
+    0.5, which is LongBench's own convention for calling an answer right.
+
+    `contains_gold` is reported beside it because the D63 pilot showed the two can disagree, and a format-insensitive
+    signal is what distinguishes a retrieval failure from a transcription one -- the distinction D64 and D70 turn on.
+    """
+    pred = _f1_normalise(prediction)
+    best, best_ref = 0.0, ""
+    for ref in reference.get("answers", []):
+        gold = _f1_normalise(ref)
+        common = Counter(pred) & Counter(gold)
+        overlap = sum(common.values())
+        if not overlap:
+            continue
+        precision, recall = overlap / len(pred), overlap / len(gold)
+        f1 = 2 * precision * recall / (precision + recall)
+        if f1 > best:
+            best, best_ref = f1, ref
+    contains = any(normalize_answer(r) in normalize_answer(prediction)
+                   for r in reference.get("answers", []) if r)
+    return {"correct": best >= 0.5, "f1": best, "em_strict": best == 1.0,
+            "contains_gold": contains, "best_reference": best_ref}
+
+
 SCORERS: dict[str, Callable[[str, dict[str, Any]], dict[str, Any]]] = {
     "exact_value": score_exact_value,
     "tool_arg": score_tool_arg,
     "bfcl_ast": score_bfcl_ast,
     "gsm8k": score_gsm8k,
+    "longbench_qa_f1": score_longbench_qa_f1,
 }

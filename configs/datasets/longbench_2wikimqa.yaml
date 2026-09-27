@@ -1,0 +1,21 @@
+# LongBench 2wikimqa as a hard-task vehicle (D73). Revision verified 2026-09-26 (the same pinned archive the D63
+# pilot read).
+#
+# Subset chosen on a free check rather than by preference. The candidates' answers were inspected before any run:
+# `passage_retrieval_en` is DISQUALIFIED because 120 of 120 answers begin with the token "Paragraph", so a margin
+# measured on the first answer token would measure confidence in a format word -- and it was the most tempting choice,
+# being the closest structural analogue to this project's probe. `2wikimqa` has 83 distinct first answer tokens in 120
+# rows with a top-1 share of 0.07 and a median answer of 13 characters: short, content-bearing, comparable to what the
+# probe asks for.
+#
+# max_cache_tokens 8192 is the measured ceiling, not a round number: on a 16 GB card sdpa OOMed at ~15k tokens on the
+# 3B model during the D63 pilot, and eager OOMed at ~7k, so the attention-scorer path is unavailable here at any
+# length and only logit-based and fault work is possible.
+dataset:
+  name: longbench
+  hf_id: THUDM/LongBench
+  revision: 5e628be450b7e67fb7ae6e201bd6d8f7056f7672
+  subset: 2wikimqa
+  n_samples: 40
+  max_cache_tokens: 8192
+  max_new_tokens: 48

@@ -25,6 +25,7 @@ from raq_kv.config.schema import (
     FaultQATask,
     GSM8KConfig,
     LatencyTask,
+    LongBenchConfig,
     ProtectionArmTask,
     QATask,
     QuantSensitivityTask,
@@ -35,6 +36,7 @@ from raq_kv.config.schema import (
 )
 from raq_kv.data.bfcl import bfcl_corpus_ids, build_bfcl, corpus_fingerprint
 from raq_kv.data.gsm8k import build_gsm8k
+from raq_kv.data.longbench import build_longbench
 from raq_kv.data.prompts import PromptSample, char_span_to_tokens, samples_fingerprint
 from raq_kv.data.raq_probe import build_raq_probe
 from raq_kv.data.state_probe import build_state_probe
@@ -257,6 +259,8 @@ class QAGenerate:
             samples = build_bfcl(cfg.dataset, self.tokenizer, template_kwargs)
         elif isinstance(cfg.dataset, StateProbeConfig):
             samples = build_state_probe(cfg.dataset, self.tokenizer, template_kwargs)
+        elif isinstance(cfg.dataset, LongBenchConfig):
+            samples = build_longbench(cfg.dataset, self.tokenizer, template_kwargs)
         else:
             # Two dispatchers exist -- this one and `build_probe_samples` -- and D69 wired only the second, so the
             # first run of the new vehicle died here. It died *loudly*, which is why this branch is a raise and not
@@ -681,6 +685,8 @@ def build_probe_samples(cfg: ExperimentConfig, tokenizer: Any) -> list[PromptSam
         return build_bfcl(cfg.dataset, tokenizer, kwargs)
     if isinstance(cfg.dataset, StateProbeConfig):
         return build_state_probe(cfg.dataset, tokenizer, kwargs)
+    if isinstance(cfg.dataset, LongBenchConfig):
+        return build_longbench(cfg.dataset, tokenizer, kwargs)
     return build_raq_probe(cfg.dataset, tokenizer, kwargs)
 
 
