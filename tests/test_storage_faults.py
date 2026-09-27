@@ -421,3 +421,114 @@ def test_the_kl_is_finite_when_the_faulty_distribution_has_minus_infinity_tokens
     assert not math.isnan(row["kl_first_token"]), "0 * inf must contribute zero, not NaN"
     assert row["kl_first_token"] == pytest.approx(0.0, abs=1e-9), (
         "the two distributions agree wherever the clean model has mass, so the KL is zero")
+
+
+def test_metadata_part_restriction_keeps_a_group_size_sweep_interpretable():
+    """D76's guard: a sweep over the KEY group size cannot use a storage-wide metadata draw.
+
+    Keys are ``group_token`` so their scale count moves with ``1/group_size``; values are ``per_token`` and theirs does
+    not. So the *mixture* of parts a bit-uniform draw lands on shifts at every rung of a group-size sweep, and since a
+    value scale governs a different number of values than a key scale, damage per flip would move for a reason that has
+    nothing to do with the span under test. The first assertion measures that shift rather than asserting it.
+    """
+    import torch
+
+    from raq_kv.config.schema import QuantizationConfig, QuantSpec
+    from raq_kv.faults.storage import generate_metadata_plan, storage_regions
+
+    g = torch.Generator().manual_seed(11)
+    snap = KVSnapshot(keys=[torch.randn(1, 2, 256, 8, generator=g) for _ in range(2)],
+                      values=[torch.randn(1, 2, 256, 8, generator=g) for _ in range(2)],
+                      positions=torch.arange(256), next_position=256)
+
+    def build(group: int):
+        return quantize_to_codes(snap, QuantizationConfig(
+            keys=QuantSpec(bits=4, axis="group_token", group_size=group), values=QuantSpec(bits=4, axis="per_token")))
+
+    # The confound, measured: the value share of a storage-wide metadata draw moves with the key group size.
+    shares = {}
+    for group in (8, 128):
+        regions = [r for r in storage_regions(build(group), None) if r.target in ("scale", "zero")]
+        key_bits = sum(r.n_bits for r in regions if r.part == "keys")
+        val_bits = sum(r.n_bits for r in regions if r.part == "values")
+        # The KEY share, not the value share: the value share saturates toward 1 and its ratio understates the
+        # shift, while the key share is the population whose span the sweep varies and it moves proportionally.
+        shares[group] = key_bits / (key_bits + val_bits)
+    assert shares[8] > shares[128] * 5, (
+        f"the motivating confound should be large: key share {shares[8]:.3f} at group 8 against "
+        f"{shares[128]:.3f} at group 128")
+
+    # And the restriction removes it: every site is a key scale or zero, at every rung.
+    for group in (8, 128):
+        qkv = build(group)
+        sites = generate_metadata_plan(qkv, seed=0, n_flips=200, part="keys")
+        assert {s.part for s in sites} == {"keys"}
+        assert {s.target for s in sites} <= {"scale", "zero"}
+        assert len({(s.layer, s.part, s.target, s.index, s.bit) for s in sites}) == 200
+        vals = generate_metadata_plan(qkv, seed=0, n_flips=200, part="values")
+        assert {s.part for s in vals} == {"values"}
+
+    qkv = build(32)
+    # Default None is the storage-wide draw, unchanged -- the existing arms' population must not move.
+    assert [s.to_dict() for s in generate_metadata_plan(qkv, 0, 50)] == \
+           [s.to_dict() for s in generate_metadata_plan(qkv, 0, 50, part=None)]
+    assert {s.part for s in generate_metadata_plan(qkv, 0, 500)} == {"keys", "values"}
+    with pytest.raises(ValueError, match="part must be None"):
+        generate_metadata_plan(qkv, 0, 10, part="key")
+
+
+def test_metadata_part_needs_a_metadata_target():
+    """Set on an arm that does not draw metadata it would be silently ignored, so the config refuses it."""
+    from raq_kv.config.schema import ProtectionArmTask
+
+    ok = ProtectionArmTask(kind="protection_arm", n_samples=4, n_flips=1,
+                           fault_target="metadata", metadata_part="keys")
+    assert ok.metadata_part == "keys"
+    with pytest.raises(ValueError, match="needs `fault_target: metadata`"):
+        ProtectionArmTask(kind="protection_arm", n_samples=4, n_flips=1, metadata_part="keys")
+
+
+def test_governed_values_counts_the_short_trailing_group_rather_than_the_nominal_one():
+    """D76's blocking correction: the last group of a sequence is short, and at coarse granularity it is not rare.
+
+    With 2052 tokens at group_size 512 there are 5 groups and the last holds 4, so one uniform draw over key scales in
+    five reaches 4 values rather than 512. Regressing damage on the nominal group size would compress the realised
+    32-512 span from 16x to 13x and bias the exponent downward by 0.925 -- toward D76's most consequential answer.
+    """
+    import torch
+
+    from raq_kv.config.schema import QuantizationConfig, QuantSpec
+    from raq_kv.faults.storage import governed_values, storage_regions
+
+    tokens, group, heads, dim = 2052, 512, 2, 4
+    g = torch.Generator().manual_seed(3)
+    snap = KVSnapshot(keys=[torch.randn(1, heads, tokens, dim, generator=g)],
+                      values=[torch.randn(1, heads, tokens, dim, generator=g)],
+                      positions=torch.arange(tokens), next_position=tokens)
+    qkv = quantize_to_codes(snap, QuantizationConfig(
+        keys=QuantSpec(bits=4, axis="group_token", group_size=group), values=QuantSpec(bits=4, axis="per_token")))
+
+    key_scale = next(r for r in storage_regions(qkv, None) if r.part == "keys" and r.target == "scale")
+    n_groups = key_scale.shape[2]
+    assert n_groups == 5, key_scale.shape
+    # Full groups govern the nominal 512; the trailing one governs what is actually left.
+    spans = {}
+    for grp in range(n_groups):
+        site = FaultSite(0, "keys", "scale", (0, 0, grp, 0), 0, "t")
+        spans[grp] = governed_values(qkv, site)
+    assert [spans[i] for i in range(4)] == [512] * 4, spans
+    assert spans[4] == tokens - 4 * group == 4, spans
+    assert spans[4] != group, "the whole point: the trailing group is not the nominal group size"
+
+    # A per_token value scale spans the head dimension instead, and a code bit reaches only itself.
+    val_scale = next(r for r in storage_regions(qkv, None) if r.part == "values" and r.target == "scale")
+    assert val_scale.shape == (1, heads, tokens, 1), val_scale.shape
+    assert governed_values(qkv, FaultSite(0, "values", "scale", (0, 0, 7, 0), 0, "t")) == dim
+    assert governed_values(qkv, FaultSite(0, "keys", "code", (0, 0, 7, 0), 0, "t")) == 1
+    # Zero-points govern the same span as their scales -- D68's "most dangerous word" reaches no further.
+    assert governed_values(qkv, FaultSite(0, "keys", "zero", (0, 0, 0, 0), 0, "t")) == group
+
+    # And the realised mean span is what a sweep must regress on: 2052/5 = 410.4, not 512.
+    realised = sum(spans.values()) / n_groups
+    assert abs(realised - tokens / n_groups) < 1e-9
+    assert realised < group * 0.81, realised

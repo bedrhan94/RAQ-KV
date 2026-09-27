@@ -1,0 +1,68 @@
+# D76: does the CODEC move delta? The first codec-side lever candidate since D62 closed four mechanisms.
+#
+# D62 tested dynamic range, attention spread, attention-rank-conditioned severity and per-flip severity, and none was
+# a codec-side lever -- the useful negative for the allocator, and it left nothing to choose between on reliability
+# grounds. D75 then produced a codec-side quantity where there was none: delta, the effective logit perturbation from
+# one metadata flip, recovered by inverting the softmax-curvature identity ln KL = ln(p1 p2) + 2 ln delta. Unlike a KL
+# it is comparable across configurations. It is a MODEL property across tasks (Qwen 0.2514 probe / 0.1901 LongBench,
+# vehicle ratios failing D31) and differs 2-3x across families. Whether it moves with a CODEC SETTING is unmeasured,
+# and that is the only version an allocator can act on.
+#
+# The dial. Keys are group_token, so a key scale is indexed by (head, token-group, channel) and governs exactly
+# `group_size` values. So group_size IS the number of values one corrupted scale reaches, with a 16x usable range here.
+#
+# PRIMARY, pre-registered in docs/preregistrations/d76_prereg.md with three answers named in advance: alpha, the slope
+# of ln(median delta) against ln(group_size). alpha ~ 1 means the span's values contribute additively; alpha ~ 0.5
+# means their errors add in quadrature; alpha ~ 0 means damage is set by something other than span.
+#
+# THE ALLOCATOR CONSEQUENCE, written down before the run so it is not constructed afterwards. Key metadata bits scale
+# as 1/g, so at fixed BER the NUMBER of key metadata flips also scales as 1/g while damage per flip scales as g^alpha.
+# Total expected damage therefore goes as g^(alpha-1):
+#   alpha = 1 -> the two effects cancel and group size is NOT a reliability lever; choose g on storage alone.
+#   alpha < 1 -> larger groups are strictly better AND cheaper in bits; no trade-off, push g up until quality binds.
+#   alpha > 1 -> smaller groups are better and cost more bits; the exponent sets the exchange rate.
+# The project has used group_token 128 everywhere since M1 without this being measured.
+#
+# WHY metadata_part IS REQUIRED AND NEW. A storage-wide metadata draw makes this sweep uninterpretable: key scale
+# count moves with 1/g while value scale count (per_token) does not, so the MIXTURE of parts a bit-uniform draw lands
+# on shifts at every rung, and a value scale governs a different number of values than a key scale. Measured on a
+# fixture in tests/test_storage_faults.py: the key share of the draw is 0.500 at g=8 and 0.059 at g=128. Damage per
+# flip would have moved for a reason unrelated to span. Defaults to None, so no existing arm changes.
+#
+# EXPOSURE IS ONE FLIP, NOT A FIXED BER. The 1/g scaling of flip count is applied analytically above. At fixed BER
+# span and count move together and the exponent is not recoverable.
+#
+# Vehicle chosen on a measurement, not a preference: this is where the two-state form used to recover delta is
+# VALIDATED (d ln(1-p1)/dm = -0.994 [-1.029, -0.958] against a two-state -1.000). 40 samples x 16 trials is D62's
+# size, for comparability.
+#
+# THE g=128 ANCHOR, stated correctly. D75's delta = 0.2514 came from d62_qwen_meta, whose draw was storage-wide and
+# therefore ~94% VALUE scales on this geometry, so it is not a keys-only number and cannot be filtered into one (the
+# part was never recorded per trial; it is from now on). But it is still a real check, because of an arithmetic
+# coincidence worth using: head_dim is 128 here, so a per_token VALUE scale governs 128 values and a group_token KEY
+# scale at group_size 128 governs 128 values too. If delta depends on the SPAN a corrupted scale reaches and not on
+# which part it sits in, the g=128 rung must land near 0.2514. If it does not, that is a part effect, which is itself
+# a finding rather than a failed check.
+# This is also the first arm to record top1_prob_clean and nontop_mass_clean, so delta can be computed BOTH ways and
+# the size of D75's assumption becomes a measurement.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: d76_group_span_qwen
+task:
+  kind: protection_arm
+  n_samples: 40
+  n_flips: 1
+  fault_target: metadata
+  metadata_part: keys
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 4, axis: group_token, group_size: 32}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 64}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 256}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 512}, values: {bits: 4, axis: per_token}}

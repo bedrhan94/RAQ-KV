@@ -112,11 +112,58 @@ def generate_storage_plan(
     return sites
 
 
+def governed_values(qkv: QuantizedKV, site: FaultSite) -> int:
+    """How many stored values the corrupted element actually reaches. A code bit reaches one; a scale reaches its group.
+
+    D76 needs this and the nominal ``group_size`` will not do, because **the trailing group of a sequence is short and
+    it is not rare.** On the RAQ probe the median cache is 2052 tokens, so at ``group_size`` 512 there are 5 groups and
+    the last holds **4** tokens: one draw in five lands on an element governing 4 values rather than 512, a 128×
+    discrepancy, and at the shortest cache (514 tokens) there are 2 groups and it is one draw in two. Regressing damage
+    on the nominal group size would compress the realised 32-512 span from 16× to **13×** and bias the exponent
+    **downward by a factor of 0.925** — toward the conclusion that larger groups are strictly better, which is the most
+    consequential of the three answers D76 names.
+
+    Recorded per trial, it turns that sweep from five contaminated rungs into a regression on the realised span, where
+    the short groups are data rather than contamination.
+
+    The group size comes from the ``QuantizedTensor``'s own spec rather than being inferred from the grids, because
+    ``ceil(C/S)`` is not the group size when the last group is partial: at 2052 tokens in 5 groups it gives 411, not
+    512.
+    """
+    stored = qkv.part(site.layer, site.part)
+    if not isinstance(stored, QuantizedTensor):
+        raise ValueError(f"layer {site.layer} {site.part} is not quantized, so it has no governed values")
+    if site.target not in ("scale", "zero"):
+        return 1
+    grid = stored.scales if site.target == "scale" else stored.zeros
+    if grid is None:
+        raise ValueError(f"layer {site.layer} {site.part} has no {site.target} grid (symmetric quantization?)")
+    codes, scales = tuple(stored.codes.shape), tuple(grid.shape)
+    if len(codes) != len(scales):
+        raise ValueError(f"grid rank {scales} does not match code rank {codes}")
+    total, grouped = 1, 0
+    for axis, (c, s) in enumerate(zip(codes, scales, strict=True)):
+        if s == c:
+            continue  # one metadata element per value along this axis
+        if s == 1:
+            total *= c  # this element spans the whole axis
+            continue
+        grouped += 1
+        if stored.group_size is None:
+            raise ValueError(f"axis {axis} is grouped ({s} against {c}) but the tensor records no group_size")
+        start = site.index[axis] * stored.group_size
+        total *= max(0, min(stored.group_size, c - start))
+    if grouped > 1:
+        raise ValueError(f"grid {scales} against codes {codes} groups {grouped} axes; this helper assumes at most one")
+    return total
+
+
 def generate_metadata_plan(
     qkv: QuantizedKV,
     seed: int,
     n_flips: int,
     stratum: str = "metadata_uniform",
+    part: str | None = None,
 ) -> list[FaultSite]:
     """``n_flips`` single-bit upsets uniform over the arm's **quantization metadata bits**.
 
@@ -129,11 +176,24 @@ def generate_metadata_plan(
     scale and zero regions. That is what makes a per-metadata-flip rate measured here comparable to one derived
     from a storage-wide campaign by conditioning on the flips that landed in metadata (D59) -- the same population,
     reached from the other direction, rather than a second population with a similar name.
+
+    ``part`` narrows the draw to ``"keys"`` or ``"values"``, and it exists because a sweep over the **key** group size
+    is otherwise uninterpretable. Keys are ``group_token`` and values ``per_token``, so varying the key group size
+    changes the number of key scales by the same factor while leaving the value scales untouched: on the probe at
+    ``group_size`` 32 there are roughly 66,600 key scales against 16,500 value scales, and at 512 roughly 5,100
+    against the same 16,500. **The mixture of which part a uniform draw lands on therefore moves with the group
+    size**, and a value scale governs a different number of values than a key scale, so damage per flip would change
+    for a reason that has nothing to do with the quantity under test. Default ``None`` keeps the storage-wide draw, so
+    no existing arm's population changes.
     """
-    regions = [r for r in storage_regions(qkv, None) if r.target in ("scale", "zero")]
+    if part not in (None, "keys", "values"):
+        raise ValueError(f"part must be None, 'keys' or 'values', not {part!r}")
+    regions = [r for r in storage_regions(qkv, None)
+               if r.target in ("scale", "zero") and (part is None or r.part == part)]
     total = total_stored_bits(regions)
     if total == 0:
-        raise ValueError("no metadata regions; a symmetric unquantized arm has no scales to corrupt")
+        raise ValueError(f"no metadata regions for part={part!r}; a symmetric unquantized arm has no scales "
+                         f"to corrupt")
     if n_flips > total:
         raise ValueError(f"cannot draw {n_flips} distinct metadata bits from {total}")
     rng = random.Random(seed)
@@ -226,6 +286,11 @@ def flips_for_rate(qkv: QuantizedKV, guard: ProtectedKV | None, rate: float) -> 
 def plan_composition(sites: list[FaultSite]) -> dict[str, Any]:
     """Where a plan's flips landed, by target -- reported so a reader can check the draw against the layout."""
     counts: dict[str, int] = {}
+    parts: dict[str, int] = {}
     for site in sites:
         counts[site.target] = counts.get(site.target, 0) + 1
-    return {"n_flips": len(sites), "by_target": counts}
+        # D76 wanted to filter an existing arm's flips to keys only and could not: the part was never recorded, so a
+        # storage-wide draw's records cannot be split after the fact even though its population is 94% value scales on
+        # this geometry. One dict, and the next arm does not have the same gap.
+        parts[site.part] = parts.get(site.part, 0) + 1
+    return {"n_flips": len(sites), "by_target": counts, "by_part": parts}

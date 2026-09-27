@@ -61,6 +61,7 @@ from raq_kv.faults.storage import (
     generate_group_targeted_plan,
     generate_metadata_plan,
     generate_storage_plan,
+    governed_values,
     plan_composition,
     storage_regions,
     total_stored_bits,
@@ -977,7 +978,7 @@ class ProtectionArm:
                     self.task.n_flips // self.task.burst_bits, self.task.burst_bits)
                 plan = [site for burst in bursts for site in burst]
             elif self.task.fault_target == "metadata":
-                plan = generate_metadata_plan(qkv, trial_seed, n_flips)
+                plan = generate_metadata_plan(qkv, trial_seed, n_flips, part=self.task.metadata_part)
             elif target is not None:
                 plan = generate_group_targeted_plan(qkv, trial_seed, target["target_group_index"],
                                                     target["n_token_groups"], n_flips)
@@ -998,8 +999,15 @@ class ProtectionArm:
             # here would read as "not measured" in the report instead of "there was nothing to detect with".
             due = int(info.get("due_words", 0))
             corrected = int(info.get("corrected_words", 0))
+            # D76: how many stored values this trial's flips actually reached. The nominal group size will not do --
+            # the trailing group of a sequence is short and not rare (at the probe's median 2052 tokens and group 512
+            # there are 5 groups and the last holds 4), so a sweep over granularity has to regress damage on the
+            # realised span or it biases the exponent toward "larger groups are better". Recorded for every arm, not
+            # only the sweep: it is one integer and it makes any past-style uniform arm's exposure legible too.
+            spans = [governed_values(qkv, site) for site in plan]
             rows.append({
                 "trial": trial, **info, **plan_composition(plan),
+                "governed_values": sum(spans), "governed_values_max": max(spans) if spans else 0,
                 "corrected_words": corrected, "due_words": due, "words_read": int(info.get("words_read", 0)),
                 "detected": bool(due or corrected),
                 "answer_changed": changed,

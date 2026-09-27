@@ -360,6 +360,16 @@ class ProtectionArmTask(StrictModel):
     burst_bits: int | None = Field(
         default=None, ge=2, description="Bits flipped together inside one (layer, part, token, head) word; the "
                                         "arm's `n_flips` is then delivered as `n_flips / burst_bits` bursts")
+    # D76: a sweep over the KEY group size cannot use a storage-wide metadata draw, because the two parts scale
+    # differently. Keys are `group_token` so their scale count moves with `1/group_size`, while values are `per_token`
+    # and theirs does not: on the probe that is ~66,600 key scales against 16,500 value scales at group 32, and ~5,100
+    # against the same 16,500 at 512. A uniform draw therefore lands on a different MIXTURE of parts at each rung, and
+    # a value scale governs a different number of values than a key scale, so damage per flip would move for a reason
+    # unrelated to the span under test. None keeps the storage-wide draw and every existing identity.
+    metadata_part: Literal["keys", "values"] | None = Field(
+        default=None, description="With `fault_target: metadata`, confine the draw to one part's scale and zero bits. "
+                                  "Required when sweeping a per-part granularity, so the population is homogeneous "
+                                  "across rungs")
     n_trials: int = Field(default=8, ge=1, description="Independent storage-wide fault draws per sample")
     n_control: int = Field(default=1, ge=0, description="No-fault scorings; must be exactly zero damage")
 
@@ -407,6 +417,10 @@ class ProtectionArmTask(StrictModel):
                 raise ValueError(f"a {self.fault_target!r}-targeted arm states its exposure as `n_flips` (flips "
                                  f"inside the narrowed population); a rate over the arm's whole storage sizes a "
                                  f"count against bits the draw never sees, so the stated and real exposure differ")
+        if self.metadata_part is not None and self.fault_target != "metadata":
+            raise ValueError(f"`metadata_part: {self.metadata_part}` narrows a metadata draw, so it needs "
+                             f"`fault_target: metadata`; with fault_target {self.fault_target!r} it would be "
+                             f"silently ignored and the arm's recorded population would not be the one intended")
         return self
 
 
