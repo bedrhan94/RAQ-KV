@@ -258,3 +258,34 @@ def test_overrides_still_work_on_a_config_without_a_sweep():
     src = pathlib.Path(__file__).resolve().parents[1] / "configs" / "experiments" / "d61_qwen_top.yaml"
     cfgs = load_experiment_configs(src, overrides=["task.n_samples=3"])
     assert len(cfgs) == 1 and cfgs[0].task.n_samples == 3
+
+
+def test_a_task_asking_for_more_samples_than_the_vehicle_supplies_is_refused():
+    """The trap that ran D74 at a quarter of its planned power with nothing saying so.
+
+    Two config fields are called `n_samples`, one on the dataset and one on the task, and the smaller silently won:
+    D74's task asked for 80 while its dataset config capped at 20. A pre-registered design that quietly runs at a
+    quarter of its power is worse than one that fails, because the numbers still look like numbers.
+    """
+    import pytest
+
+    from raq_kv.data.prompts import PromptSample
+    from raq_kv.experiments.tasks import subset_samples
+
+    def fake(i):
+        import torch
+        return PromptSample(sample_id=f"s{i:02d}", prompt_text="x", prompt_ids=torch.zeros(1, dtype=torch.long),
+                            cache_len=0, scorer="exact_value", reference={}, gold_text=None,
+                            gold_scored_chars=None, max_new_tokens=1)
+
+    pool = [fake(i) for i in range(20)]
+    with pytest.raises(ValueError, match="planned power"):
+        subset_samples(pool, 80, seed=0)
+    # None means all, which is how every existing config asks for everything.
+    assert len(subset_samples(pool, None, seed=0)) == 20
+    assert len(subset_samples(pool, 20, seed=0)) == 20
+    # A genuine subset is seeded, sorted, and the same every time.
+    a = [s.sample_id for s in subset_samples(pool, 5, seed=7)]
+    b = [s.sample_id for s in subset_samples(pool, 5, seed=7)]
+    assert a == b == sorted(a) and len(a) == 5
+    assert [s.sample_id for s in subset_samples(pool, 5, seed=8)] != a

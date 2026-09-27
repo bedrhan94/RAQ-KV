@@ -1,0 +1,20 @@
+# The 6144-token 2wikimqa bound with the row cap raised to 80, for D74.
+#
+# A SEPARATE FILE rather than an edit to longbench_2wikimqa_6k.yaml, because that config's `n_samples: 20` is part of
+# the D73 arms' identity hash: raising it in place would orphan two completed campaigns. This is the project's own
+# provenance rule applied to a config rather than to a result.
+#
+# 80 of the 93 rows that fit the bound. The remaining 13 are left as headroom rather than taken, so a later arm can
+# grow without changing this file -- which would change D74's identity the same way.
+#
+# The two `n_samples` fields -- this one and the task's -- are a real trap and D74 was caught by it: the task asked
+# for 80 while this file capped at 20, the smaller silently won, and the arm ran a quarter of its planned power with
+# nothing in the output saying so. `experiments/tasks.py::subset_samples` now refuses that combination outright.
+dataset:
+  name: longbench
+  hf_id: THUDM/LongBench
+  revision: 5e628be450b7e67fb7ae6e201bd6d8f7056f7672
+  subset: 2wikimqa
+  n_samples: 80
+  max_cache_tokens: 6144
+  max_new_tokens: 24

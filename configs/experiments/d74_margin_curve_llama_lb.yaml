@@ -29,7 +29,7 @@
 #             would support "margin matters" without the non-linearity.
 include:
   - models/llama3p2_3b.yaml
-  - datasets/longbench_2wikimqa_6k.yaml
+  - datasets/longbench_2wikimqa_6k_80.yaml
 name: d74_margin_curve_llama_lb
 quantization:
   keys: {bits: 4, axis: group_token, group_size: 128}

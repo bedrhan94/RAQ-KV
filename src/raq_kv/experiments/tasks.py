@@ -561,11 +561,7 @@ class FaultQA:
         # Through the dispatcher, not `build_raq_probe`: this task accepts more than one vehicle now,
         # and the configs share field names so the wrong builder would succeed silently (D69).
         samples = build_probe_samples(cfg, self.tokenizer)
-        if self.task.n_samples is not None and self.task.n_samples < len(samples):
-            # A fixed stride hit only one depth (the generator emits a group's depths consecutively), so the
-            # subset is drawn at random from a fixed seed instead.
-            picked = random.Random(derive_seed(cfg.seed, "probe_subset")).sample(samples, self.task.n_samples)
-            samples = sorted(picked, key=lambda s: s.sample_id)
+        samples = subset_samples(samples, self.task.n_samples, derive_seed(cfg.seed, "probe_subset"))
         self.samples = {s.sample_id: s for s in samples}
         self._fingerprint = samples_fingerprint(samples)
         self.lm: LoadedModel | None = None
@@ -672,6 +668,30 @@ def schema_spans(sample: PromptSample, cache_len: int) -> list[tuple[int, ...]]:
                                       for b in (span.token_start, min(span.token_end, cache_len))
                                       if 0 <= b <= cache_len})
     return [(lo, hi) for lo, hi in zip(bounds, bounds[1:], strict=False) if hi > lo]
+
+
+def subset_samples(samples: list[PromptSample], n_samples: int | None, seed: int) -> list[PromptSample]:
+    """``n_samples`` of them, drawn at a fixed seed, and **refused if the vehicle cannot supply that many**.
+
+    The refusal is the point. Two config fields are called `n_samples` -- one on the dataset and one on the task --
+    and before this the smaller silently won: `d74` asked its task for 80 while its dataset config capped at 20, and
+    the arm ran a quarter of the requested samples with nothing in the output saying so. A pre-registered design that
+    quietly runs at a quarter of its planned power is worse than one that fails, because the numbers still look like
+    numbers. `None` still means "all of them", which is how every existing config asks for everything.
+
+    A fixed stride is not used for the subset because the probe emits a group's depths consecutively, so a stride hit
+    only one depth; a seeded random draw is what keeps the subset representative of the length x depth grid.
+    """
+    if n_samples is None:
+        return samples
+    if n_samples > len(samples):
+        raise ValueError(
+            f"the task asks for {n_samples} samples and the vehicle supplies {len(samples)}. Raise the dataset "
+            f"config's own limit (or its length bound), or lower the task's -- running the smaller number silently "
+            f"is how a design ends up at a fraction of its planned power with nothing saying so.")
+    if n_samples == len(samples):
+        return samples
+    return sorted(random.Random(seed).sample(samples, n_samples), key=lambda s: s.sample_id)
 
 
 def build_probe_samples(cfg: ExperimentConfig, tokenizer: Any) -> list[PromptSample]:
@@ -787,9 +807,7 @@ class ProtectionArm:
         # Through the dispatcher, not `build_raq_probe`: this task accepts more than one vehicle now,
         # and the configs share field names so the wrong builder would succeed silently (D69).
         samples = build_probe_samples(cfg, self.tokenizer)
-        if self.task.n_samples is not None and self.task.n_samples < len(samples):
-            picked = random.Random(derive_seed(cfg.seed, "probe_subset")).sample(samples, self.task.n_samples)
-            samples = sorted(picked, key=lambda s: s.sample_id)
+        samples = subset_samples(samples, self.task.n_samples, derive_seed(cfg.seed, "probe_subset"))
         self.samples = {s.sample_id: s for s in samples}
         self._fingerprint = samples_fingerprint(samples)
         self.lm: LoadedModel | None = None
@@ -1106,9 +1124,7 @@ class Retention:
         self.compression = cfg.compression
         self.tokenizer = load_tokenizer(cfg.model)
         samples = build_probe_samples(cfg, self.tokenizer)
-        if self.task.n_samples is not None and self.task.n_samples < len(samples):
-            picked = random.Random(derive_seed(cfg.seed, "probe_subset")).sample(samples, self.task.n_samples)
-            samples = sorted(picked, key=lambda s: s.sample_id)
+        samples = subset_samples(samples, self.task.n_samples, derive_seed(cfg.seed, "probe_subset"))
         self.samples = {s.sample_id: s for s in samples}
         self._fingerprint = samples_fingerprint(samples)
         self.scorer = build_scorer(self.compression.scorer, self.compression.window)
