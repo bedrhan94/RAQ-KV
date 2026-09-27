@@ -179,13 +179,27 @@ class StateProbeBuilder:
         )
 
     def _question(self, inner: PromptSample, is_tool: bool) -> str:
-        """The probe sample's own question, recovered from its query span.
+        """The probe sample's own question, recovered from its query span and **stripped of template scaffolding**.
 
         Taken from the reused sample rather than regenerated, so turn 3 asks exactly what the single-turn probe asks
         and any difference in outcome between the two vehicles is the turns, not the wording.
+
+        The stripping is the part that matters. The probe's query span runs to the **end of the prompt**, so it
+        contains the question *and* the trailing chat-template scaffolding -- for Qwen,
+        ``<|im_end|>\\n<|im_start|>assistant\\n<think>...``. Embedding that as a message's content made the rendered
+        conversation end with two assistant headers, one of them closed and empty, and the model was being asked its
+        question inside a malformed prompt. It affected every fact type, not only the tool ones where it was first
+        noticed, and it would have invalidated the vehicle silently: the numbers looked plausible.
+
+        Cut at the earliest special token rather than at a hardcoded `<|im_end|>`, so the vehicle does not acquire a
+        dependency on one tokenizer's markers.
         """
         query = next(s.text for s in inner.spans if s.label == "query")
-        return query if is_tool or query.endswith(VALUE_SUFFIX) else query + VALUE_SUFFIX
+        cuts = [query.index(tokenspec) for tokenspec in self.tok.all_special_tokens if tokenspec in query]
+        question = query[: min(cuts)].rstrip() if cuts else query.rstrip()
+        if not question:
+            raise AssertionError("the query span held nothing but template scaffolding")
+        return question if is_tool or question.endswith(VALUE_SUFFIX) else question + VALUE_SUFFIX
 
     def build_all(self) -> list[PromptSample]:
         out: list[PromptSample] = []

@@ -255,7 +255,12 @@ class QAGenerate:
             samples = build_gsm8k(cfg.dataset, self.tokenizer, template_kwargs)
         elif isinstance(cfg.dataset, BFCLConfig):
             samples = build_bfcl(cfg.dataset, self.tokenizer, template_kwargs)
+        elif isinstance(cfg.dataset, StateProbeConfig):
+            samples = build_state_probe(cfg.dataset, self.tokenizer, template_kwargs)
         else:
+            # Two dispatchers exist -- this one and `build_probe_samples` -- and D69 wired only the second, so the
+            # first run of the new vehicle died here. It died *loudly*, which is why this branch is a raise and not
+            # a fallback: a silent default would have run the wrong dataset and recorded it under the new name.
             raise NotImplementedError(cfg.dataset.name)
         self.samples: dict[str, PromptSample] = {s.sample_id: s for s in samples}
         if len(self.samples) != len(samples):

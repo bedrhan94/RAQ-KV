@@ -94,3 +94,29 @@ def test_the_document_is_the_single_turn_probe_s_own(samples):
         assert doc.text and doc.text in s.prompt_text
         # The correction restates the fact, so the target KEY appears in both turn 1 and turn 2.
         assert s.prompt_text.count(s.meta["updated_value"]) == 1
+
+
+def test_the_rendered_conversation_has_exactly_one_generation_prompt(samples):
+    """The bug that would have invalidated the vehicle silently.
+
+    The probe's `query` span runs to the END of its prompt, so it contains the question *and* the trailing chat
+    template scaffolding. Embedding that as a message's content made the conversation end with two assistant
+    headers, one closed and empty, and the model answered inside a malformed prompt -- on every fact type, with
+    numbers that looked plausible. Three assistant headers is correct here: two acknowledgements and one generation
+    prompt.
+    """
+    for s in samples:
+        assert s.prompt_text.count("<|im_start|>assistant") == 3, (
+            f"{s.sample_id}: {s.prompt_text.count('<|im_start|>assistant')} assistant headers")
+        assert s.prompt_text.count("<|im_start|>user") == 3
+        # And nothing after the final generation prompt.
+        assert s.prompt_text.rstrip().endswith("</think>")
+
+
+def test_the_question_carries_no_template_markers(samples):
+    """What the stripping in `_question` exists for, asserted on the content rather than on the rendered result."""
+    for s in samples:
+        turns = s.prompt_text.split("<|im_start|>user\n")
+        question_turn = turns[-1].split("<|im_end|>")[0]
+        for marker in ("<|im_start|>", "<|im_end|>", "<think>"):
+            assert marker not in question_turn, f"{s.sample_id}: question turn contains {marker!r}"
