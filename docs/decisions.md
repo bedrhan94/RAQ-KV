@@ -4114,3 +4114,49 @@ and not a fallback: a silent default would have run the probe and recorded it un
 One model, one seed, 6 fact types × 2 lengths × 10 groups × 3 depths, cache 1091–2186 tokens. The correction always
 targets the document's own target fact and always supersedes exactly one value; multi-update conversations, contested
 updates and longer histories are all unbuilt. Nothing here is a fault result — that is `d69_state_fault_meta`.
+
+### RESULT — cache damage breaks answers without mostly reverting them (2026-09-27)
+
+`d69_state_fault_meta`: one metadata flip per trial, uniform over the arm's metadata bits, no protection, on the
+three fact types whose unfaulted regression floor is 0–15%. 60 samples, 52 with a clean golden, 8 trials each.
+
+| | n | answer changed | task failure | **state regression** | Wilson 95% |
+|---|---|---|---|---|---|
+| no-fault controls | 52 | **0.0000** | **0.0000** | **0 / 52** | [0.0000, 0.0688] |
+| fault trials | 416 | 0.0216 | 0.0192 | **2 / 416 = 0.48%** | [0.13%, 1.74%] |
+
+| fact type | trials | changed | regressed |
+|---|---|---|---|
+| tool_arg | 184 | 1.09% | **0.00%** |
+| constraint | 136 | 1.47% | **0.00%** |
+| number | 96 | 5.21% | **2.08%** |
+
+**The controls are clean at 0 of 52**, so the floor this measures against is the vehicle's own and not a residual.
+
+**Regression under fault is real and is not the main failure mode.** Two of 416 trials answered from the superseded
+turn, against nine that broke the answer at all — so roughly **a fifth of fault-induced failures are reversions and
+four fifths are something else.** At two events this is a direction with a bound, not an established rate; what the
+data supports is the ordering, not the 0.48%.
+
+**That matters because the intuitive fear is the other way round.** "Memory corruption makes the agent revert to a
+stale value" is the failure anyone would predict of a corrupted KV cache holding a conversation, and it is the
+minority case. Corruption mostly produces answers that were never in the context — including the degenerate
+repetitions D62 traced to non-finite activations, which are the most severe class and are not reversions at all.
+
+**What the vehicle bought.** No single-turn arm in this project could have distinguished those two. Every other
+vehicle reports that damage broke an answer; this one reports what the broken answer *was*, and the answer is "not
+the old state, four times out of five".
+
+### Scope and limits
+
+Two events. The sign is what this supports and the rate is not: a design with the events to pin 0.48% would need
+roughly an order of magnitude more trials, which at 8 trials per sample means samples rather than trials, since
+trials within a sample are not independent (D26).
+
+One flip per trial, metadata only, one model, no protection, no pruning, and the three low-floor fact types. The
+excluded types are excluded on the unfaulted baseline (entity 95%, id 92% regression before any fault) and that
+exclusion is a stated condition: whether *fault-induced* regression is larger on those types is unmeasurable here
+rather than measured to be equal.
+
+`number` carries both events and also the highest change rate (5.21% against 1.09% and 1.47%). With 96 trials and
+two events that is not a fact-type finding; it is where the events happened to fall.
