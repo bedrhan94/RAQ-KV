@@ -554,7 +554,9 @@ class FaultQA:
         self.cfg = cfg
         self.task: FaultQATask = cfg.task
         self.tokenizer = load_tokenizer(cfg.model)
-        samples = build_raq_probe(cfg.dataset, self.tokenizer, dict(cfg.model.chat_template_kwargs))
+        # Through the dispatcher, not `build_raq_probe`: this task accepts more than one vehicle now,
+        # and the configs share field names so the wrong builder would succeed silently (D69).
+        samples = build_probe_samples(cfg, self.tokenizer)
         if self.task.n_samples is not None and self.task.n_samples < len(samples):
             # A fixed stride hit only one depth (the generator emits a group's depths consecutively), so the
             # subset is drawn at random from a fixed seed instead.
@@ -776,7 +778,9 @@ class ProtectionArm:
         self.cfg = cfg
         self.task: ProtectionArmTask = cfg.task
         self.tokenizer = load_tokenizer(cfg.model)
-        samples = build_raq_probe(cfg.dataset, self.tokenizer, dict(cfg.model.chat_template_kwargs))
+        # Through the dispatcher, not `build_raq_probe`: this task accepts more than one vehicle now,
+        # and the configs share field names so the wrong builder would succeed silently (D69).
+        samples = build_probe_samples(cfg, self.tokenizer)
         if self.task.n_samples is not None and self.task.n_samples < len(samples):
             picked = random.Random(derive_seed(cfg.seed, "probe_subset")).sample(samples, self.task.n_samples)
             samples = sorted(picked, key=lambda s: s.sample_id)

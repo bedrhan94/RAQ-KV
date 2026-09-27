@@ -383,4 +383,21 @@ class RAQProbeBuilder:
 def build_raq_probe(
     cfg: RAQProbeConfig, tokenizer: PreTrainedTokenizerBase, template_kwargs: dict[str, Any]
 ) -> list[PromptSample]:
+    """Single-turn probe samples, and **only** from a `RAQProbeConfig`.
+
+    The type check is not defensive programming, it is a repair. `StateProbeConfig` is deliberately a superset of
+    this config's field names so the two vehicles can share one document generator -- which means this function
+    accepts one and **silently builds single-turn samples from it**. `ProtectionArm` and `FaultQA` call this
+    directly rather than through `build_probe_samples`, so D69's first fault arm ran the single-turn probe while
+    its manifest said `state_probe`, and the zero state regressions it reported were measured on a vehicle with no
+    correction turn at all. Nothing crashed and nothing in the output looked wrong.
+
+    The same shape of bug has happened here before: a scripted edit left `Retention.__init__` calling this function,
+    and BFCL only revealed it by crashing on `filler_hf_id`. It crashed because BFCL's config has different fields.
+    A config designed to share field names removes even that accident, so the refusal has to be explicit.
+    """
+    if not isinstance(cfg, RAQProbeConfig):
+        raise TypeError(f"build_raq_probe was given a {type(cfg).__name__}; its field names overlap RAQProbeConfig's "
+                        f"so this would silently build single-turn samples. Use build_probe_samples, which "
+                        f"dispatches on the dataset.")
     return RAQProbeBuilder(cfg, tokenizer, template_kwargs, load_filler_paragraphs(cfg)).build_all()

@@ -120,3 +120,37 @@ def test_the_question_carries_no_template_markers(samples):
         question_turn = turns[-1].split("<|im_end|>")[0]
         for marker in ("<|im_start|>", "<|im_end|>", "<think>"):
             assert marker not in question_turn, f"{s.sample_id}: question turn contains {marker!r}"
+
+
+def test_build_raq_probe_refuses_a_state_probe_config():
+    """The bug that voided D69's first fault arm, and the reason it could not have crashed.
+
+    `StateProbeConfig` is deliberately a superset of `RAQProbeConfig`'s field names so the two vehicles share one
+    document generator. That makes `build_raq_probe(state_cfg)` **succeed** and build single-turn samples, which is
+    exactly what happened: `ProtectionArm` called it directly, the manifest said `state_probe`, and the arm reported
+    zero state regressions measured on a vehicle that had no correction turn.
+
+    The project has hit this shape before -- a scripted edit left `Retention.__init__` calling `build_raq_probe`, and
+    BFCL revealed it only by crashing on a field its config lacks. A config designed to share field names removes
+    even that accident.
+    """
+    from raq_kv.data.raq_probe import build_raq_probe
+
+    cfg = StateProbeConfig.model_validate(
+        load_yaml(configs_dir() / "datasets" / "state_probe_v0.yaml")["dataset"])
+    model = ModelConfig.model_validate(load_yaml(configs_dir() / "models" / "qwen3_1p7b.yaml")["model"])
+    with pytest.raises(TypeError, match="silently build single-turn samples"):
+        build_raq_probe(cfg, load_tokenizer(model), dict(model.chat_template_kwargs))
+
+
+def test_the_fault_and_qa_tasks_reach_the_state_probe_through_the_dispatcher():
+    """Three task classes built their samples directly; only `Retention` used the dispatcher. Pinned so a fourth
+    vehicle does not have to rediscover which ones were wired."""
+    import inspect
+
+    from raq_kv.experiments import tasks
+
+    for name in ("FaultQA", "ProtectionArm", "Retention"):
+        src = inspect.getsource(getattr(tasks, name))
+        assert "build_probe_samples(" in src, f"{name} does not use the dispatcher"
+        assert "build_raq_probe(" not in src, f"{name} still calls build_raq_probe directly"
