@@ -4160,3 +4160,82 @@ rather than measured to be equal.
 
 `number` carries both events and also the highest change rate (5.21% against 1.09% and 1.47%). With 96 trials and
 two events that is not a fact-type finding; it is where the events happened to fall.
+
+## D70 — The agent axis on a second family: H3 replicates decisively, D64's absolute claim does not (2026-09-27)
+
+M6's agent arms were Qwen3-1.7B only, which made two striking results single-model. Five arms rerun on
+Llama-3.2-3B, 61 minutes: `m9l_bfcl_{golden,joint,prefixcache,magnitude,recency}`, identical vehicle, identical
+retention ratio (0.2467 transfers cleanly because both models share `kv_values_per_token` = 57,344), same seed.
+
+### H3's span finding replicates on the agent vehicle, and the effect sizes almost coincide
+
+| family | n | joint fails | prefix-cache fails | difference | p | discordant | verdict |
+|---|---|---|---|---|---|---|---|
+| Qwen3-1.7B | 105 | **0.0286** | 0.8095 | **+0.7810** [+0.7048, +0.8571] | 1.4e-19 | 82 | **MEETS D31** |
+| Llama-3.2-3B | 70 | **0.0571** | 0.8143 | **+0.7571** [+0.6571, +0.8571] | 3.3e-13 | 53 | **MEETS D31** |
+
+**Query-aware span retention beats query-agnostic by about 76–78 points of task failure on both families**, with
+overlapping intervals and both far past the pre-registered rule. This is the strongest cross-family replication in
+the project after H2d, and it is on the agent vehicle rather than the probe.
+
+### D64's "compression damage is entirely tool selection" — two arms replicate, one does not
+
+| arm | family | failures | wrong **arguments** | share | Wilson 95% |
+|---|---|---|---|---|---|
+| `magnitude` | Qwen | 105 | **0** | 0.000 | [0.000, 0.035] |
+| `magnitude` | **Llama** | 69 | **0** | 0.000 | [0.000, 0.053] |
+| `recency` | Qwen | 81 | **0** | 0.000 | [0.000, 0.045] |
+| `recency` | **Llama** | 69 | **0** | 0.000 | [0.000, 0.053] |
+| `prefixcache` | Qwen | 85 | **0** | 0.000 | [0.000, 0.043] |
+| `prefixcache` | **Llama** | 57 | **9** | **0.158** | **[0.085, 0.274]** |
+
+**The pre-registered prediction about `key_norm` holds exactly.** It failed 105 of 105 on Qwen and **69 of 69** on
+Llama, every failure a wrong function on both. Key magnitude is not a weak retention signal for tool schemas, it is a
+total anti-signal — D42 called it "at chance", D47 corrected that to an anti-signal, and two families now say it never
+selects the gold schema at all. `recency` joins it at **69 of 69** on Llama against 81 of 105 on Qwen, so recency is
+*worse* on the second family.
+
+**But `prefixcache` on Llama produces argument errors, with an interval excluding zero.** So D64's phrasing — *0 of
+271 failures are argument errors* — was Qwen-specific in its absoluteness, and the claim has to be narrowed.
+
+### The mechanism, and the baseline is where it shows
+
+| golden arm | calls | failures | with the **right function** named | share |
+|---|---|---|---|---|
+| Qwen3-1.7B | 120 | 15 | 8 | 0.533 [0.301, 0.752] |
+| **Llama-3.2-3B** | 120 | **51** | **47** | **0.922** [0.815, 0.969] |
+
+**Llama is argument-fragile before any compression touches it.** With no compression at all it names the gold
+function in 96.7% of calls and still fails 51 of 120, and **92.2%** of those failures have the right function with the
+wrong arguments. Qwen's baseline failures split roughly evenly. These are two different models with two different
+weaknesses on the same vehicle.
+
+That resolves the exception rather than leaving it as an inconsistency. **An argument error requires the right
+function to be selected first.** `magnitude` and `recency` select it essentially never — 0 correct of 69 on Llama — so
+no argument error is *possible* there, which is why they show 0 on both families. `prefixcache` selects it sometimes
+(13 of 70 correct), and on Llama those surviving selections then get their arguments wrong.
+
+**So the corrected claim: compression damage is selection damage, and argument damage appears only where the model is
+argument-fragile to begin with AND selection partially survives.** On Qwen the first condition fails, so the absolute
+version held. Nothing about the allocator changes — retention is still the lever on this vehicle — but the reason it
+looked exclusive was a property of one model.
+
+### What this adds to the project's family picture
+
+The records now separate three kinds of finding by how they travel:
+
+* **general on both families** — where fault damage lands (H2d, metadata over codes, now three models), bit position
+  being nearly flat (H1c), query-aware span retention beating query-agnostic (H3, and now on the agent vehicle too),
+  key magnitude as an anti-signal;
+* **Qwen-only** — whether pruning concentrates fault risk (H7/D54);
+* **Llama-only** — argument fragility on tool calls, which is new here.
+
+That third category is the one this run added, and it is worth naming because it is the first finding in the project
+that belongs to the *second* family rather than being an absence of a first-family effect.
+
+### Scope
+
+120 BFCL calls, `simple` category, 10-schema catalogues, one retention ratio, no faults, 4-bit throughout. The
+argument-error rate on `m9l_bfcl_prefixcache` rests on **9 events**, so the interval excluding zero is what it
+supports — the 15.8% is not a rate to quote. `m9l_bfcl_joint`'s own 4 failures are all argument errors, which is
+consistent with the mechanism above but far too few to stand on.

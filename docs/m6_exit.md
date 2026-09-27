@@ -112,8 +112,12 @@ without calibration beside it.
 1. **A third model **family**.** D68 is a scale axis inside Qwen, and it weakened rather than strengthened the QK-Norm
    account: ρ attenuates −0.377 → −0.229 between two models that both apply QK-Norm, putting the larger one roughly
    halfway to Llama. If the architecture feature were the whole story the two Qwens would agree.
-2. **The agent axis on a second family.** Every BFCL and state-probe arm is Qwen3-1.7B. D64's decomposition, D69's
-   baseline and C4's task half are all single-model.
+2. ~~**The agent axis on a second family.**~~ **Closed for the BFCL arms: D70.** H3's span finding replicates
+   decisively on the agent vehicle (+0.7810 and +0.7571, overlapping intervals, both meeting the rule) and `key_norm`
+   fails 69 of 69 on Llama as the config predicted. D64's *absolute* phrasing is narrowed: `prefixcache` on Llama
+   gives 9 of 57 argument errors with an interval excluding zero, because Llama is argument-fragile at baseline (92.2%
+   of its uncompressed failures have the right function and wrong arguments, against Qwen's 53.3%). **Still
+   single-model: the state probe (D69) and C4's task half (D66).**
 3. **Fault hazard on a hard task.** The saturation account (D62) is measured on a probe where Qwen sits at p = 1.0.
    A LongBench pilot desaturates it completely (top-1 0.9284, margin 2.875 against 16.5–19.5) but measures
    **confidence only** — whether the hazard *ordering* follows is unmeasured and is what would close D59's line. The
