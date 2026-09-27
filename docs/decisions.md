@@ -4239,3 +4239,64 @@ that belongs to the *second* family rather than being an absence of a first-fami
 argument-error rate on `m9l_bfcl_prefixcache` rests on **9 events**, so the interval excluding zero is what it
 supports — the 15.8% is not a rate to quote. `m9l_bfcl_joint`'s own 4 failures are all argument errors, which is
 consistent with the mechanism above but far too few to stand on.
+
+## D71 — The margin is a family-level correlate, not a sample-level mechanism (2026-09-27)
+
+D62 explained the cross-family fault-fragility difference by output saturation: **Qwen3-1.7B holds these answers at
+17.07 nats of margin against Llama-3.2-3B's 3.27** (p = 1.2e-06, 31 of 31 samples), so a fault has further to travel
+before the answer changes. It then stated the limitation this record closes: if a thin margin is the *mechanism*, the
+thin-margin samples **within** a family should break more, and at n = 31 that could not be resolved.
+
+200 samples against D62's 40, everything else identical — same metadata-uniform single flip, same quantization, no
+protection, no pruning, 16 trials each. A strict superset in power, not a different experiment.
+`scripts/report_margin_dose.py`, pre-registered primary.
+
+| arm | n | margin median | break rate | **Spearman ρ** | 95% CI | p | verdict |
+|---|---|---|---|---|---|---|---|
+| `d71_margin_dose_qwen` | **196** | 19.000 | 0.0223 | **−0.045** | **[−0.184, +0.095]** | 0.53 | **fails D31** |
+| `d62_qwen_meta` | 39 | 17.000 | 0.0288 | +0.086 | [−0.273, +0.433] | 0.60 | fails D31 |
+
+**The answer is a null with a tight bound, which is the useful form.** At five times the samples the correlation is
+**−0.045** and the interval admits at most **|ρ| ≤ 0.184**. D62 could say only that its correlation was unresolved;
+this says how large the within-family effect can be, and it is small.
+
+### So D62's mechanism reading is narrowed, and the narrowing matters
+
+The cross-family finding is untouched: 17.07 against 3.27 nats, p = 1.2e-06, and D62's matched-exposure control —
+Qwen's median KL flat at ~3e-11 across a **million-fold** perturbation range — stands on its own data. What fails is
+the *sample-level* reading of it. **If margin were the mechanism, margin should predict fragility among samples of one
+model, and it does not.**
+
+So the margin is a **family-level correlate**: it separates the two models decisively and carries no information about
+which inputs of a given model are fragile. Whatever produces the cross-family difference varies between families and
+not within them — which is consistent with a property of the output distribution's *shape* rather than of any
+individual answer's position in it (D62 measured the logprob spread differing by 0.41× across families), and is not
+consistent with "these particular answers sit closer to the boundary".
+
+### A number of D62's that does not survive its own arm
+
+D62's controls reported the median split as **4.41% against 2.23%, a ratio of 1.98×**, and read it as the effect being
+"in the predicted direction". On the **same arm's own 39 clean samples** it is 3.12% against 2.63%, **1.19×**. The
+difference is the sample set: D62 computed the split on the 31-sample six-way intersection — samples clean in all six
+D61 arms — while this uses each arm's own. The larger arm gives **1.21×** on 196 samples.
+
+So the 1.98× that looked like weak support for the mechanism was substantially an artefact of a restricted sample set,
+and the direction it pointed is worth about a fifth of what it appeared to be. That is the second time the six-way
+intersection has inflated a D62-adjacent number — the first was primary 3's magnitude, corrected in D61's closing
+checks — and the lesson is the same: **an intersection chosen for one comparison is not a neutral sample set for
+another.**
+
+### What this does not touch
+
+The **cross-family** difference and every measurement D62 made of it. The saturation *observation* — Qwen at top-1
+probability 1.0000 and entropy 0.0000, Llama at 0.9880 and 0.0970 — is a measurement, not an inference, and D63's
+pilot showed it is task-dependent rather than a fixed model property. What D71 removes is the bridge from that
+observation to a per-sample causal story.
+
+### Scope
+
+One model, one probe, one exposure (a single metadata flip), 196 usable samples of 200, break rate 2.23% so each
+sample's rate is a coarse number over 16 trials. The bound is on a **rank** correlation with that coarseness included;
+a design measuring fragility per sample more finely — more trials, or the graded KL as the outcome instead of the rate
+— could resolve a smaller effect. The KL route is the obvious one and is not run here, because D62 already established
+that Qwen's KL is saturation-limited on this probe and would be measuring the floor.
