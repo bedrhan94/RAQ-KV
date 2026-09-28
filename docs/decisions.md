@@ -4604,8 +4604,14 @@ v0, chosen because that is where the two-state curvature form is **validated** (
 
 | | α | 95% CI (cluster bootstrap) | 0.0 | 0.5 | 1.0 |
 |---|---|---|---|---|---|
-| δ from the margin (two-state) | **+0.024** | [−0.110, +0.318] | **in** | **EXCLUDED** | **EXCLUDED** |
-| δ from the recorded `p₁` (no assumption) | **+0.035** | [−0.082, +0.341] | **in** | **EXCLUDED** | **EXCLUDED** |
+| δ from the margin (two-state) | **+0.020** | [−0.091, +0.257] | **in** | **EXCLUDED** | **EXCLUDED** |
+| δ from the recorded `p₁` (no assumption) | **+0.034** | [−0.065, +0.278] | **in** | **EXCLUDED** | **EXCLUDED** |
+
+**Corrected by D77.** As first published these were +0.024 [−0.110, +0.318] and +0.035 [−0.082, +0.341], fitted with a
+binning defect that dropped the coarsest rung's entire full-span population — the octave edges stopped at the largest
+span and the bins are half-open, so with spans that are always powers of two the 512 bin never existed. The verdict is
+unchanged and the intervals are slightly tighter; the new 512 bin sits at δ = 0.2780, consistent with
+span-independence. See D77.
 
 **A corrupted scale that governs 512 values does no more damage to the first-token distribution than one governing
 32.** δ is 0.2615, 0.2617, 0.2662, 0.2638, 0.2697 across the five rungs — a **3.1% spread over a 16× change in span**.
@@ -4691,3 +4697,120 @@ g=32 to g=512 is real and the perplexity row is where it shows. The α interval 
 short trailing-group flips are few and noisy; it excludes 0.5 and 1.0 but does not establish α = 0 against, say,
 α = 0.1. Two process notes: the runner's provenance guard aborted a first attempt because I edited `src/` mid-campaign,
 and the g=32 rung was superseded so all five rungs share one code state.
+
+## D77 — The g=256 quality cost is bounded but its sign is unreachable on this corpus; the channel axis cannot be swept at all; and a binning defect that had silently dropped D76's coarsest rung (2026-09-29)
+
+D76 left two named hooks. Both are run. Neither gives the answer it was designed to give, and in both cases the reason
+is the result.
+
+### Part A — the bound tightens, and the sign was unreachable before the run started
+
+H2f's recommendation rests on the perplexity cost of moving the key group from 128 to 256. D76 called resolving it
+"one cheap measurement". **The power calculation, done before the config was written, says otherwise.** The paired
+difference has sd = 0.010638 on the existing 40-chunk arms, so a 95% half-width below the observed +0.00133 effect
+needs **245 chunks**; WikiText-2 raw test supplies **145** (299,078 tokens at 2,049 each, measured). So the run was
+pre-registered as a **bound-tightening** exercise, with an interval that excluded zero named in advance as a *surprise*
+rather than a confirmation.
+
+145 chunks, four rungs, paired per chunk against g=128:
+
+| contrast | n | Δ NLL | 95% CI | Wilcoxon p | Δ ppl | D31 |
+|---|---|---|---|---|---|---|
+| **g128 → g32** (*finer*) | 145 | −0.00112 | [−0.00263, **+0.00042**] | 0.221 | −0.111% | fails |
+| **g128 → g256** | 145 | +0.00162 | [−0.00020, **+0.00341**] | 0.0739 | +0.162% | **fails** |
+| g128 → g512 | 145 | +0.00448 | [+0.00226, +0.00669] | 1.3e-04 | +0.449% | meets |
+
+**The bound tightens from ≤0.45% to ≤0.342% perplexity and the sign stays unresolved, exactly as pre-registered.** This
+run's own scatter (sd = 0.011092, effect 0.001616) puts the requirement at **181 chunks against the 145 this split
+supplies** — closer than the 245 estimated from 40 chunks, and still out of reach. p = 0.0739 is near the line, which
+is the honest way to say it: the contrast is not resolvable on WikiText-2 test **at any n**, because the corpus caps n.
+
+**And the sweep bounds the other direction too, which was not anticipated.** Going *finer* than 128 buys at most
+**0.042%** perplexity — and D76's accounting prices that at **+267%** key metadata (8.26 → 30.28 Mb), i.e. 3.7× the
+store's most damaging region. So the quality argument for fine key groups, in the region the project actually operates,
+is bounded at essentially nothing while its reliability cost is large. **Both sides of g=128 now point the same way.**
+
+### Part B — the prediction is not supported where it can be tested, and cannot be tested more widely
+
+D76's closing hypothesis: a `group_token` scale spans **tokens**, which attention re-normalizes over, so corrupting
+more of them moves the softmax's scale without its direction; the **channel** axis, which attention does not
+re-normalize over, should therefore give α > 0. Five rungs, `group_channel` 8–128, otherwise D76's arm unchanged.
+
+**The rungs do not survive their own codec.** `golden_correct`, before any fault:
+
+| g | key SQNR | golden | margin | δ | break rate |
+|---|---|---|---|---|---|
+| 8 | 26.08 | 39/40 | 12.375 | 0.2776 | 0.0297 |
+| 16 | 22.62 | 39/40 | 10.625 | 0.2980 | 0.0500 |
+| 32 | 19.47 | 37/40 | 7.625 | 0.3536 | 0.0578 |
+| **64** | 16.53 | **0/40** | 3.625 | 0.2483 | 0.3906 |
+| **128** | 14.07 | **0/40** | — | 0.1890 | 0.5734 |
+
+At g=64 and beyond the model emits degenerate repetition — `'</think>\n\n</think>… I will. I will. I will.'` — with
+controls at **0/40 moved**, so the answers are stably *wrong* rather than unstable. Those rungs measure a model the
+codec broke, not fault damage, and δ *falling* while the break rate rises to 0.57 is the signature. They are excluded
+from the exponent by an explicit `--min-golden` gate that names each exclusion.
+
+**On the three rungs that survive, the prediction is not supported:**
+
+| | α | 95% CI | 0.0 | 0.5 | 1.0 |
+|---|---|---|---|---|---|
+| assumed (two-state) | +0.175 | [−0.096, +0.391] | **in** | EXCLUDED | EXCLUDED |
+| observed (recorded `p₁`) | +0.058 | [−0.018, +0.248] | **in** | EXCLUDED | EXCLUDED |
+
+Point estimates are positive, i.e. in the predicted direction, and both intervals contain zero on 3 rungs over a 4×
+span. **So this is "not supported", not "refuted"** — and the distinction matters because the test cannot be
+strengthened.
+
+**Why it cannot: the quality cost per unit of span differs by 2.8× between the axes, and that is measured tightly.**
+
+| axis | SQNR per doubling of span | R² | rungs |
+|---|---|---|---|
+| `group_token` | **−1.13 dB** | 0.990 | 5 |
+| `group_channel` | **−3.18 dB** | 0.999 | 4 |
+
+From 26.08 dB at g=8, −3.18 dB per doubling reaches 16.53 by g=64 and the model dies. **There is no channel-axis sweep
+wide enough to power α at usable quality**, so D76's hypothesis stays untested with the obstacle now measured rather
+than suspected. This is also the classic key-outlier result — key channels have wildly different dynamic ranges, which
+is why KIVI quantizes keys per-channel — reproduced here on **task accuracy and answer margin** rather than on
+perplexity, with the cliff located between g=32 and g=64.
+
+**The only matched-span comparison is confounded and is reported as such.** At span 32 the channel axis gives
+δ = 0.3536 against the token axis's 0.2615, a 1.35× ratio — but those two cells differ by **10.2 dB** of SQNR and
+**8.4 nats** of margin, so the ratio cannot be attributed to the axis geometry. **The two axes cannot be matched on
+span and quality simultaneously**, which is the design-space statement this arm establishes.
+
+**The successor is specified.** Test the asymmetry on **values**, not keys: values already tolerate `per_token`, which
+*is* channel-grouping at g = head_dim = 128, so a value-side `group_channel` sweep from 8 to 128 stays at usable
+quality throughout while varying exactly the span the hypothesis is about. Keys stay at the default `group_token 128`.
+One config, not run.
+
+### A binning defect, and D76's corrected numbers
+
+`binned_fit` built octave edges up to `2**ceil(log2(max_span))`. The bins are half-open `[lo, hi)` and these spans are
+**group sizes, hence always powers of two**, so the largest span fell outside every bin at every invocation.
+**D76's primary was fitted with no 512 bin at all** — 2,920 trials with the coarsest rung's entire full-span population
+missing — and Part B lost every span-32 flip (913 of 1,432 binned). Fixed to `+ 2`, with an assertion that refuses to
+fit when binning drops more than 5% of the flips, so it cannot recur quietly.
+
+**D76's conclusion survives; its numbers move slightly and the record is amended:**
+
+| | as published | corrected |
+|---|---|---|
+| α assumed | +0.024 [−0.110, +0.318] | **+0.020 [−0.091, +0.257]** |
+| α observed | +0.035 [−0.082, +0.341] | **+0.034 [−0.065, +0.278]** |
+
+Both still contain zero and exclude quadrature and coherent; the intervals are slightly **tighter**, and the new 512
+bin sits at δ = 0.2780 against the 33-bin's 0.2609 — consistent with span-independence rather than against it.
+
+**A second defect in the same function, caught at the same time:** with a non-fittable slope every `not lo <= v <= hi`
+comparison is vacuously true, so the report printed "EXCLUDED" for *all three* nulls — the exact opposite of what an
+unfittable fit means. It now says so instead.
+
+### Scope
+
+Part A is one model on WikiText-2 test, 145 chunks, and its limit is the corpus rather than the design; the
+pre-registered train-split secondary that could resolve the sign is **not run**, because resolving whether a bounded
+≤0.342% cost is 0.16% or 0.00% does not change a decision made against the bound. Part B is one model on the probe,
+4 bits, keys only, and its α rests on **three** rungs over a 4× span — a weak test, which is why its null is reported
+as "not supported" and not as a refutation. The 2.8× SQNR asymmetry is the robust part of it (both fits R² > 0.99).

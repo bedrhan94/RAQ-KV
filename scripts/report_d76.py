@@ -76,13 +76,24 @@ def binned_fit(span: np.ndarray, delta: np.ndarray) -> tuple[float, float, list[
     span, delta = span[keep], delta[keep]
     if span.size < 10:
         return float("nan"), float("nan"), []
-    edges = [2.0 ** k for k in range(0, 1 + int(math.ceil(math.log2(max(span.max(), 2.0)))))]
+    # `+ 2`, and it is load-bearing. The bins are half-open `[lo, hi)`, so the top edge has to sit STRICTLY ABOVE the
+    # largest span or every flip at exactly that span falls outside every bin. With `+ 1` the edges stopped at
+    # 2**ceil(log2(max)) == max whenever the max is a power of two -- which it always is here, because these spans are
+    # group sizes. That silently dropped the coarsest rung's entire full-span population: D76's first pass fitted alpha
+    # on 2,920 of 3,200 trials with no 512 bin at all, and D77's channel sweep lost every span-32 flip (913 of 1,432).
+    # The count is asserted against the bins below so the failure cannot recur quietly.
+    edges = [2.0 ** k for k in range(0, 2 + int(math.ceil(math.log2(max(span.max(), 2.0)))))]
     bins = []
     for lo, hi in zip(edges, edges[1:], strict=False):
         m = (span >= lo) & (span < hi)
         if m.sum() >= 5:
             bins.append({"lo": lo, "hi": hi, "n": int(m.sum()),
                          "span": float(np.exp(np.log(span[m]).mean())), "delta": float(np.median(delta[m]))})
+    binned = sum(b["n"] for b in bins)
+    if binned < 0.95 * span.size:
+        raise AssertionError(f"binning dropped {span.size - binned} of {span.size} flips (spans "
+                             f"{span.min():.0f}-{span.max():.0f}, edges up to {edges[-1]:.0f}); the exponent would be "
+                             f"fitted on a population the caller did not choose")
     if len(bins) < 3:
         return float("nan"), float("nan"), bins
     fit = stats.linregress([math.log(b["span"]) for b in bins], [math.log(b["delta"]) for b in bins])
@@ -124,6 +135,13 @@ def wilson(k: int, n: int) -> tuple[float, float]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--name", default="d76_group_span_qwen")
+    parser.add_argument("--groups", help="comma-separated group sizes the exponent may use; the rest are still listed "
+                                         "in PART 1 and excluded only from the fit")
+    parser.add_argument("--min-golden", type=float, default=None,
+                        help="exclude rungs whose CLEAN accuracy is below this fraction, naming each and why. D77's "
+                             "channel-axis sweep needs it: at group_channel 64 and 128 the codec alone drives "
+                             "golden_correct to 0/40 and the model emits degenerate repetition, so those rungs' delta "
+                             "is measured on a different model and does not belong in a slope describing one")
     parser.add_argument("--output-root", default="outputs")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -163,10 +181,31 @@ def main() -> int:
                            "nonfinite_zero": int((c["nonfinite"] & c["zero"]).sum())}
 
     # PART 2, the PRIMARY: the exponent from the realised per-flip span, pooled across rungs.
-    allc = {k: np.concatenate([rungs[g]["cols"][k] for g in sorted(rungs)]) for k in rungs[next(iter(rungs))]["cols"]}
+    # Which rungs may enter it is a scientific choice, not a convenience. A rung whose clean answers are ALL wrong is a
+    # different model -- D77's `group_channel` 64 and 128 reach golden_correct 0/40 on the codec alone, emitting
+    # degenerate repetition -- and its delta cannot sit in a slope that claims to describe one model.
+    keep = sorted(rungs)
+    if args.groups:
+        wanted = {int(x) for x in args.groups.split(",")}
+        keep = [g for g in keep if g in wanted]
+    if args.min_golden is not None:
+        for g in sorted(rungs):
+            if g not in keep:
+                continue
+            recs = rungs[g]["records"]
+            acc = sum(1 for r in recs if r["golden_correct"]) / len(recs)
+            if acc < args.min_golden:
+                keep.remove(g)
+                print(f"  EXCLUDED from the exponent: group {g}, clean accuracy {acc:.3f} < --min-golden "
+                      f"{args.min_golden:.3f}; its delta is measured on a model the codec already broke")
+    if not keep:
+        raise SystemExit("every rung was excluded from the exponent; --min-golden or --groups is too strict")
+    if keep != sorted(rungs):
+        print(f"  exponent fitted on groups {keep} of {sorted(rungs)}")
+    allc = {k: np.concatenate([rungs[g]["cols"][k] for g in keep]) for k in rungs[next(iter(rungs))]["cols"]}
     # Sample ids repeat across rungs, so offset them per rung or the bootstrap would tie unrelated samples together.
     offset, sample_ids = 0, []
-    for g in sorted(rungs):
+    for g in keep:
         s = rungs[g]["cols"]["sample"]
         sample_ids.append(s + offset)
         offset += int(s.max()) + 1 if s.size else 0
@@ -188,8 +227,14 @@ def main() -> int:
         span, samp = allc["span"][fin], allc["sample"][fin]
         alpha, r2, bins = binned_fit(span, delta)
         lo, hi = cluster_bootstrap(samp, span, delta, args.seed)
-        verdicts = ", ".join(f"{name} ({v:.1f}): {'EXCLUDED' if not lo <= v <= hi else 'in interval'}"
-                            for name, v in NULLS.items())
+        # A nan alpha makes every comparison False, so `not lo <= v <= hi` would print "EXCLUDED" for all three
+        # nulls -- the exact opposite of what an unfittable slope means. Say so instead.
+        if not (math.isfinite(alpha) and math.isfinite(lo) and math.isfinite(hi)):
+            verdicts = ("NOT FITTABLE on these rungs -- too few span bins for a slope, so no null is excluded "
+                        "and none is supported")
+        else:
+            verdicts = ", ".join(f"{name} ({v:.1f}): {'EXCLUDED' if not lo <= v <= hi else 'in interval'}"
+                                 for name, v in NULLS.items())
         print(f"  {label:40s} alpha {alpha:+.3f}  [{lo:+.3f}, {hi:+.3f}]  R^2 {r2:.3f}  n={int(fin.sum())}")
         print(f"  {'':40s} {verdicts}")
         if bins:
@@ -201,7 +246,7 @@ def main() -> int:
               f"{'larger groups better' if alpha < 1 else 'smaller groups better' if alpha > 1 else 'no lever'}")
 
     # PART 3, SECONDARY 1: the original per-rung reading, kept so both are on the record.
-    gs = sorted(rungs)
+    gs = keep
     med = []
     for g in gs:
         c = rungs[g]["cols"]
