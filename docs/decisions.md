@@ -4587,3 +4587,107 @@ at least half its flips were null events, consistent with code-0 invariance — 
 trials and a median δ mixes null flips with real ones. Unpaired across vehicles by construction, since the two use
 different datasets. And the rate-based tests remain the only ones with a task-level outcome that curvature cannot
 fake: D71 and D74, both null.
+
+## D76 — A fault's damage does not depend on how many values its corrupted scale governs, so reliability does not constrain the key group size; quality does (2026-09-28)
+
+D62 tested four candidate mechanisms for the cross-family fragility gap and none was a codec-side lever, which left
+the allocator nothing to choose between on reliability grounds. D75 produced a codec-side quantity where there was
+none — **δ**, the effective logit perturbation from one metadata flip, comparable across configurations in a way a KL
+is not. This asks whether a **codec setting** moves it, which is the only version an allocator can act on.
+
+The dial is the key group size. Keys are `group_token`, so a key scale is indexed by (head, token-group, channel) and
+governs exactly the values of its group. Five rungs — **32, 64, 128, 256, 512** — 40 samples × 16 trials × 1 control
+each, one key-metadata flip per trial, no protection, no pruning. 3,200 fault trials. Qwen3-1.7B eager on RAQ probe
+v0, chosen because that is where the two-state curvature form is **validated** (D75).
+
+### The answer is span-independence, and both alternatives are excluded
+
+| | α | 95% CI (cluster bootstrap) | 0.0 | 0.5 | 1.0 |
+|---|---|---|---|---|---|
+| δ from the margin (two-state) | **+0.024** | [−0.110, +0.318] | **in** | **EXCLUDED** | **EXCLUDED** |
+| δ from the recorded `p₁` (no assumption) | **+0.035** | [−0.082, +0.341] | **in** | **EXCLUDED** | **EXCLUDED** |
+
+**A corrupted scale that governs 512 values does no more damage to the first-token distribution than one governing
+32.** δ is 0.2615, 0.2617, 0.2662, 0.2638, 0.2697 across the five rungs — a **3.1% spread over a 16× change in span**.
+Both pre-registered alternatives die: coherent addition (α = 1) and quadrature (α = 0.5).
+
+**And the task outcome agrees.** Break rate 0.0156, 0.0203, 0.0312, 0.0328, 0.0156 — non-monotone,
+Spearman(log g, rate) = **+0.205, p = 0.74**, and coarsest against finest is **10/640 against 10/640, Fisher
+p = 1.000**. Clean accuracy is 39/40 at four rungs and 40/40 at the coarsest. Controls are **exactly zero at every
+rung**, which is what makes these rates signal.
+
+**A reading of my own, withdrawn.** Mid-run, with three rungs finished, I reported that the break rate rose
+0.0156 → 0.0203 → 0.0312 and read it as β ≈ 0.5 — a dissociation between δ (first-token) and task damage. **The two
+remaining rungs killed it:** g=512 returns to 0.0156. There was no dissociation, and the pre-registration's own
+instruction to treat the break rate as a bound rather than a trend is what stopped it becoming a claim.
+
+### The allocator consequence, as pre-committed
+
+Key metadata bits scale as **1/g**, so at fixed BER the *number* of key metadata flips scales as 1/g while damage per
+flip scales as g^α. Total expected damage ∝ **g^(α−1) = g^−0.976**. The pre-registered mapping for α < 1 was "larger
+groups are strictly better for reliability and also cheaper in bits; push g up until quantization quality binds".
+**So the binding point is the result**, and it is measurable from arms that already exist — four `cache_ppl` arms on
+WikiText differing in nothing but the key group size (same 40 chunks, same `data_fingerprint`, same value spec, same
+`residual_window`), paired per chunk:
+
+| contrast | Δ NLL | 95% CI | Wilcoxon p | Δ perplexity | Δ **key metadata** | Δ total stored | D31 |
+|---|---|---|---|---|---|---|---|
+| **g128 → g256** | +0.00133 | [−0.00193, +0.00452] | 0.405 | +0.133% | **−44.4%** | −1.44% | **fails** |
+| g128 → g512 | +0.00494 | [+0.00192, +0.00805] | 0.0067 | +0.495% | −66.7% | −2.17% | meets |
+| g32 → g512 | +0.00735 | [+0.00411, +0.01072] | 1.3e-04 | +0.738% | −90.9% | −9.97% | meets |
+
+**The lever is the key metadata, not the bit total.** `avg_kv_bits` moves only 1.4–10% because codes dominate the store
+and values are `per_token` at every rung, so their metadata is constant. What the group size actually controls is the
+**key** scale and zero count, which is exactly `1/g` — verified analytically against each record's own `scale` bits at
+every rung. And metadata is where essentially all the fault damage is (H2d: ≥1543× more damaging per bit than codes).
+So **coarsening the key group is a reliability lever because it shrinks the store's most dangerous region, not because
+it makes any individual flip safer** — which is precisely what α ≈ 0 licenses. At fixed BER, key-metadata flips scale as
+1/g and damage per flip is flat, so expected key-metadata damage goes as g^−0.976: **−49% from g128 to g256.**
+
+**What this does NOT license, and the project's own rule says so.** ΔNLL at g128 → g256 is +0.00133 [−0.00193,
++0.00452] at p = 0.405, and **D30/D44 makes that a bound, not an equality**: the quality cost is at most **+0.0045
+nats ≈ 0.45% perplexity**, which is nearly the 0.495% that g128 → g512 *measures*. On the upper bound 256 is the worse
+deal per bit, and 40 chunks cannot separate "free" from "as expensive as 512". An earlier version of this record
+concluded "the default key group size should move from 128 to 256" — that inverted the same rule this record applies
+correctly to clean accuracy two paragraphs below, and it is **withdrawn**.
+
+**So the defensible statement is about where the constraint lives.** Reliability does not constrain the key group-size
+choice anywhere in 32–512; **quality does**, and the quality cost is *resolved* at 512 (+0.495%) and only *bounded* at
+256 (≤0.45%, n = 40 chunks). The reliability and storage sides both favour coarsening and the quality side is
+unresolved, so the move to 256 is a **conditional** recommendation whose condition is one cheap measurement: the same
+`cache_ppl` arm at more WikiText chunks. `group_token 128` has been the default since M1 with nothing measured about it;
+what D76 establishes is that the measurement that decides it is a perplexity one, not a fault one.
+
+### Two other pre-registered secondaries, both landing
+
+**D75's assumption, measured rather than argued.** This is the first arm to record `top1_prob_clean` and
+`nontop_mass_clean`, so δ is computable without the two-state reading. Assumed / observed δ = **1.152×**, implying a
+true non-top mass **1.33×** the runner-up alone. D75 estimated that inflation at **1.34×** from the D63 ladder — a
+different vehicle, a different measurement, agreeing to two decimals. So D75's Qwen numbers were over-stated by ~15%
+and its stated direction of bias was right.
+
+**The zero-point is the most dangerous word in the cache, now with a baseline test.** Scale and zero grids are the same
+size, so a keys-only metadata draw is 49.8% zero-points (1,594 against 1,606 measured). Non-finite collapse: **23 from
+zero-points against 5 from scales**, binomial against that draw share **p = 0.00043**, per-flip collapse hazard
+**0.0144 against 0.0031 — 4.6×**. D68 found this on three models; this is a fourth axis with the enrichment tested
+against its own population rather than asserted.
+
+### Why span-independence is plausible, stated as a hypothesis and not a result
+
+Not measured here: a corrupted `group_token` scale spans **tokens at one channel of one head**, and attention
+re-normalizes over tokens. Corrupting more of them may shift the softmax's *scale* without much shifting its
+*direction*, so the first-token distribution moves by an amount set by the channel and the head rather than by how
+many positions were hit. That would also explain why the task outcome is flat. It predicts that a `group_channel`
+scale — spanning channels within a token, which attention does **not** re-normalize over — should show α > 0. That is
+one config away and is not run.
+
+### Scope
+
+One model, one vehicle, one bit width (4), **keys only**; values are `per_token` throughout, so nothing here speaks to
+value granularity. Reliability is measured on the probe and quality on WikiText — the project's standard split, but the
+cost/benefit table combines two vehicles and says so. **Clean accuracy is at a ceiling** (39–40 of 40 at every rung),
+so "no task-quality cost from coarsening" is a **bound, not an equality** (D30/D44); the 4.5 dB of key SQNR lost from
+g=32 to g=512 is real and the perplexity row is where it shows. The α interval is wide ([−0.110, +0.318]) because the
+short trailing-group flips are few and noisy; it excludes 0.5 and 1.0 but does not establish α = 0 against, say,
+α = 0.1. Two process notes: the runner's provenance guard aborted a first attempt because I edited `src/` mid-campaign,
+and the g=32 rung was superseded so all five rungs share one code state.
