@@ -1,0 +1,49 @@
+# D77 Part B: does group_channel give alpha > 0, as D76's own mechanism hypothesis predicts?
+#
+# D76 found delta SPAN-INDEPENDENT on the token axis -- alpha = +0.024 [-0.110, +0.318] from the margin and
+# +0.035 [-0.082, +0.341] from the recorded p1, both excluding quadrature (0.5) and coherent (1.0). Its closing
+# hypothesis, stated there as a hypothesis and tested here:
+#
+#   a group_token scale spans TOKENS at one channel of one head, and attention re-normalizes over tokens, so
+#   corrupting more positions may move the softmax's scale without moving its direction. That predicts group_channel --
+#   spanning channels WITHIN a token, which attention does NOT re-normalize over -- should show alpha > 0.
+#
+# PREDICTED: alpha > 0 with an interval excluding it. Three outcomes named in docs/preregistrations/d77_prereg.md:
+#   alpha > 0, interval excluding 0 -> hypothesis supported; the token/channel asymmetry is real and the allocator
+#     gains a SECOND and opposite lever, because on this axis coarsening would cost reliability rather than be neutral.
+#   alpha ~ 0 again -> hypothesis REFUTED, and span-independence is a property of metadata corruption generally rather
+#     than of the token axis. That is the more useful negative: granularity is never a reliability lever on either axis.
+#   alpha < 0 -> unmodelled; needs its own explanation and is not support for anything.
+#
+# The channel axis is the cleaner regressor and that is arithmetic, not luck: head_dim is 128 and the rungs are
+# 8/16/32/64/128, so every one DIVIDES IT EXACTLY. Verified on a fixture before the run -- the key scale grid is
+# (1, H, T, D/g) and the realised span is exactly the nominal g at every rung, with no spread. The token axis had a
+# short trailing group at every cache length and needed governed_values to stay interpretable; here there is none.
+#
+# ONE ASYMMETRY, reported rather than hidden: group_channel at group size g gives L*H*T*(D/g) key scales against
+# group_token's L*H*(T/g)*D, so at small g this axis carries far more metadata and far more bits per value. These rungs
+# are NOT iso-storage with D76's, and the two sweeps are compared on ALPHA -- a slope within each axis -- never on
+# their absolute delta or bit totals.
+#
+# Everything else is D76's arm unchanged, so the two are comparable where it matters.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: d77b_channel_span_qwen
+task:
+  kind: protection_arm
+  n_samples: 40
+  n_flips: 1
+  fault_target: metadata
+  metadata_part: keys
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 4, axis: group_channel, group_size: 8}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_channel, group_size: 16}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_channel, group_size: 32}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_channel, group_size: 64}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_channel, group_size: 128}, values: {bits: 4, axis: per_token}}

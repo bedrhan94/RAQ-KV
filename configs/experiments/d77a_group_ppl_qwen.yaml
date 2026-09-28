@@ -1,0 +1,36 @@
+# D77 Part A: how tight can the g=256 quality bound get, and can its sign be resolved at all?
+#
+# H2f's recommendation is conditional on one number -- the perplexity cost of moving the key group from 128 to 256.
+# At 40 chunks that is +0.00133 nats [-0.00193, +0.00452], p = 0.405: a BOUND of <=0.45% perplexity, not a zero. D76
+# called resolving it "one cheap measurement". The power calculation, done before this run, says otherwise.
+#
+# The paired difference has sd = 0.010638 on the existing arms, so a 95% half-width smaller than the observed effect
+# needs 245 chunks. WikiText-2 raw test provides 145 (299,078 tokens at 2,049 per chunk, measured). At n = 145 the
+# half-width is 0.00173, still larger than the effect, so the interval runs about [-0.0004, +0.0031] and FAILS D31.
+#
+# So THIS RUN IS NOT FOR RESOLVING THE SIGN. It tightens the bound from <=0.45% to about <=0.31% perplexity, on the
+# same split, chunk geometry and pinned revision, so every figure stays comparable with every other M1 perplexity
+# number in the project. The allocator decision is made against a bound, which is the correct form for an "is the cost
+# small enough" question and what D30/D44 requires regardless. Pre-registered: an interval that DOES exclude zero here
+# would be a surprise against this calculation, meaning the 40-chunk sd under-estimated the effect, and will be
+# reported as that rather than as a clean confirmation.
+#
+# Four rungs, not five: these are the group sizes the existing 40-chunk arms cover, and the comparison is paired
+# against them. See docs/preregistrations/d77_prereg.md; the train-split secondary that CAN resolve the sign (at the
+# cost of comparability) is d77a2.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/wikitext2.yaml
+name: d77a_group_ppl_qwen
+dataset:
+  n_chunks: 145
+task:
+  kind: cache_ppl
+  store_token_nll: true
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 4, axis: group_token, group_size: 32}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 256}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 512}, values: {bits: 4, axis: per_token}}
