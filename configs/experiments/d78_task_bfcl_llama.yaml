@@ -1,0 +1,44 @@
+# D78: C4's task half on the SECOND FAMILY -- the gap C4's own scope line names ("task side is Qwen only").
+#
+# C4 is supported on one vehicle and one axis: catalogue perplexity against tool-call accuracy across bf16/4-bit/2-bit.
+# On Qwen at 2 bits perplexity moves +13.41% and accuracy -23.81% (80/120 against 105/120, Fisher p = 1.9e-04), so task
+# damage is 1.8x the token-level damage. The perplexity half already exists on BOTH families (d66_ppl_bfcl_*). Only the
+# task half is single-family, and this closes it.
+#
+# THE TOKEN-LEVEL SIDE HAS ALREADY REPLICATED, which is what makes this worth running rather than guessing. Measured,
+# on the same corpus and geometry: 2-bit perplexity rises +12.77% on Llama (2.1022 -> 2.3706) against +13.41% on Qwen
+# (2.3630 -> 2.6799), and 4-bit is free on both (+0.10% and -0.03%). So the denominator of the mismatch ratio is
+# essentially the same on the two families, and the only open quantity is the numerator.
+#
+# PRE-REGISTERED, from those measurements rather than from intuition:
+#   PRIMARY -- the mismatch RATIO (relative accuracy loss / relative perplexity rise) at 2 bits is > 1. Direction, not
+#     magnitude, because the ratio has an arithmetic confound stated below. D31 applies to the accuracy contrast itself
+#     (Fisher exact against the bf16 rung).
+#   POINT PREDICTION, recorded so it can be wrong: if the ratio is a property of the TASK, then 1.8 x 12.77% = ~23%
+#     relative accuracy loss, i.e. 69/120 -> ~53/120.
+#   CONTROL -- 4-bit must show no accuracy change, the same control behaviour that makes the Qwen rows trustworthy.
+#   REPRODUCTION GATE -- the bf16 rung must reproduce m9l_bfcl_golden's 69/120. That is the check that made D66's other
+#     rows credible on Qwen (its bf16 variant reproduced m6_bfcl_golden exactly at 105/120), and it is the first thing
+#     to read here. If it does not reproduce, nothing else in this arm is interpretable.
+#
+# TWO THINGS THAT COULD MAKE THIS COME OUT SMALL FOR REASONS THAT ARE NOT ABOUT C4, both stated before the run:
+#   (a) Llama starts at 69/120 = 57.5% against Qwen's 105/120 = 87.5% (D70: it names the gold function 96.7% of the
+#       time and fails on ARGUMENTS in 92.2% of its failures). A model with less accuracy to lose can show a smaller
+#       ratio without the claim being wrong, so the ratio is compared on DIRECTION and the two families' ratios are
+#       reported side by side rather than pooled.
+#   (b) FLOOR RISK. If the 2-bit rung lands near whatever this vehicle's floor is, the contrast is a bound and not an
+#       equality (D30/D44), and it will be reported as one.
+#
+# Same three rungs and same task kind as d66_task_bfcl_qwen, so the two are directly comparable.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/bfcl_v3_catalogue.yaml
+name: d78_task_bfcl_llama
+task:
+  kind: qa_generate
+seed: 0
+sweep:
+  quantization:
+    - null
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 2, axis: group_token, group_size: 128}, values: {bits: 2, axis: per_token}}
