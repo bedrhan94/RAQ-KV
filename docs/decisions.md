@@ -5273,3 +5273,87 @@ constraint is depends on the text** — which no single corpus can settle.
 
 **Scope.** Absolute perplexities are deliberately not merged with any other table: train is a different partition (15.73
 against test's 15.19 at g128) and only the paired contrast was ever claimed to transfer, which is the claim that failed.
+
+## D87 — The free metadata guard matches the code on the second family too, and its boundary is further out there (2026-09-29)
+
+H2e has been a Qwen-only result since D29, and an audit of second-family coverage across all 21 claim rows found it is
+one of nine rows with no Llama evidence. It matters more than most of the nine because it is a headline: **arm H costs
++0.075% of storage, carries no code at all**, and reached 0/472 task failures at BER 1e-6 on Qwen, matching metadata
+SECDED at +2.3% and uniform SECDED at +14.0%. Four arms here — the range guard and metadata SECDED, at 1e-6 and 1e-5.
+
+**An outcome-choice trap, caught and recorded.** Unconditioned, all four arms report exactly **88 of 480** "task
+failures", which is not a coincidence: Llama answers only **49 of 60** probe samples correctly on a clean cache, and
+11 × 8 = 88. Uncondi­tioned, `faulty_correct` measures the vehicle's floor rather than the fault's doing — the same trap
+D69 documented for `mentions_distractor`. Everything below conditions on `golden_correct`, and the controls confirm the
+reference is stable: **0 of 60 controls changed in every arm.**
+
+| arm | conditioned | trials | task failure | 95% CI |
+|---|---|---|---|---|
+| H (range guard) @ 1e-6 | 49 | 392 | **0/392 = 0.0000** | [0.0000, 0.0097] |
+| G (metadata SECDED) @ 1e-6 | 49 | 392 | **0/392 = 0.0000** | [0.0000, 0.0097] |
+| **H @ 1e-5** | 49 | 392 | **3/392 = 0.0077** | [0.0026, 0.0223] |
+| G @ 1e-5 | 49 | 392 | **0/392 = 0.0000** | [0.0000, 0.0097] |
+
+**At 1e-6 the free guard matches the code on Llama as it does on Qwen** — and it is a **bound, not an equality**
+(D30/D44): both at zero on 392 trials gives a rule-of-three bound of **0.77%**, which is what is claimed.
+
+**At 1e-5 the boundary is further out than on Qwen, and that is the family difference.** Paired per sample,
+H − G = **−0.0077 [−0.0179, +0.0000]**, p = 0.083, 3 of 49 discordant — **fails D31**. On Qwen the same contrast was
+decisive: **+0.0593 [+0.0381, +0.0847], p = 1.1e-5**, 22 of 59 discordant, with H at 5.93%. So Llama's free guard is
+still holding at a rate where Qwen's has clearly failed, and its disadvantage there is **bounded at ≤1.8 percentage
+points** rather than shown.
+
+**Why this direction is consistent with the rest of the project rather than surprising.** Llama is *more* fragile
+unprotected (0.5250 against 0.3211, D51), so the guard has more to remove — but D59 also found Llama's failures are
+**more** metadata-driven than Qwen's in every arm, and the guard covers exactly metadata. A model whose damage is more
+concentrated in the region a guard watches is a model the guard serves better, which is what the 7.7× difference in H's
+1e-5 failure rate shows.
+
+**So H2e's verdict holds on both families and its *boundary* does not transfer**: "supported at 1e-6, refuted at 1e-5"
+is a Qwen statement; on Llama 1e-5 is still inside the guard's range. The practical recommendation is strengthened and
+the rate at which it expires is family-dependent.
+
+**Scope.** 60 samples, 49 conditioned, 8 trials, one quantization, the probe. Llama's lower clean accuracy on the probe
+(49/60 against Qwen's higher) is what makes the conditioned n smaller, and the rule-of-three bound is correspondingly
+looser than Qwen's 0.6%.
+
+## D88 — Span-independence replicates on the second family, and the quality cost per doubling is family-independent (2026-09-29)
+
+H2f is the project's newest claim and Qwen-only by construction. D76 found δ span-independent on the key token axis and
+D82 on the value channel axis with a six times tighter interval — both on Qwen. The claim is about the **codec**, so a
+second family is the natural test, and not a formality: Llama differs on exactly the quantities that could make span
+matter. Its fault map is **flatter** (CV 14% against 27%, D51), its quantization map is flatter too (top-25 share 0.556
+against 0.671, measured while auditing H1), and its per-metadata-flip hazard is **2.25×** Qwen's (D59).
+
+**Gate passes at every rung**, which D77 made a gate for good reason — on the key *channel* axis a granularity sweep
+destroyed the model before the exponent meant anything. Here clean accuracy is **0.800–0.825** across a 16× range and
+**0 controls changed** at all five rungs.
+
+| | α | 95% CI | 0.0 | 0.5 | 1.0 |
+|---|---|---|---|---|---|
+| δ from the margin (two-state) | +0.106 | [**+0.014**, +0.263] | **excluded** | EXCLUDED | EXCLUDED |
+| **δ from the recorded `p₁`** | **+0.057** | **[−0.012, +0.215]** | **in** | EXCLUDED | EXCLUDED |
+
+**The two measures disagree about zero and the assumption-free one is the one to trust.** D75 established that the
+two-state form is **measurably optimistic where margins are thin**, and Llama's probe margin is ~3 nats — squarely that
+regime. Two diagnostics were run before reading the disagreement as anything: the **margin does not drift** across rungs
+(slope −0.081 nats per ln g, p = 0.319; medians 3.31 / 2.94 / 3.19 / 3.00 / 3.00), so the assumed path is not confounded
+by drift, and the two intervals **overlap heavily**, so they are consistent with each other rather than in conflict.
+The assumed path's lower bound is **+0.014**, a hair above zero.
+
+**So the honest statement is the one that does not depend on which measure is used: δ moves at most ~1.2–1.3× across a
+16× change in span** (16^0.057 = 1.17, 16^0.106 = 1.33), and **quadrature and coherent are both excluded on both
+measures**. Granularity is not a reliability lever on Llama either. What is *not* established here is the stronger
+"α is exactly zero" — the bare exclusion of zero on the assumed path is not robust, and it is reported as not robust.
+
+**And the pre-registered secondary answers cleanly: the quality cost per doubling of span is family-independent.**
+Llama loses **−1.11 dB** of key SQNR per doubling (R² 0.989) against Qwen's **−1.13**. So H2f's practical advice —
+coarsen until quantization quality binds — transfers, and *where* it binds does not differ by family on this axis.
+
+**Two independent confirmations fall out.** δ is **~0.12** on Llama against Qwen's ~0.26, a 2.2× family gap that matches
+D75's cross-family measurement (2.30–3.35×) on an arm set it was not derived from. And non-finite collapse is **29 of 29
+(100%) from a zero-point flip** — the strongest cell yet for D68's finding, against 96% in D81 and 82% in D76.
+
+**Scope.** One vehicle, 4 bits, keys only, values `per_token` throughout. The α interval is wider than D82's because the
+short trailing-group bins are noisy here as they were in D76, and because Llama's thin margins make the assumed path the
+less reliable of the two.
