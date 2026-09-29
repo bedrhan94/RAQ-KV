@@ -1,0 +1,35 @@
+# D87: H2e on the SECOND FAMILY. The claim that a FREE metadata plausibility check matches metadata ECC, and the
+# rate where it stops, has been a Qwen-only result since D29 -- and an audit of second-family coverage across all 21
+# claim rows found it is one of nine rows with no Llama evidence at all.
+#
+# It matters more than most of the nine because it is a headline: arm H costs +0.075% of storage, carries no code, and
+# reached 0/472 task failures at BER 1e-6 on Qwen, matching metadata SECDED at +2.3% and uniform SECDED at +14.0%. At
+# 1e-5 it loses decisively (5.93%, +0.0593 [+0.0381, +0.0847], p = 1.1e-5) because the ~13 of 16 metadata bits it cannot
+# see accumulate. A recommendation that cheap resting on one model is the row a reviewer would pick first.
+#
+# WHY LLAMA IS A REAL TEST AND NOT A FORMALITY: it is MORE fragile unprotected -- 0.5250 against Qwen's 0.3211 (D51) --
+# so the guard has more to remove, and its 20.1%-of-metadata-flips coverage has to hold against a larger base. D51
+# already showed the guard takes Llama from 0.5250 to 0.0000, so the open question is not whether the guard works but
+# whether it still MATCHES the code at 1e-6 and still loses at 1e-5, which is what H2e actually claims.
+#
+# PRE-REGISTERED: at 1e-6 both arms are expected at or near zero, which D30/D44 makes a BOUND and not an equality -- the
+# rule-of-three bound on 480 trials is ~0.6%, and that is what will be reported. At 1e-5 the range guard is expected to
+# lose, and the contrast there is the one that can actually resolve. Arms are paired per sample against each other, not
+# against a pooled rate.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/raq_probe_v0.yaml
+name: d87l_arm_g_meta_only
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+protection:
+  metadata_codec: secded
+  metadata_word_bits: 16
+task:
+  kind: protection_arm
+  n_samples: 60
+  ber: 1.0e-6
+  n_trials: 8
+  n_control: 1
+seed: 0

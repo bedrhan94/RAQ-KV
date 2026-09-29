@@ -1,0 +1,44 @@
+# D88: H2f on the SECOND FAMILY -- does reliability constrain the key group size on Llama either?
+#
+# H2f is the project's newest claim and it is Qwen-only by construction, which its own scope says. D76 found delta
+# span-independent on the key token axis (alpha +0.020 [-0.091, +0.257], quadrature and coherent both excluded) and D82
+# found the same on the value channel axis with a six times tighter interval (-0.001 [-0.039, +0.047]). Both on Qwen.
+#
+# The claim H2f makes is about the CODEC, not about a model, so a second family is the natural test -- and it is not a
+# formality here, because the two families differ on exactly the quantity that could make span matter. D51 measured
+# Llama's fault map as FLATTER (CV 14% against 27%), the sensitivity audit found its quantization map flatter too
+# (top-25 share 0.556 against 0.671), and D59 measured its per-metadata-flip hazard as 2.25x Qwen's. A flatter map with
+# a higher hazard is the combination most likely to make "how many values a corrupted scale governs" start to matter.
+#
+# PRE-REGISTERED, same statistic and cluster bootstrap as D76:
+#   PRIMARY   alpha on the realised per-flip span. Predicted ~0, matching both Qwen sweeps. Report which of 0 / 0.5 / 1
+#             the interval excludes.
+#   GATE      clean accuracy and controls at every rung, since D77 showed a granularity sweep can destroy the model
+#             before the exponent means anything -- on the KEY CHANNEL axis it did. This is the key TOKEN axis, where
+#             Qwen stayed at 39/40 across a 16x range, so a collapse here would itself be the finding.
+#   SECONDARY the SQNR cost per doubling of span, against Qwen's -1.13 dB on this axis. If Llama pays more per doubling,
+#             its quality constraint binds sooner and H2f's practical advice is family-dependent even if alpha is not.
+#
+# Same five rungs as D76 and everything else its arm: 40 samples x 16 trials x 1 control, one key-metadata flip,
+# metadata_part keys, values per_token throughout, no protection, no pruning.
+include:
+  - models/llama3p2_3b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: d88_group_span_llama
+task:
+  kind: protection_arm
+  n_samples: 40
+  n_flips: 1
+  fault_target: metadata
+  metadata_part: keys
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 4, axis: group_token, group_size: 32}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 64}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 256}, values: {bits: 4, axis: per_token}}
+    - {keys: {bits: 4, axis: group_token, group_size: 512}, values: {bits: 4, axis: per_token}}
