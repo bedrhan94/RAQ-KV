@@ -4918,6 +4918,20 @@ real cost and it is **not taken unilaterally**; it is recorded here as a decisio
 the day the pin is adopted, deleting the marker is the whole change and the suite will say so. Its companion tests
 verify the fix's token-count neutrality and that Qwen needs no pin, so the claims above are checked rather than asserted.
 
+**Verified before closing this, because a third failure mode would have changed the answer: adopting the pin re-keys
+cleanly.** Computed on `d81_state_fault_llama` without touching anything -- pinning `chat_template_kwargs` moves `config_hash`
+from `b773243c` to `af77041f`, so the `exp_id` changes, the resolved directory differs and **does not exist**, and `_check_existing`
+is therefore never reached. There is no hidden comparison against the old manifest and no path on which an old run is
+silently extended under a changed config. The cost is exactly the stated one -- **61 arms become *unrun*** -- with no third branch.
+
+**DECISION, recorded: do not adopt.** Both branches are worse than the present state. *Not* re-running leaves 61 arms whose
+configs no longer resolve to them, so every future resume or extension of a Llama arm silently becomes a new experiment.
+*Re-running* spends 9.17 GPU-hours to shift every published Llama figure by an amount a reader could not distinguish from
+noise -- the measured impact is **2 predictions in 120**, on one item that recorded an exact bf16 margin of 0.0. Meanwhile
+every claim in this project is built from **within-campaign paired contrasts**, which arms in one session share a date for
+and which the defect cannot reach. So the defect stays measured, bounded, recorded here, pinned by a strict-xfail test and
+carried in memory. If the decision is ever reversed, deleting that marker is the whole change.
+
 ## D80 — Multi-turn state reversion replicates on the second family; D69's dramatic fact-type spread does not (2026-09-29)
 
 D69's finding rested on one model: with a perfect bf16 cache and no faults, Qwen3-1.7B answers from the **superseded**
