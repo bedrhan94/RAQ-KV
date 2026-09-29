@@ -154,3 +154,86 @@ def test_the_fault_and_qa_tasks_reach_the_state_probe_through_the_dispatcher():
         src = inspect.getsource(getattr(tasks, name))
         assert "build_probe_samples(" in src, f"{name} does not use the dispatcher"
         assert "build_raq_probe(" not in src, f"{name} still calls build_raq_probe directly"
+
+
+@pytest.fixture(scope="module")
+def multi_samples():
+    """The same cells with TWO corrections (D83), so a reversion becomes attributable to a position."""
+    cfg = StateProbeConfig.model_validate(
+        load_yaml(configs_dir() / "datasets" / "state_probe_v0.yaml")["dataset"])
+    cfg = cfg.model_copy(update={"fact_types": ("number", "id", "tool_arg"), "context_lengths": (1024,),
+                                 "groups_per_cell": 2, "n_updates": 2})
+    model = ModelConfig.model_validate(load_yaml(configs_dir() / "models" / "qwen3_1p7b.yaml")["model"])
+    return build_state_probe(cfg, load_tokenizer(model), dict(model.chat_template_kwargs))
+
+
+def test_n_updates_unset_is_byte_identical_to_one(samples):
+    """The field had to default to None, not 1, or every existing state-probe identity would have moved.
+
+    This checks the stronger property the default exists for: the samples themselves are unchanged, not merely the
+    identity hash. Verified against the store too -- all four live state-probe arms reproduce their recorded
+    fingerprints with this code (D69 golden, D69 fault, D72, D81).
+    """
+    from raq_kv.data.prompts import samples_fingerprint
+
+    cfg = StateProbeConfig.model_validate(
+        load_yaml(configs_dir() / "datasets" / "state_probe_v0.yaml")["dataset"])
+    assert cfg.n_updates is None, "the default must stay None so `exclude_none` leaves existing identities alone"
+    cfg = cfg.model_copy(update={"fact_types": ("number", "id", "tool_arg"), "context_lengths": (1024,),
+                                 "groups_per_cell": 2})
+    model = ModelConfig.model_validate(load_yaml(configs_dir() / "models" / "qwen3_1p7b.yaml")["model"])
+    explicit = build_state_probe(cfg.model_copy(update={"n_updates": 1}),
+                                 load_tokenizer(model), dict(model.chat_template_kwargs))
+    assert samples_fingerprint(explicit) == samples_fingerprint(samples)
+
+
+def test_two_corrections_leave_two_stale_values_in_order(multi_samples, samples):
+    for s in multi_samples:
+        stale = s.meta["stale_values"]
+        assert s.meta["n_updates"] == 2
+        assert len(stale) == 2, stale
+        # Oldest first: the document's own value, then the superseded correction.
+        assert stale[0] == s.meta["stale_value"], "the first stale value must be the document's, as it was at n=1"
+        assert s.meta["updated_value"] not in stale
+        # Both stale values, and the live one, must be scorable distinctly.
+        assert len({*stale, s.meta["updated_value"]}) == 3
+        for value in (*stale, s.meta["updated_value"]):
+            assert s.prompt_text.count(value) == 1, f"{value!r} must occur once"
+        # Every superseded value is a scorer distractor, so `mentions_distractor` keeps its old meaning.
+        assert set(stale) <= set(s.reference["distractors"])
+        assert s.reference["gold"] == s.meta["updated_value"]
+    # Two more messages than the single-correction shape, and the cache is correspondingly longer.
+    assert {s.meta["n_turns"] for s in multi_samples} == {7}
+    assert {s.meta["n_turns"] for s in samples} == {5}
+
+
+def test_both_stale_values_are_inside_the_cache(multi_samples):
+    """A stale value outside the cache could not be reverted to by a cache fault, so the measurement would be void."""
+    for s in multi_samples:
+        stale_spans = [sp for sp in s.spans if sp.label == "fact_value" and sp.role == "stale"]
+        assert len(stale_spans) == 2, [(sp.role, sp.text) for sp in s.spans if sp.label == "fact_value"]
+        for sp in stale_spans:
+            assert sp.token_end <= s.cache_len
+        assert {sp.text for sp in stale_spans} == set(s.meta["stale_values"])
+
+
+def test_each_correction_states_the_fact_the_same_way(multi_samples):
+    """Both corrections reuse the document's own sentence template, so the only difference between them is the value."""
+    for s in multi_samples:
+        corrections = [line for line in s.prompt_text.split("\n") if line.startswith("Correction to the record: ")]
+        assert len(corrections) == 2, corrections
+        live, prior = s.meta["updated_value"], s.meta["stale_values"][1]
+        assert prior in corrections[0] and live in corrections[1], corrections
+        # Same sentence, different value: strip the values and the remainder must match.
+        assert corrections[0].replace(prior, "") == corrections[1].replace(live, "")
+
+
+def test_the_multi_update_scorer_still_separates_a_correct_answer_from_each_reversion(multi_samples):
+    """The property the whole vehicle rests on, now with two ways to be stale."""
+    s = multi_samples[0]
+    score = SCORERS[s.scorer]
+    good = score(s.gold_text, s.reference)
+    assert good["correct"] and not good["mentions_distractor"]
+    for stale in s.meta["stale_values"]:
+        bad = score(s.gold_text.replace(s.meta["updated_value"], stale), s.reference)
+        assert not bad["correct"] and bad["mentions_distractor"], stale

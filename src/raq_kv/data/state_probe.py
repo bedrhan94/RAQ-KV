@@ -103,22 +103,32 @@ class StateProbeBuilder:
         old_value = spans_in[("fact_value", "target")].text
         distractors = [s.text for s in inner.spans if s.label == "fact_value" and s.role == "distractor"]
 
-        new_value = self._new_value(rng, fact_type, [old_value, *distractors])
-        # The correction reuses the document's own sentence template, so turn 2 states the fact the same way turn 1
-        # did and the only difference between them is the value.
+        # D83: one correction is D69's shape; `n_updates` > 1 chains them, so the conversation carries several
+        # superseded values in a KNOWN ORDER. `values[0]` is the document's, `values[-1]` is live, and everything
+        # between is stale -- which is what lets an analysis ask whether a reversion goes to the most recent stale
+        # value or back to the original. Each new value is drawn distinct from every value already in play, including
+        # the earlier corrections, because the scorer matches by substring.
+        n_updates = self.cfg.n_updates or 1
+        values = [old_value]
+        for _ in range(n_updates):
+            values.append(self._new_value(rng, fact_type, [*values, *distractors]))
+        new_value, stale_values = values[-1], values[:-1]
+        # The correction reuses the document's own sentence template, so each update states the fact the same way
+        # turn 1 did and the only difference between them is the value.
         target_sentence = spans_in[("fact_sentence", "target")].text
         tpl = target_sentence.replace(target_key, "{key}", 1).replace(old_value, "{value}", 1)
-        correction, _, _ = fill_template(tpl, target_key, new_value)
 
         is_tool = fact_type == "tool_arg"
         ask = self._question(inner, is_tool)
         messages = [
             {"role": "user", "content": INTRO + document + READ_REQUEST},
             {"role": "assistant", "content": ACK_DOCUMENT},
-            {"role": "user", "content": UPDATE_PREFIX + correction},
-            {"role": "assistant", "content": ACK_UPDATE},
-            {"role": "user", "content": ask},
         ]
+        for value in values[1:]:
+            correction, _, _ = fill_template(tpl, target_key, value)
+            messages += [{"role": "user", "content": UPDATE_PREFIX + correction},
+                         {"role": "assistant", "content": ACK_UPDATE}]
+        messages.append({"role": "user", "content": ask})
         prompt = render_conversation(self.tok, messages, self.template_kwargs, self.inner._tools(fact_type))
         ids, offsets = tokenize_with_offsets(self.tok, prompt)
 
@@ -127,7 +137,11 @@ class StateProbeBuilder:
         q_start = prompt.rindex(ask)
         cache_len = split_index(offsets, q_start)
 
-        for value, what in ((old_value, "stale value"), (new_value, "updated value")):
+        # EVERY value in the chain, not just the first and last: with several corrections a repeat anywhere would make
+        # the spans and the substring scorer stop referring to one place, and the position analysis would be reading
+        # the wrong occurrence.
+        for i, value in enumerate(values):
+            what = "document value" if i == 0 else ("updated value" if i == len(values) - 1 else f"stale value {i}")
             if prompt.count(value) != 1:
                 raise AssertionError(f"{what} {value!r} occurs {prompt.count(value)} times; it must occur once, or "
                                      f"the spans and the substring scorer stop referring to one place")
@@ -140,7 +154,8 @@ class StateProbeBuilder:
             Span("query", "query", q_start, len(prompt), cache_len, len(ids), prompt[q_start:]),
         ]
         # The two values that make this vehicle what it is: superseded in turn 1, live in turn 2.
-        for value, role in ((old_value, "stale"), (new_value, "target"), *[(d, "distractor") for d in distractors]):
+        for value, role in (*[(v, "stale") for v in stale_values], (new_value, "target"),
+                            *[(d, "distractor") for d in distractors]):
             if prompt.count(value) != 1:
                 continue  # a distractor value that the filler happens to repeat is left unlabelled, not asserted on
             at = prompt.index(value)
@@ -152,7 +167,11 @@ class StateProbeBuilder:
 
         # The stale value is a DISTRACTOR for scoring, which is what turns `mentions_distractor` into a measure of
         # state regression rather than a generic wrong-answer flag.
-        reference: dict[str, Any] = {"gold": new_value, "distractors": [old_value, *distractors]}
+        # Every superseded value is a scorer distractor, so `mentions_distractor` stays "the model answered from SOME
+        # stale state". WHICH stale value it answered from is left to the analysis, which matches the recorded
+        # prediction against `meta["stale_values"]` -- deliberately, because widening the scorer to report a position
+        # would change what `mentions_distractor` means on the 540 samples already measured with it (D69, D72, D81).
+        reference: dict[str, Any] = {"gold": new_value, "distractors": [*stale_values, *distractors]}
         scorer, gold_text, scored = "exact_value", new_value, (0, len(new_value))
         if is_tool:
             prefix = '<tool_call>\n{"name": "get_account_balance", "arguments": {"account_number": "'
@@ -175,7 +194,10 @@ class StateProbeBuilder:
             spans=tuple(spans),
             meta={"group_id": group_id, "fact_type": fact_type, "nominal_len": nominal_len,
                   "depth_nominal": depth, "cache_len": cache_len, "n_distractors": len(distractors),
-                  "stale_value": old_value, "updated_value": new_value, "n_turns": len(messages)},
+                  "stale_value": old_value, "updated_value": new_value, "n_turns": len(messages),
+                  # Ordered oldest-first, so an analysis can say WHICH superseded value a reversion went to.
+                  # `stale_value` above is kept as the document's own, which is what it meant when there was one.
+                  "stale_values": list(stale_values), "n_updates": n_updates},
         )
 
     def _question(self, inner: PromptSample, is_tool: bool) -> str:

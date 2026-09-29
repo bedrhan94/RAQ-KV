@@ -1,0 +1,34 @@
+# D83: when a conversation corrects a value TWICE, which stale value does the model fall back to?
+#
+# D69's vehicle corrects once, so a reversion is attributable to staleness and to nothing else -- there is only one
+# stale value available. That is the scope limit D69, D72 and D81 all carry. With two corrections the conversation
+# holds the document's value V0 and a superseded correction V1 in a KNOWN ORDER, and the reversion becomes attributable
+# to a POSITION.
+#
+# The two answers mean different things about the failure:
+#   RECENCY (reversion lands on V1, the most recent superseded value) -> the model lost the LAST update and answered
+#     from the state just before it. The failure is in carrying the most recent turn.
+#   PRIMACY (reversion lands on V0, the document's own value) -> the model fell back past BOTH corrections to the
+#     large early block. The failure is that the corrections never displaced the document at all.
+#
+# PRE-REGISTERED PREDICTION: RECENCY. D69 describes the failure as losing the update, and losing only the most recent
+# one leaves V1, not V0. A primacy result would say something stronger and different -- that the document dominates
+# regardless of how many times it is corrected -- and would make the single-correction vehicle's 43% look like a
+# document-anchoring effect rather than an update-tracking one.
+#   PRIMARY   among clean-baseline reversions, the split between V1 and V0, with a Wilson interval. A 50/50 split is
+#             the null and would mean position carries no information.
+#   SECONDARY the overall reversion rate against D69's 43.06% [38.04, 48.22] on the same types at one correction --
+#             does a second correction make reversion MORE or LESS likely? Not obvious either way: another correction
+#             is more evidence for the live value and also one more stale value to be confused by.
+#   GATE      this is a bf16, fault-free, uncompressed baseline. Like D69 and D72 it establishes what the vehicle does
+#             before any damage measurement, and a fault arm is only worth running if the floor leaves room.
+#
+# Qwen3-1.7B, because that is where the one-correction baseline exists (D69) and the comparison is within family.
+# Cost is small: `qa_generate` runs at ~2.7 s/unit here, so 360 samples is about 16 minutes.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/state_probe_v0_multi.yaml
+name: d83_state_multi_golden
+task:
+  kind: qa_generate
+seed: 0

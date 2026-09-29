@@ -99,6 +99,15 @@ class StateProbeConfig(StrictModel):
     filler_split: str = "train"
     filler_revision: str = Field(min_length=7)
     max_new_tokens: int = Field(default=64, gt=0)
+    # D83: D69's vehicle corrects the value exactly once, so it cannot ask which stale value a reversion goes to.
+    # With two or more corrections the conversation carries several superseded values in a known order, and a reversion
+    # becomes attributable to a POSITION rather than only to staleness. `int | None` rather than `int = 1` because
+    # `identity_dict` excludes None only: a concrete default would serialize into every existing state-probe config and
+    # move its identity hash, which is the `ber_basis` lesson this project has now learned three times.
+    n_updates: int | None = Field(
+        default=None, ge=1, description="Correction turns after the document; None means one, D69's original shape. "
+                                        "Each adds a (user correction, assistant acknowledgement) pair, so the cache "
+                                        "grows and every superseded value stays inside it")
 
     @model_validator(mode="after")
     def _check(self) -> StateProbeConfig:

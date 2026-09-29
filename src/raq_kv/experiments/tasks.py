@@ -571,7 +571,7 @@ class FaultQA:
         return list(self.samples)
 
     def data_fingerprint(self) -> dict[str, Any]:
-        return {"raq_probe_samples_sha256": self._fingerprint, "n_samples": len(self.samples)}
+        return probe_family_fingerprint(self._fingerprint, self.samples)
 
     def setup(self) -> dict[str, Any]:
         self.lm = load_model(self.cfg.model)
@@ -669,6 +669,25 @@ def schema_spans(sample: PromptSample, cache_len: int) -> list[tuple[int, ...]]:
                                       for b in (span.token_start, min(span.token_end, cache_len))
                                       if 0 <= b <= cache_len})
     return [(lo, hi) for lo, hi in zip(bounds, bounds[1:], strict=False) if hi > lo]
+
+
+def probe_family_fingerprint(fingerprint: str, samples: list[PromptSample]) -> dict[str, Any]:
+    """The data fingerprint for a probe-FAMILY task, under a key whose name is historical and slightly wrong.
+
+    ``raq_probe_samples_sha256`` was named when the single-turn probe was the only vehicle these tasks accepted. They
+    now also take ``state_probe`` (D69) and ``longbench`` (D73), and their samples land under this same key -- so a
+    ``state_probe`` arm's manifest says ``raq_probe_samples_sha256`` and means "this task's samples".
+
+    **The name is not fixed, deliberately.** ``runner._check_existing`` compares the whole ``data_fingerprint`` dict,
+    so renaming the key would raise ``ExperimentConflictError`` on every existing probe-family arm the moment it was
+    resumed or re-run -- forty-odd of them. The cost of the wrong name is confusion; the cost of fixing it is
+    invalidating the store's own continuity check, which is worse.
+
+    Recorded because the confusion is real and already happened: chasing a ``state_probe`` arm that reported
+    ``raq_probe_samples_sha256`` cost an investigation into a bug that did not exist, on the theory that the key proved
+    the arm had been built by the wrong builder (which HAD been a real defect once, fixed in D69). It had not.
+    """
+    return {"raq_probe_samples_sha256": fingerprint, "n_samples": len(samples)}
 
 
 def subset_samples(samples: list[PromptSample], n_samples: int | None, seed: int) -> list[PromptSample]:
@@ -824,7 +843,7 @@ class ProtectionArm:
         return list(self.samples)
 
     def data_fingerprint(self) -> dict[str, Any]:
-        return {"raq_probe_samples_sha256": self._fingerprint, "n_samples": len(self.samples)}
+        return probe_family_fingerprint(self._fingerprint, self.samples)
 
     def setup(self) -> dict[str, Any]:
         self.lm = load_model(self.cfg.model)
@@ -1156,7 +1175,7 @@ class Retention:
         return list(self.samples)
 
     def data_fingerprint(self) -> dict[str, Any]:
-        return {"raq_probe_samples_sha256": self._fingerprint, "n_samples": len(self.samples)}
+        return probe_family_fingerprint(self._fingerprint, self.samples)
 
     def setup(self) -> dict[str, Any]:
         self.lm = load_model(self.cfg.model)
