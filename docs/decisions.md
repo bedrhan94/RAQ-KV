@@ -5094,3 +5094,73 @@ and an unfittable slope. The nan guard added in D77 is what made that legible in
 excluded" — it said `NOT FITTABLE` and named the reason. Fixed to key on the group size of whatever part
 `metadata_part` confines the draw to, **with a raise if two rungs ever collapse onto one label**, and the SQNR column
 now follows the swept part too rather than reporting the constant one.
+
+## D83 — A second correction makes state tracking worse, and the reversion it produces goes to two opposite places depending on the fact type (2026-09-29)
+
+D69's vehicle corrects the value once, so a reversion is attributable to staleness and to nothing else: there is only
+one stale value available. That limit is carried by D69, D72 and D81 alike. With **two** corrections the conversation
+holds the document's `V0` and a superseded correction `V1` in a known order, and a reversion becomes attributable to a
+**position**. 360 samples, bf16, no faults, no compression — the same baseline shape D69 and D72 established before any
+damage measurement.
+
+### The pre-registered primary is unresolved, and my prediction is not supported
+
+D83's config predicted **recency** — that the model loses the last update and answers from the state just before it.
+
+**Of the 203 attributable reversions, `V1` takes 111: 54.7% [47.8%, 61.4%].** The interval contains 0.5, so position
+carries **no resolved information in aggregate** and the prediction fails. Full outcome breakdown of the 360 samples:
+correct 141 (39.2%), `V1` 111 (30.8%), `V0` 92 (25.6%), a document distractor 12 (3.3%), neither 4 (1.1%) — so the
+vehicle stays nearly binary in the sense that matters, with 96.6% of answers landing on the live value or a labelled
+stale one.
+
+### The pre-registered secondary answers its open question decisively: more corrections are worse
+
+The config called this one "not obvious either way" — another correction is more evidence for the live value *and* one
+more stale value to be confused by.
+
+| | correct | **reversion** | 95% CI |
+|---|---|---|---|
+| one correction (D69) | 204/360 = 56.7% | 155/360 = **43.1%** | [38.0%, 48.2%] |
+| **two corrections (D83)** | 141/360 = 39.2% | 215/360 = **59.7%** | [54.6%, 64.7%] |
+
+**+16.7 points of reversion, Fisher p = 1.04e-05**, and correct falls 56.7% → 39.2% (p = 3.5e-06). Same model, same six
+fact types, same probe construction — a within-family, within-vehicle comparison whose only difference is the extra
+correction turn. **Correcting a value a second time makes the model *more* likely to answer from stale state, not less.**
+
+### Why the aggregate is unresolved: it averages two opposite regimes
+
+**Post-hoc, and labelled that way.** The grouping variable is not post-hoc — it is D69's own *measured* reversion floor,
+which existed before D83 ran (constraint 10%, number 15%, tool_arg 0% against entity 95%, id 92%, date 47%) — but
+**this analysis was not pre-registered** and the primary above is what was.
+
+| group | V1 / V0 | recency share | 95% CI |
+|---|---|---|---|
+| low-floor: constraint, number, tool_arg | 69 / 8 | **0.896** | [0.808, 0.946] |
+| ceiling: entity, id | 28 / 67 | **0.295** | [0.212, 0.393] |
+| date (middling floor) | 14 / 17 | 0.452 | [0.292, 0.622] |
+
+**Both groups exclude 0.5 and they point in opposite directions**, Fisher between them **p = 2.93e-16**. So the
+aggregate 54.7% is the average of 89.6% and 29.5% and describes neither.
+
+The reading this suggests, as a hypothesis and not a result: **for values the model tracks well the failure is "lost the
+last update" (recency), and for invented multi-word or alphanumeric values it is "the corrections never displaced the
+document at all" (primacy).** That would make D69's 43% a mixture of an update-tracking failure and a
+document-anchoring one, which no single-correction vehicle can separate because it has only one stale value to offer.
+
+**What would test it, and it is cheap:** the same arm on Llama-3.2-3B, where D80 measured a **different and much
+flatter** floor ordering (entity 0.583, id 0.383, constraint 0.350, number 0.317, date 0.250 against Qwen's 0.95 to
+0.00). If the regime split follows each family's *own* floors, the split should be correspondingly weaker there; if it
+follows the fact **types** regardless of floor, it should look the same. Those predictions differ, which is what makes it
+a test. Not run.
+
+### Scope
+
+One model, one probe construction, 360 samples, **bf16 with no faults and no compression** — this is the baseline that
+makes a damage measurement interpretable, not a damage measurement. The extra correction turn adds about 40 cached
+tokens (median 2115 → 2155), so the two conversations differ in length as well as in content and the comparison above is
+not length-matched. `n_updates` was verified byte-identical to D69's shape when unset before this ran, and all four prior
+state-probe arms reproduce their recorded fingerprints with this code.
+
+**A fault arm is worth running and is not run here.** The floor leaves room: 141 samples answer correctly, and on the
+low-floor types alone that is 103 (constraint 27, number 30, tool_arg 46) — enough to condition on clean-correct and ask
+whether *fault-induced* reversion shows the same two-regime split that the clean baseline does.
