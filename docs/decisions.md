@@ -4986,3 +4986,111 @@ a damage measurement interpretable, not a damage measurement. The Llama **fault*
 is the next step; D69's own fault result was 2 events on 416 trials, so a Llama counterpart needs its own power
 discussion before it is worth the GPU. `tool_arg` is void on Llama for scorer reasons, so five of six cells carry the
 comparison and the sixth is reported as void rather than as zero.
+
+## D81 — Cache damage does not mostly revert a conversation to stale state, and on the second family it is resolved rather than merely ordered (2026-09-29)
+
+D69 asked whether corrupting a conversation's KV cache sends the agent back to superseded state, and got the
+counterintuitive answer on thin evidence: **2 of 416** conditioned trials regressed against 2.16% that broke at all, so
+roughly a fifth of fault-induced failures were reversions. At two events that supported the *ordering* and nothing else,
+on one model. This is the second family, powered on purpose.
+
+**Cells are this family's own, and that is the design point.** D69's low-floor set came from Qwen's measured baseline;
+D80 measured Llama's and it differs. Llama's usable types are `date` (25.0% floor), `number` (31.7%) and `constraint`
+(35.0%); `id` and `entity` sit too high, and **`tool_arg` is void** — Llama retrieves the gold value correctly every
+time and scores zero because the scorer encodes Qwen's dialect (D46/D47), so that cell measures the scorer. Qwen's set
+both contains the void cell and excludes `date`, whose floor there is 46.7%. Applying the same **criterion** to each
+family's own baseline is the principled move; its consequence, stated before the run, is that the two arms sit on
+different cells so the cross-family *share* comparison is not made.
+
+| | design | controls | conditioned | broke | **reversion share of failures** |
+|---|---|---|---|---|---|
+| Qwen3-1.7B (D69) | 60 × 8 | **0/60** | 52 of 60 | 9/416 = 2.16% | **2/9 = 22.2%** [6.3%, 54.7%] |
+| Llama-3.2-3B (D81) | 180 × 16 | **0/180** | 117 of 180 | 72/1872 = 3.85% | **6/72 = 8.3%** [3.9%, **17.0%**] |
+
+**The claim replicates and is now resolved.** D69's interval ran from a fifth to over half, so it could only support an
+ordering. Llama's upper bound is **17.0%**, which excludes half *and* a third: **at least 83% of fault-induced failures
+are not reversions.** Corrupting a conversation's cache overwhelmingly produces some other wrong answer, not a return
+to stale state — and that is now a bounded measurement on 72 events rather than an inference from 2.
+
+**The power calculation held and was beaten.** It promised ~53 breaks and a half-width near 0.11; the arm delivered
+**72 breaks** and a half-width of 6.6 points. The conditioning it insisted on was not optional:
+`faulty_mentions_distractor` is true on 56 of D69's 480 *unconditioned* trials while only 12 broke, because ~43% of
+clean answers are already reversions, so unconditioned the field reads the vehicle's floor rather than the fault's doing.
+
+**The reversions are spread, not one cell's artefact:** `constraint` 1 of 38 breaks, `date` 2 of 15, `number` 3 of 19 —
+every per-type share below 16%. Gate passes on both arms: **controls exactly zero**, 0/60 and 0/180.
+
+**And the zero-point finding gets its strongest cell yet.** Non-finite collapse 23 of 2880 trials (0.80%), **22 of them
+(96%) from a zero-point flip** — against 82% in D76 and the three-model result in D68.
+
+**Scope.** Break rate 3.85% here against D59's 2.63% per metadata flip on the single-turn probe: a different vehicle, so
+a consistency note and not a test. One flip, one quantization, no protection, no pruning. 63 of 180 samples are dropped
+by the clean-correct conditioning, which is the price of making a reversion attributable, and the conditioned set is
+balanced across the three types (41/39/37). Llama's `tool_arg` remains void for scorer reasons and is absent from the
+cells rather than reported as zero.
+
+## D82 — The channel axis is span-independent too, on the best-powered test in the project, so D76's mechanism hypothesis is refuted (2026-09-29)
+
+D76 found δ **span-independent** on the token axis and offered a mechanism: a `group_token` scale spans **tokens** at one
+channel of one head, attention re-normalizes over tokens, so corrupting more positions moves the softmax's scale without
+moving its direction. That predicts the **channel** axis — which attention does not re-normalize over — should give
+α > 0. D77 tried it on keys and could not: coarsening key channels destroys the model. This is D77's specified successor.
+
+**Values can be swept where keys cannot, and not by hope.** This project's default for values *is* `per_token`, which on
+a `(1, H, T, D)` tensor is exactly channel-grouping at `g = head_dim = 128` — the coarsest rung here — and it has been
+the default in every arm since M1 at 4 bits. Five rungs, 8 to 128, keys held at `group_token 128`, `metadata_part:
+values` so the draw cannot shift its part mixture, 40 samples × 16 trials × 1 control each.
+
+### The prediction is refuted, and this is the tightest α the project has measured
+
+| | α | 95% CI | 0.0 | 0.5 | 1.0 |
+|---|---|---|---|---|---|
+| δ from the margin (two-state) | **−0.001** | **[−0.039, +0.047]** | **in** | EXCLUDED | EXCLUDED |
+| δ from the recorded `p₁` | **+0.046** | [−0.049, +0.133] | **in** | EXCLUDED | EXCLUDED |
+
+δ is 0.2665, 0.2615, 0.2613, 0.2694, 0.2618 across a **16×** change in span — a 3.1% spread, and the interval excludes
+any α above 0.047. **D76's interval was [−0.091, +0.257]; this one is six times tighter**, and the reason is structural:
+`head_dim` is 128 so every rung divides it exactly and the realised span equals the nominal one with **no trailing
+group**, while all five rungs sit at usable quality, so there are no noisy short-span bins to widen the fit.
+
+**Every gate holds, identically across rungs.** Clean accuracy **39/40 at all five**, controls **0 at all five**. The
+task outcome is flat too: break rate 0.0234, 0.0219, 0.0125, 0.0219, 0.0359 — non-monotone, Spearman(log g, rate)
+**+0.205, p = 0.74**, finest against coarsest 15/640 against 23/640, **Fisher p = 0.249**.
+
+### The three axes, and why only two could be tested
+
+| axis | part | SQNR per doubling of span | R² | α | model survives the sweep? |
+|---|---|---|---|---|---|
+| `group_token` | keys | −1.13 dB | 0.990 | +0.020 [−0.091, +0.257] | yes |
+| `group_channel` | keys | **−3.18 dB** | 0.999 | **untestable** | **no — 0/40 by g=64** |
+| `group_channel` | values | −1.81 dB | 0.980 | **−0.001 [−0.039, +0.047]** | yes |
+
+**Value channels are more homogeneous than key channels and that is why this sweep exists** (−1.81 against −3.18 dB per
+doubling), which is the same fact that makes `per_token` a workable default for values and a disastrous one for keys.
+
+### So the pre-registered negative is the one that landed, and it is the more useful one
+
+D82's config named this outcome in advance: *"α ≈ 0 again → the hypothesis is REFUTED, and span-independence is a
+property of metadata corruption generally rather than of the token axis. That is the more useful negative, because
+granularity would then never be a reliability lever on either axis or either part."* That is what happened.
+
+**So: how many values a corrupted scale governs does not set how much damage it does** — on either axis, on either part,
+over a 16× range, with the task outcome agreeing. The attention-renormalization story is not needed and is not
+supported; what needs explaining now is why damage is span-independent *at all*, and nothing here answers that.
+
+### Scope
+
+One model, one vehicle, 4 bits, values only for the sweep and keys held fixed. These rungs are **not iso-storage** with
+D76's (6.1386 down to 4.2636 bits per value), so the two sweeps are compared on **α** — a slope within each axis — and
+never on absolute δ or bit totals. D75's two-state assumption measured again here: assumed/observed δ = 1.182×, implying
+a tail inflation of **1.40×** against D76's 1.33× and D75's 1.34× estimate — a third independent estimate in the same
+narrow range.
+
+### A defect in the report, found because it produced a visibly impossible table
+
+`report_d76.py` keyed its rungs on the **keys'** group size. D82 holds keys at 128 and sweeps values, so all five rungs
+labelled as 128 and four silently overwrote each other: the first run of the report showed **one** rung with a span of 8
+and an unfittable slope. The nan guard added in D77 is what made that legible instead of printing "all three nulls
+excluded" — it said `NOT FITTABLE` and named the reason. Fixed to key on the group size of whatever part
+`metadata_part` confines the draw to, **with a raise if two rungs ever collapse onto one label**, and the SQNR column
+now follows the swept part too rather than reporting the constant one.

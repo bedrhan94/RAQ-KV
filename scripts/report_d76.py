@@ -147,10 +147,21 @@ def main() -> int:
     args = parser.parse_args()
     raw_root = resolve_output_root(args.output_root) / "raw"
 
-    rungs = {}
+    rungs: dict[int, dict] = {}
     for exp, manifest, records in sweep_runs(raw_root, args.name):
-        g = manifest["config"]["quantization"]["keys"]["group_size"]
-        rungs[int(g)] = {"exp": exp.name, "records": records, "cols": collect(records)}
+        quant = manifest["config"]["quantization"]
+        # The rung label is the group size of the part the FAULT DRAW is confined to, not always the keys'. D82 holds
+        # keys at group_token 128 and sweeps VALUES, so keying on the keys collapsed all five rungs onto 128 and four
+        # silently overwrote each other -- the report then showed one rung and an unfittable slope. `metadata_part` is
+        # what the draw was confined to and is therefore what the span varies with.
+        part = (manifest["config"]["task"].get("metadata_part") or "keys")
+        g = int(quant[part]["group_size"])
+        if g in rungs:
+            raise SystemExit(
+                f"two rungs of {args.name!r} both label as {part} group_size {g} ({rungs[g]['exp']} and {exp.name}); "
+                f"one would overwrite the other and the exponent would be fitted on a population the caller did not "
+                f"choose. Key the rungs on whatever this sweep actually varies")
+        rungs[g] = {"exp": exp.name, "records": records, "cols": collect(records), "part": part}
     if not rungs:
         raise SystemExit(f"no rungs for {args.name!r}")
 
@@ -158,12 +169,14 @@ def main() -> int:
     print(f"D76 -- does the codec move delta?  {len(rungs)} rungs of {args.name}\n")
 
     # PART 1, the per-rung picture, including every pre-registered secondary that is per-rung.
-    print(f"{'group':>6s}{'n':>4s}{'trials':>7s}{'span med':>10s}{'span mean':>11s}{'key SQNR':>10s}"
+    part_label = f"{next(iter(rungs.values()))['part'][:3]} SQNR"
+    print(f"{'group':>6s}{'n':>4s}{'trials':>7s}{'span med':>10s}{'span mean':>11s}{part_label:>10s}"
           f"{'bits/val':>10s}{'delta':>9s}{'break':>8s}{'95% CI':>18s}{'nonfin':>8s}")
     for g in sorted(rungs):
         c = rungs[g]["cols"]
         rec0 = rungs[g]["records"][0]
-        sqnr = ((rec0.get("quantization") or {}).get("keys") or {}).get("sqnr_db_mean")
+        part = rungs[g]["part"]
+        sqnr = ((rec0.get("quantization") or {}).get(part) or {}).get("sqnr_db_mean")
         bits = rec0.get("avg_kv_bits")
         fin = np.isfinite(c["kl"]) & (c["kl"] > 0) & np.isfinite(c["margin"])
         delta = effective_perturbation(c["margin"][fin], c["kl"][fin])
