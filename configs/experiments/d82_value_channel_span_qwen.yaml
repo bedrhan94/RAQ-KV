@@ -1,0 +1,56 @@
+# D82: the successor D77 specified. Test D76's token/channel asymmetry on VALUES, where the channel axis can actually
+# be swept.
+#
+# D76 found delta SPAN-INDEPENDENT on the token axis (alpha +0.020 [-0.091, +0.257], quadrature and coherent both
+# excluded) and hypothesised why: a group_token scale spans TOKENS at one channel of one head, attention re-normalizes
+# over tokens, so corrupting more positions moves the softmax's scale without moving its direction. That predicts the
+# CHANNEL axis -- which attention does not re-normalize over -- should give alpha > 0.
+#
+# D77 tried it on KEYS and could not: coarsening key channels destroys the model (golden_correct 39/40, 39/40, 37/40,
+# 0/40, 0/40 at group_channel 8..128, with degenerate repetition) because key channels carry the outliers -- the classic
+# result that makes KIVI quantize keys per-channel. The channel axis costs -3.18 dB SQNR per doubling of span against
+# the token axis's -1.13 (both R^2 > 0.99), so no key-side channel sweep wide enough to power alpha survives its own
+# codec. D77's stated successor is this one.
+#
+# WHY VALUES CAN BE SWEPT WHERE KEYS CANNOT, and it is not a guess: this project's default for values IS `per_token`,
+# which on a (1, H, T, D) tensor is exactly channel-grouping at g = head_dim = 128 -- the coarsest rung here. Values
+# have been quantized that way in every arm since M1 at 4 bits with no accuracy cost, so the whole 8..128 range sits at
+# usable quality by construction rather than by hope. head_dim is 128, so every rung divides it exactly and the realised
+# span equals the nominal g with no trailing group.
+#
+# PRE-REGISTERED, same statistic and cluster bootstrap as D76, three outcomes named in advance:
+#   alpha > 0 with an interval excluding it -> the hypothesis is SUPPORTED, the token/channel asymmetry is real, and the
+#     allocator gains a second and opposite lever: on the channel axis coarsening would cost reliability.
+#   alpha ~ 0 again -> the hypothesis is REFUTED, and span-independence is a property of metadata corruption generally
+#     rather than of the token axis. That is the more useful negative, because granularity would then never be a
+#     reliability lever on either axis or either part.
+#   alpha < 0 -> unmodelled; needs its own explanation and is support for nothing.
+#
+# `metadata_part: values` confines the draw, for the reason D76 needed it on keys: key scale count is fixed here while
+# value scale count moves with 1/g, so a storage-wide draw would land on a different MIXTURE of parts at each rung and
+# damage per flip would move for a reason unrelated to the span under test.
+#
+# Keys are held at the project default (group_token 128) so only the value granularity varies. Everything else is D76's
+# arm, so the two sweeps are comparable on alpha -- a slope within each axis -- and not on absolute delta or bit totals,
+# since these rungs are not iso-storage with D76's.
+include:
+  - models/qwen3_1p7b_eager.yaml
+  - datasets/raq_probe_v0.yaml
+name: d82_value_channel_span_qwen
+task:
+  kind: protection_arm
+  n_samples: 40
+  n_flips: 1
+  fault_target: metadata
+  metadata_part: values
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0
+sweep:
+  quantization:
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: group_channel, group_size: 8}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: group_channel, group_size: 16}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: group_channel, group_size: 32}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: group_channel, group_size: 64}}
+    - {keys: {bits: 4, axis: group_token, group_size: 128}, values: {bits: 4, axis: group_channel, group_size: 128}}

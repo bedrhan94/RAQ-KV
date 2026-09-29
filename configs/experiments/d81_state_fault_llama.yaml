@@ -1,0 +1,43 @@
+# D81: does cache damage make a conversation REVERT to superseded state, on the second family?
+#
+# D69 answered it on Qwen and the answer was counterintuitive: under one metadata flip, 2 of 416 conditioned trials
+# regressed (0.48% [0.13, 1.74]) against 2.16% that broke at all -- so ROUGHLY A FIFTH of fault-induced failures are
+# reversions and four fifths are not, the opposite of the intuitive fear that corrupting a conversation's cache sends
+# the agent back to stale state. At two events that supported the ORDERING and not the rate, and it rested on one model.
+#
+# POWER, computed before the run rather than discovered after. D69's own arm broke on 12 of 480 trials (2.50%) and
+# Llama's per-metadata-flip hazard is 2.63% against Qwen's 1.17% (D59), so a Llama arm of the same shape yields more
+# failures -- which is exactly what a SHARE needs. 180 samples (3 types x 2 lengths x 3 depths x 10 groups), ~70% of
+# them clean-correct by D80's baseline, 16 trials each: about 2,000 conditioned trials and ~53 expected breaks, giving
+# a 95% half-width near 0.11 on the reversion share. That separates "a fifth" from "half" decisively and from "a third"
+# marginally. D69 could do neither.
+#
+# Cells are THIS family's, not Qwen's: see datasets/state_probe_v0_lowfloor_llama.yaml. Llama's usable types are date,
+# number and constraint; tool_arg is void here (scorer dialect) and Qwen's set both includes it and excludes date. So
+# the within-family question is answerable on each family's own cells and the cross-family SHARE comparison is not made.
+#
+# PRE-REGISTERED:
+#   PRIMARY -- the share of fault-induced failures that are reversions, conditioned as D69 conditioned: samples whose
+#     clean answer is CORRECT (so a reversion is newly caused, not pre-existing) and controls exactly zero. The claim
+#     to replicate is that the share is well below half.
+#   WHY THE CONDITIONING IS NOT OPTIONAL -- on this vehicle `faulty_mentions_distractor` is true on 56 of D69's 480
+#     trials while only 12 broke, because ~43% of CLEAN answers are already reversions. Unconditioned, the field
+#     measures the vehicle's floor and not the fault's doing.
+#   SECONDARY -- the break rate itself, against D59's 2.63% per metadata flip on a different vehicle.
+#   GATE -- controls must be exactly zero, as in every arm here.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/state_probe_v0_lowfloor_llama.yaml
+name: d81_state_fault_llama
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 180
+  n_flips: 1
+  fault_target: metadata
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0

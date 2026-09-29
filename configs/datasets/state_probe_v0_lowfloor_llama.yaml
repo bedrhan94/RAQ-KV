@@ -1,0 +1,37 @@
+# State probe restricted to the fact types whose UNFAULTED regression floor is low enough to measure against, on
+# LLAMA-3.2-3B. The same criterion as `state_probe_v0_lowfloor.yaml`, applied to this family's own measured baseline
+# rather than to Qwen's -- and the two sets come out DIFFERENT, which is a condition of the result, not a detail.
+#
+# Measured by D80, 360 samples, bf16 cache, no faults, no compression:
+#
+#             Llama correct / regressed      Qwen (D69) correct / regressed
+#   date        75.0% /  25.0%   <- usable      53.3% / 46.7%   <- floor too high THERE
+#   number      68.3% /  31.7%   <- usable      85.0% / 15.0%   <- usable
+#   constraint  65.0% /  35.0%   <- usable      90.0% / 10.0%   <- usable
+#   id          61.7% /  38.3%   <- floor too high
+#   entity      41.7% /  58.3%   <- floor too high
+#   tool_arg     0.0% /   0.0%   <- VOID, not usable: D46/D47's dialect artefact
+#
+# tool_arg is excluded for a different reason from the rest and it matters. Llama retrieves the gold value correctly
+# every time and scores zero because the scorer encodes Qwen's tool-call dialect (`<tool_call>` ... "arguments" against
+# Llama's {"parameters": ...}), so the cell measures the scorer, not the model. `date` is included here and excluded on
+# Qwen because the floors genuinely differ: 25.0% against 46.7%.
+#
+# CONSEQUENCE, stated before the run: the two families' fault arms run on DIFFERENT CELLS, so the within-family
+# question ("are most fault-induced failures reversions?") is answerable on each family's own usable cells, while a
+# cross-family comparison of the reversion SHARE is not apples-to-apples and will not be made. Applying Qwen's set to
+# Llama would have been worse: it would include the void cell and exclude a type that is usable here.
+dataset:
+  name: state_probe
+  version: v0
+  generator_seed: 0
+  fact_types: [date, number, constraint]
+  context_lengths: [1024, 2048]
+  depths: [0.1, 0.5, 0.9]
+  groups_per_cell: 10
+  n_distractors: 2
+  filler_hf_id: Salesforce/wikitext
+  filler_subset: wikitext-2-raw-v1
+  filler_split: train
+  filler_revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  max_new_tokens: 64
