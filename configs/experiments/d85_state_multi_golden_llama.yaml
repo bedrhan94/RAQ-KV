@@ -1,0 +1,39 @@
+# D85: the test D83 specified for its own post-hoc finding.
+#
+# D83 found that when a conversation corrects a value twice, WHICH stale value a reversion lands on splits into two
+# opposite regimes on Qwen: recency 0.896 [0.808, 0.946] on the fact types whose clean reversion floor is low
+# (constraint, number, tool_arg) and 0.295 [0.212, 0.393] on the types at the ceiling (entity, id), Fisher between them
+# p = 2.93e-16. The aggregate 54.7% is the average of those and describes neither, which is why D83's pre-registered
+# primary came back unresolved.
+#
+# That grouping is POST-HOC. The grouping variable -- D69's measured floor -- predates D83, but the analysis was not
+# pre-registered, so the split is a hypothesis and needs a test on data it did not come from. D83 named this one.
+#
+# WHY LLAMA IS THE RIGHT TEST AND NOT JUST MORE DATA. D80 measured Llama's floors on the same six types and they are
+# both DIFFERENT and much FLATTER: entity 0.583, id 0.383, constraint 0.350, number 0.317, date 0.250, against Qwen's
+# 0.95 / 0.92 / 0.10 / 0.15 / 0.47. So the two readings make DIFFERENT predictions, which is what makes this a test
+# rather than a replication:
+#   if the split follows each family's OWN floor, it must be much weaker here, because Llama has no cell below 0.25 and
+#     none above 0.59 -- there is no ceiling group to be anchored by the document;
+#   if it follows the fact TYPES regardless of floor, entity and id must still show primacy on Llama even though the
+#     model tracks them far better than Qwen does.
+#
+# PRE-REGISTERED: the primary is the recency share in each of D83's two groups, and the contrast between them (Fisher).
+# The prediction is the FIRST reading -- a weaker split -- because D83's own mechanism story is about how well the model
+# tracks a value, and Llama tracks these values more evenly. A result matching the second reading would say the effect
+# is about the fact type's surface form rather than about trackability, which is a different and stronger claim.
+#   SECONDARY the second-correction effect D83 resolved on Qwen (reversion 43.1% -> 59.7%, Fisher p = 1.04e-05): does
+#             correcting twice make state tracking worse on this family too? D72's one-correction baseline is 0.3139
+#             over all six types, so this is a within-family comparison against a number already measured.
+#   GATE      bf16, no faults, no compression -- a baseline, like D69, D72 and D83.
+#
+# `tool_arg` is void on Llama for scorer reasons (D46/D47, confirmed by D80: it retrieves the gold value every time and
+# scores 0/60), so the low-floor group here is constraint and number only. That is stated rather than worked around: the
+# groups are not identical across families and the cross-family comparison is of the SPLIT, not of the cells.
+include:
+  - models/llama3p2_3b.yaml
+  - datasets/state_probe_v0_multi.yaml
+name: d85_state_multi_golden_llama
+task:
+  kind: qa_generate
+seed: 0

@@ -1,0 +1,23 @@
+# D69's low-floor cells with TWO corrections (D83's vehicle), for the fault arm D84.
+#
+# Same three fact types and the same reasoning as state_probe_v0_lowfloor.yaml -- entity and id revert 95% and
+# 92% of the time UNFAULTED, so a fault-induced reversion cannot be seen against them -- with n_updates: 2
+# so the conversation carries the document's value AND a superseded correction, and a reversion becomes
+# attributable to a position. D83 measured the clean baseline on these cells: constraint 27/60 correct,
+# number 30/60, tool_arg 46/60, and the clean recency split on them is 69 V1 against 8 V0.
+#
+dataset:
+  name: state_probe
+  version: v0
+  generator_seed: 0
+  fact_types: [tool_arg, constraint, number]
+  context_lengths: [1024, 2048]
+  depths: [0.1, 0.5, 0.9]
+  groups_per_cell: 10
+  n_distractors: 2
+  filler_hf_id: Salesforce/wikitext
+  filler_subset: wikitext-2-raw-v1
+  filler_split: train
+  filler_revision: b08601e04326c79dfdd32d625aee71d232d685c3
+  max_new_tokens: 64
+  n_updates: 2

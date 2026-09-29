@@ -1,0 +1,47 @@
+# D84: with TWO corrections, does fault-induced reversion show the same two-regime split the clean baseline does?
+#
+# D83's clean baseline found something its own pre-registered primary could not see. The aggregate question -- which
+# stale value a reversion lands on -- came back unresolved at 111/203 = 54.7% [47.8, 61.4], so the recency prediction
+# failed. But the aggregate averages two OPPOSITE regimes: grouping by D69's own measured floors gives recency 0.896
+# [0.808, 0.946] on the low-floor types and 0.295 [0.212, 0.393] on the ceiling types, Fisher between them p = 2.93e-16.
+# That grouping is POST-HOC (the variable predates D83, the analysis was not pre-registered), so it is a hypothesis.
+#
+# This arm asks the same question of FAULT-INDUCED reversion rather than of the clean floor, which is the version the
+# project's reliability claims actually need: D81 bounded the share of fault failures that are reversions at <=17% on
+# Llama, but with one correction it could not say WHICH stale state a reversion returns to.
+#
+# CELLS. The low-floor types only (constraint, number, tool_arg), by the same criterion D69's lowfloor set used and on
+# the same family, because a fault-induced reversion has to be measured against a floor low enough to see it. D83's
+# baseline supplies the numbers: those three types answer correctly 27/60, 30/60 and 46/60, so ~103 samples survive the
+# clean-correct conditioning. The ceiling types are excluded here for the same reason D69 excluded them -- entity and id
+# revert 95% and 92% of the time UNFAULTED, so there is no room for a fault to add anything.
+#
+# PRE-REGISTERED:
+#   GATE      controls exactly zero, as in every arm here.
+#   PRIMARY   of the fault-induced reversions, the share landing on V1 (most recent stale) rather than V0 (document).
+#             D83's clean split on these same three types is 69/8 = 0.896 [0.808, 0.946], so the test is whether the
+#             fault-induced split matches that or differs from it. Both answers are informative: matching says a fault
+#             pushes the model down the same path it already fails along, differing says cache damage is its own failure
+#             mode rather than an amplifier of the clean one.
+#   SECONDARY the reversion share of all fault failures, against D69's 2/9 = 22.2% at one correction on overlapping
+#             cells -- does a second correction change how often damage produces a reversion rather than another error?
+#   POWER     stated rather than discovered. D69's arm broke on 12/480 trials and D83's extra turn adds ~40 cached
+#             tokens, so at 180 samples x 16 trials with ~57% conditioned the expectation is ~1,600 conditioned trials
+#             and ~35 breaks at Qwen's 2.5%. That is enough for the reversion SHARE to a half-width near 0.14 and NOT
+#             enough to split it by fact type, which is stated here so the per-type numbers are read as descriptive.
+include:
+  - models/qwen3_1p7b.yaml
+  - datasets/state_probe_v0_multi_lowfloor.yaml
+name: d84_state_multi_fault
+quantization:
+  keys: {bits: 4, axis: group_token, group_size: 128}
+  values: {bits: 4, axis: per_token}
+task:
+  kind: protection_arm
+  n_samples: 180
+  n_flips: 1
+  fault_target: metadata
+  record_perturbation: true
+  n_trials: 16
+  n_control: 1
+seed: 0
