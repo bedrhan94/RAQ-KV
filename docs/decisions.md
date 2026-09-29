@@ -5164,3 +5164,112 @@ state-probe arms reproduce their recorded fingerprints with this code.
 **A fault arm is worth running and is not run here.** The floor leaves room: 141 samples answer correctly, and on the
 low-floor types alone that is 103 (constraint 27, number 30, tool_arg 46) — enough to condition on clean-correct and ask
 whether *fault-induced* reversion shows the same two-regime split that the clean baseline does.
+
+## D84 — Fault-induced reversion follows the same path the clean failure already takes (2026-09-29)
+
+D83's clean baseline found, post-hoc, that with two corrections a reversion lands on the most recent superseded value on
+the fact types the model tracks well. D81 had bounded the *share* of fault failures that are reversions at ≤17% on Llama
+but, with one correction, could not say **which** stale state a reversion returns to. This arm asks D83's question of
+fault-induced reversion instead of of the clean floor. Qwen3-1.7B, the low-floor cells only, 180 samples × 16 trials, one
+metadata flip, `n_updates: 2`.
+
+**Gate: controls 0/180.** Conditioned on clean-correct: 107 of 180 samples, 1712 trials, **broke 35/1712 = 2.04%**
+[1.47%, 2.83%] — the power note pre-registered ~35 breaks and got 35.
+
+| | value |
+|---|---|
+| **PRIMARY** — of the 10 fault-induced reversions, the share landing on `V1` | **10/10 = 1.000** [0.723, 1.000] |
+| D83's **clean** split on these same three types | 69/77 = 0.896 [0.808, 0.946] |
+| fault against clean | Fisher **p = 0.589** — consistent |
+| **SECONDARY** — reversion share of all fault failures | **10/35 = 28.6%** [16.3%, 45.1%] |
+| D69's at one correction | 2/9 = 22.2% [6.3%, 54.7%] |
+
+**Every fault-induced reversion went to the most recent superseded value, none to the document's**, and that matches what
+the clean baseline does on the same cells. So on these types **a cache fault pushes the model further down the path it
+already fails along rather than creating a different failure** — one of the two readings D84 named in advance.
+
+And the secondary keeps the D69/D81 line intact: the reversion share of fault failures is **28.6% with an upper bound of
+45.1%**, so most fault-induced failures are still *not* reversions, now on a two-correction vehicle as well.
+
+**Scope.** The pre-registered power note said 35 breaks would fix the share to about ±14 points and would **not** support
+a per-type split; the per-type counts (constraint 4, number 6, tool_arg 0) are therefore descriptive only. One model, one
+exposure, the low-floor cells by construction.
+
+## D85 — The regime is a family property, and D83's second-correction result is a Qwen result (2026-09-29)
+
+D83 closed with a post-hoc split and named its test: the same arm on Llama, whose floors D80 measured as both different
+and much flatter. Two readings were pre-registered — the split follows each family's **own floor** (predicted), or it
+follows the fact **types** regardless of floor. **Neither is right.**
+
+### D83's split does not reproduce, and not by weakening
+
+| family / group | V1 | V0 | recency | 95% CI |
+|---|---|---|---|---|
+| Qwen / low-floor | 69 | 8 | 0.896 | [0.808, 0.946] |
+| Qwen / ceiling | 28 | 67 | 0.295 | [0.212, 0.393] |
+| **Llama / low-floor** | 5 | 20 | **0.200** | [0.089, 0.391] |
+| **Llama / ceiling** | 4 | 36 | **0.100** | [0.040, 0.231] |
+| Llama / date | 0 | 9 | 0.000 | [0.000, 0.299] |
+
+Qwen's low-floor-against-ceiling contrast is Fisher **p = 2.93e-16**; Llama's is **p = 0.289 — no split.** And the reason
+is not that it weakened: **Llama is primacy-dominant in every group.** Pooled with no grouping at all, Llama reverts to
+the *document's* value: recency **0.122 [0.065, 0.215]** against Qwen's unresolved 0.547 [0.478, 0.614].
+
+**So which stale value a reversion lands on is a property of the model family**, not of the fact type's floor and not of
+its surface form. D83's floor-based grouping was a Qwen coincidence, and the trackability mechanism it suggested is **not
+supported**.
+
+### And the second-correction effect reverses sign between families
+
+On the five scorable types, `tool_arg` excluded from both (D46's rule, since it is void on Llama):
+
+| family | one correction | two corrections | difference | Fisher p |
+|---|---|---|---|---|
+| Qwen | 155/300 = 0.5167 | 201/300 = 0.6700 | **+0.1533** | **1.78e-04** |
+| **Llama** | 113/300 = 0.3767 | 82/300 = 0.2733 | **−0.1033** | **8.84e-03** |
+
+**Both meet the rule and they point in opposite directions.** Correcting a value a second time makes Qwen answer from
+stale state *more* often and Llama *less* often. **D83's statement is therefore withdrawn as a general one and re-scoped
+to Qwen.**
+
+The per-type table shows where it comes from: on Qwen the types it tracked *well* collapse — `constraint` 0.100 → 0.550,
+`number` 0.150 → 0.500 — while on Llama the same types improve, `number` 0.317 → 0.133 and `id` 0.383 → 0.183. `entity`
+barely moves on either (0.950 → 0.900, 0.583 → 0.567). So the extra correction damages Qwen's good cells and helps
+Llama's, which is the sharpest family difference this vehicle has produced.
+
+**Scope.** Baselines only: bf16, no faults, no compression, 360 samples per arm. `tool_arg` is void on Llama for scorer
+reasons (D46/D47) and excluded from both families for the comparison. The two families' cell *sets* differ in the
+grouped analysis and are identical in the pooled one, which is why the pooled recency figure is the load-bearing number.
+Llama arms carry their run date in the prompt (D79), so these are comparable within the campaign that produced them.
+
+## D86 — The g=256 quality cost is corpus-dependent, so the sign is unreachable and its own control says so (2026-09-29)
+
+D77 bounded the `g128 → g256` perplexity cost at ≤0.342% and left the sign unresolved (+0.00162 [−0.00020, +0.00341],
+p = 0.0739 on 145 chunks), then diagnosed it as a **corpus** limit: 181 chunks are needed and WikiText-2 **test** supplies
+145. The train split supplies 1,229, and 400 of them give a half-width of 0.00109 against a 0.00162 effect — verified
+before the run. D77 pre-registered this arm with a control and with the reason it might be void.
+
+**The control failed, so the primary is void, exactly as pre-registered.**
+
+| contrast | n | Δ NLL | 95% CI | p | D77 on the test split |
+|---|---|---|---|---|---|
+| g128 → g256 (primary) | 400 | +0.00066 | [−0.00045, +0.00175] | 0.497 | +0.00162 [−0.00020, +0.00341] |
+| **g128 → g512 (control)** | 400 | **+0.00033** | **[−0.00107, +0.00169]** | **0.929** | **+0.00448 [+0.00226, +0.00669], p = 1.3e-04** |
+
+D77's `g512` cost was **resolved** at +0.449%; on the train split the same contrast is +0.033% and the intervals **do not
+overlap** (train's upper 0.00169 against test's lower 0.00226). The control's whole purpose was to detect this: **the
+paired per-chunk difference between group sizes does depend on which partition the chunks come from**, which is the
+assumption the design rested on and it is false.
+
+**So the primary is not reported as a result**, and the useful statement is the negative one: **the g=256 sign is
+unreachable on the corpus H2f rests on, and running more train chunks would resolve a different corpus's sign rather
+than that one.** This run's own scatter puts the train requirement at 1,116 chunks, which the split could supply — and
+doing so would answer a question H2f does not ask.
+
+**What survives, and it tightens H2f's scope rather than loosening it.** The quality cost of coarsening the key group is
+not a corpus-independent property of the codec. On WikiText-2 test, g512 costs a resolved 0.449%; on train the same move
+costs at most 0.169%. So H2f's "quality is the only constraint on the key group size" is correct, and **how binding that
+constraint is depends on the text** — which no single corpus can settle.
+
+**Scope.** Absolute perplexities are deliberately not merged with any other table: train is a different partition (15.73
+against test's 15.19 at g128) and only the paired contrast was ever claimed to transfer, which is the claim that failed.
