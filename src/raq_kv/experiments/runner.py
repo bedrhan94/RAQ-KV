@@ -55,21 +55,33 @@ def _code_state(git: dict[str, Any]) -> tuple[str | None, str | None]:
 # The code that runs is the code Python imported at process start; the working tree can be edited afterwards. A
 # manifest would then record a state that never executed, which is how a sweep ends up with three different diff
 # hashes for one campaign. So the first state observed in this process is remembered and later ones are refused.
-_PROCESS_CODE_STATE: tuple[tuple[str | None, str | None], dict[str, Any]] | None = None
+#
+# What is compared is `executed_code_sha256` -- the contents of every `src/raq_kv` module a campaign actually imports --
+# and NOT the repository-wide `diff_sha256` this used to use. D24's rule is about `src/`, but the old comparison aborted
+# a campaign for editing a decision record, a test or a report script, which cost a rung of D76 plus a supersede. It
+# also aborted on `git commit`, because a diff is relative to HEAD while the executing files are unchanged -- and
+# committing a record between runs is the normal workflow here. `_check_existing` below still compares the old tuple, so
+# the 48 recorded runs carrying a `diff_sha256` continue to match on resume.
+_PROCESS_CODE_STATE: tuple[str | None, dict[str, Any]] | None = None
+
+
+def _executed_state(git: dict[str, Any]) -> str | None:
+    return git.get("executed_code_sha256")
 
 
 def _check_process_code_state(git: dict[str, Any]) -> None:
-    """Refuse to start an experiment if the working tree changed since this process imported its modules."""
+    """Refuse to start an experiment if the code this campaign EXECUTES changed since the process imported it."""
     global _PROCESS_CODE_STATE
-    state = _code_state(git)
+    state = _executed_state(git)
     if _PROCESS_CODE_STATE is None:
         _PROCESS_CODE_STATE = (state, git)
         return
     if state != _PROCESS_CODE_STATE[0]:
         raise ExperimentConflictError(
-            f"the working tree changed while this process was running: started at {_PROCESS_CODE_STATE[0]}, now "
+            f"the executed source changed while this process was running: started at {_PROCESS_CODE_STATE[0]}, now "
             f"{state}. The already-imported code is what executes, so a manifest written now would record a state "
-            "that never ran. Restart the run instead of editing source during a campaign."
+            "that never ran. Restart the run instead of editing src/raq_kv during a campaign -- the modules in "
+            "`provenance.EXECUTED_CODE_EXEMPT` are the ones you may still edit."
         )
 
 

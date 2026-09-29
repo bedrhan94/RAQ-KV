@@ -108,13 +108,58 @@ def test_conflicts_are_detected(tmp_path: Path):
         run_experiment(cfg, task_factory=lambda _c: FakeTask(), log=lambda _m: None)
 
 
-def test_a_working_tree_change_mid_process_is_refused(tmp_path, monkeypatch):
-    """A sweep that edits source between its experiments would record a code state that never executed."""
+def test_a_change_to_the_executed_source_mid_process_is_refused(tmp_path, monkeypatch):
+    """A sweep that edits executed source between its experiments would record a code state that never ran."""
     from raq_kv.experiments import runner as runner_mod
 
     monkeypatch.setattr(runner_mod, "_PROCESS_CODE_STATE", None)
-    first = {"commit": "abc", "diff_sha256": "d1"}
+    first = {"commit": "abc", "diff_sha256": "d1", "executed_code_sha256": "e1"}
     runner_mod._check_process_code_state(first)
     runner_mod._check_process_code_state(dict(first))  # same state again is fine
-    with pytest.raises(runner_mod.ExperimentConflictError, match="working tree changed"):
-        runner_mod._check_process_code_state({"commit": "abc", "diff_sha256": "d2"})
+    with pytest.raises(runner_mod.ExperimentConflictError, match="executed source changed"):
+        runner_mod._check_process_code_state({**first, "executed_code_sha256": "e2"})
+
+
+def test_editing_something_the_campaign_never_executes_does_not_abort_it(monkeypatch):
+    """The point of the change: D24's rule is about `src/`, and the guard used to be about the whole repository.
+
+    Editing a decision record, a test or a report script mid-campaign aborted a run that D24 permits -- it cost a rung
+    of D76 plus a supersede. So did `git commit`, because a diff is relative to HEAD while the executing files are
+    unchanged, and committing a record between runs is the normal workflow here. Both now show up as a moved
+    `diff_sha256` or `commit` with an unchanged `executed_code_sha256`, and both are accepted.
+    """
+    from raq_kv.experiments import runner as runner_mod
+
+    monkeypatch.setattr(runner_mod, "_PROCESS_CODE_STATE", None)
+    runner_mod._check_process_code_state({"commit": "abc", "diff_sha256": "d1", "executed_code_sha256": "e1"})
+    runner_mod._check_process_code_state({"commit": "abc", "diff_sha256": "d2", "executed_code_sha256": "e1"})
+    runner_mod._check_process_code_state({"commit": "def", "diff_sha256": None, "executed_code_sha256": "e1"})
+
+
+def test_the_executed_hash_ignores_exempt_modules_and_notices_the_rest(tmp_path):
+    """Measured on a real tree rather than asserted: the hash must move for one file and not for the other."""
+    import shutil
+
+    TOUCH = chr(10) + "# touched" + chr(10)
+
+    from raq_kv.experiments.provenance import EXECUTED_CODE_EXEMPT, executed_code_sha256
+    from raq_kv.utils.paths import repo_root
+
+    root = tmp_path / "repo"
+    (root / "src").mkdir(parents=True)
+    shutil.copytree(repo_root() / "src" / "raq_kv", root / "src" / "raq_kv")
+    base = executed_code_sha256(root)
+    assert base is not None
+
+    exempt = root / "src" / EXECUTED_CODE_EXEMPT[1]          # an analysis module a campaign never imports
+    assert exempt.exists(), exempt
+    exempt.write_text(exempt.read_text(encoding="utf-8") + TOUCH, encoding="utf-8")
+    assert executed_code_sha256(root) == base, "editing an exempt module must not move the executed hash"
+
+    executed = root / "src" / "raq_kv" / "faults" / "storage.py"   # squarely in the campaign's graph
+    executed.write_text(executed.read_text(encoding="utf-8") + TOUCH, encoding="utf-8")
+    assert executed_code_sha256(root) != base, "editing an executed module must move it"
+
+    # And a brand-new module counts, which a git diff could not see if it were untracked.
+    (root / "src" / "raq_kv" / "faults" / "brand_new.py").write_text("x = 1" + chr(10), encoding="utf-8")
+    assert executed_code_sha256(root) != base

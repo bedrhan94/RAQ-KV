@@ -50,3 +50,54 @@ def test_the_modules_a_campaign_does_execute_are_not_on_the_exempt_list():
                 "raq_kv.ecc.protect", "raq_kv.faults.storage", "raq_kv.compression.retain",
                 "raq_kv.importance.scorers", "raq_kv.kv.snapshot", "raq_kv.config.schema"}
     assert not (executed & set(OUTSIDE_THE_RUNNER)), "a module the runner executes cannot be exempt from D24"
+def test_the_exemption_list_the_GUARD_uses_is_measured_against_the_campaign_entry_point():
+    """`OUTSIDE_THE_RUNNER` above was a hand-kept list; the guard now has its own, and this measures it.
+
+    `provenance.EXECUTED_CODE_EXEMPT` is what `executed_code_sha256` skips, so it is what may be edited mid-campaign.
+    Every path on it must correspond to a module the CAMPAIGN ENTRY POINT does not import -- not merely one that
+    `runner` and `tasks` miss. `config.loader` is the reason the distinction matters: the entry point imports it to read
+    the configs, so it participates in a campaign although `runner.py` never imports it, and it is deliberately absent
+    from the exempt list.
+
+    Measured in a SUBPROCESS, because `sys.modules` is global: by the time the full suite reaches this test, other
+    tests have already imported the analysis modules, and an in-process check would read their imports as the
+    campaign's. The first version of this test passed alone and failed in the suite for exactly that reason.
+    """
+    import json
+    import subprocess
+    import sys
+
+    from raq_kv.experiments.provenance import EXECUTED_CODE_EXEMPT
+    from raq_kv.utils.paths import repo_root
+
+    program = (
+        "import importlib, json, sys" + chr(10)
+        + "for m in ('raq_kv.config.loader','raq_kv.experiments.ids','raq_kv.experiments.runner',"
+          "'raq_kv.experiments.tasks'):" + chr(10)
+        + "    importlib.import_module(m)" + chr(10)
+        + "print(json.dumps(sorted(m for m in sys.modules if m.startswith('raq_kv'))))" + chr(10)
+    )
+    out = subprocess.run([sys.executable, "-c", program], cwd=repo_root(), capture_output=True,
+                         text=True, timeout=180, check=True)
+    imported = set(json.loads(out.stdout.strip().splitlines()[-1]))
+    assert "raq_kv.experiments.tasks" in imported, out.stdout
+
+    for path in EXECUTED_CODE_EXEMPT:
+        stem = path[:-3] if path.endswith(".py") else path
+        name = stem.replace("/", ".")
+        assert name not in imported, (
+            f"{name} is exempt from the executed-code hash but the campaign entry point imports it, so editing it "
+            f"mid-run would change what executes without the guard noticing")
+
+    # And the converse, on the module most likely to be added to the list by mistake.
+    assert "raq_kv/config/loader.py" not in EXECUTED_CODE_EXEMPT
+    assert "raq_kv.config.loader" in imported
+
+
+def test_every_exempt_path_exists():
+    """A typo would silently exempt nothing, which reads as a stricter guard than it is."""
+    from raq_kv.experiments.provenance import EXECUTED_CODE_EXEMPT
+    from raq_kv.utils.paths import repo_root
+
+    for path in EXECUTED_CODE_EXEMPT:
+        assert (repo_root() / "src" / path).exists(), path

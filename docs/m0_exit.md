@@ -52,7 +52,7 @@ python scripts/check_env.py
 RAQ_TEST_DEVICE=cuda python -m pytest -m slow tests/slow -s        # criteria 1-3; copy printed diagnostics above
 python scripts/run_experiment.py --config configs/experiments/m0a_golden_ppl.yaml
 python scripts/run_experiment.py --config configs/experiments/m0a_latency.yaml
-python scripts/run_experiment.py --config configs/experiments/m0b_golden_probe.yaml
+python scripts/run_experiment.py --config configs/experiments/m0b_golden_probe_margins.yaml
 python scripts/run_experiment.py --config configs/experiments/m0b_golden_gsm8k.yaml
 python scripts/aggregate.py --name m0 --filter _cuda_
 ```

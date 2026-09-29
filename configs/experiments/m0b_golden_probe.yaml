@@ -1,3 +1,15 @@
+# SUPERSEDED, NEVER RUN. Use `m0b_golden_probe_margins.yaml` instead.
+#
+# This file and that one are the same experiment under two names -- they differ in `name` and in a comment, nothing
+# else -- and only `m0b_golden_probe_margins` was ever run (720/720 units). M0's exit criterion 7 is satisfied by THAT
+# arm, and every number `docs/m0_exit.md` quotes for the probe golden comes from it.
+#
+# Kept rather than deleted, because this project marks superseded things instead of removing them. But do NOT run it:
+# it would write a second live arm carrying the same 720 samples under a different config name, which `sole_run` cannot
+# see as a duplicate (it keys on the config name), so the store would hold two live goldens for one measurement with
+# nothing saying which is canonical. `docs/m0_exit.md` used to name this file in its reproduction block, which is how
+# the trap was found.
+#
 # M0b golden RAQ-Probe (BF16, GPU). Claims supported: S0 (golden reference for Q49 and H1 token-type analyses);
 # M0 exit criterion 7 (golden accuracy band 85-100% per fact type x depth).
 include:
