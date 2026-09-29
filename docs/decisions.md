@@ -4814,3 +4814,175 @@ pre-registered train-split secondary that could resolve the sign is **not run**,
 ≤0.342% cost is 0.16% or 0.00% does not change a decision made against the bound. Part B is one model on the probe,
 4 bits, keys only, and its α rests on **three** rungs over a 4× span — a weak test, which is why its null is reported
 as "not supported" and not as a refutation. The 2.8× SQNR asymmetry is the robust part of it (both fits R² > 0.99).
+
+## D78 — C4's task half replicates in direction on the second family and is not resolved in magnitude (2026-09-29)
+
+C4's own scope line named this gap: *"task side is Qwen only"*. The perplexity half already existed on both families, so
+only the numerator of the mismatch ratio was open. Three rungs — bf16 / 4-bit / 2-bit — `qa_generate` on the BFCL tool
+catalogue, Llama-3.2-3B, 120 calls each, the same design as `d66_task_bfcl_qwen`.
+
+### The reproduction gate, read first as pre-registered
+
+The bf16 rung scored **68/120** against `m9l_bfcl_golden`'s **69/120** — a one-sample difference in a deterministic
+greedy pipeline, so the gate did not pass as written. Chasing it is what produced **D79**, and the answer is that the
+two arms saw the same data apart from one token: **the Llama chat template injects the run date.** Evidence:
+
+* `cache_len`, every `meta` field, `kv_bytes_analytic`, `reference` and `spans` are **identical on all 120 samples**.
+* **118 of 120 predictions are identical.** The two that differ are the same underlying BFCL item at both catalogue
+  sizes (`simple_145`), and the m9l run recorded a `gen_margin_min_all` of **exactly 0.0** on it — D11's exact-bf16-tie
+  case, where the argmax is implementation-dependent.
+
+**So the gate is satisfied in substance and failed on its letter**, and it is recorded that way: the arms are comparable,
+the one scoring flip is a documented tie rather than a different corpus, and the gate earned its place by surfacing a
+defect nothing else had caught.
+
+### The result
+
+| rung | accuracy | vs bf16 | Fisher p | catalogue perplexity |
+|---|---|---|---|---|
+| bf16 | 68/120 = 0.5667 | — | — | 2.1022 |
+| 4-bit | 67/120 = 0.5583 | −1.5% rel | **1.000** | 2.1042 (+0.10%) |
+| **2-bit** | **56/120 = 0.4667** | **−17.65% rel** | **0.155** | 2.3706 (**+12.77%**) |
+
+**Mismatch ratio 17.65 / 12.77 = 1.38×**, against Qwen's 23.81 / 13.41 = **1.78×**. The point prediction written before
+the run was 69 → ~53; observed 56.
+
+**The direction replicates and the magnitude does not resolve.** The ratio exceeds 1, which is C4's claim, but the
+accuracy contrast itself **fails D31** at p = 0.155 on 120 calls. So on a second family C4's task-side mismatch is
+*supported in direction, unresolved in size* — and pre-registered confound (a) is exactly what a smaller ratio looks
+like: Llama starts at **56.7%** against Qwen's 87.5%, so it has a third less accuracy available to lose. **Not
+floor-limited** — 46.7% sits far above the ~4% a random pick among 25 schemas would give — so this is a power limit, not
+a bound.
+
+**The control behaves**, which is what makes the 2-bit row worth reading at all: 4-bit moves perplexity +0.10% and
+accuracy by one call at p = 1.000, on both families.
+
+### Scope
+
+120 calls per rung, unpruned, one catalogue construction, one model. Whether *compression* shows the same mismatch is
+still unmeasured on either family — C4's other stated gap, untouched here. The two families' ratios are reported side by
+side and never pooled, because their baselines differ by 31 points.
+
+## D79 — Every Llama arm in this project embeds its run date in the prompt (2026-09-29)
+
+Found by D78's reproduction gate, from a one-sample disagreement. **Llama-3.x chat templates call `strftime_now` and
+write `"Today Date: <today>"` into the system prompt**, so every Llama experiment here caches a prompt containing the
+date it was run on, then quantizes, faults and scores that cache. Verified directly: a rendered Llama prompt carries
+`29 Sep 2026` today and the template contains `strftime_now`, `Today Date`, `date_string` and `Cutting Knowledge`;
+**Qwen's template contains none of them and renders no date.**
+
+### What was ruled out first, in order
+
+The difference between `m9l_bfcl_golden`'s fingerprint (`573f2afe04`) and `d78`'s (`115d723e8e`) had five candidate
+explanations and four are dead:
+
+* **Corpus drift** — the BFCL repo's `main` has been at `61fc0608cf` since **2026-04-29**, five months before any of
+  these runs, and the local cache holds exactly one snapshot.
+* **Code change** — rebuilding the samples with the *m9l-era source* (`58685f1`, checked out into a scratch tree) gives
+  `115d723e8e`, not `573f2afe04`. The only changes to the prompt path since were **additive** (`render_conversation`),
+  and `samples_fingerprint` was never touched.
+* **Config drift** — model, dataset and task blocks are byte-identical between the two manifests.
+* **Dependency drift** — `transformers 5.17.0`, `tokenizers 0.23.2`, `datasets 5.0.1` in both runs.
+* **Process nondeterminism** — four separate processes produce `115d723e8e` every time, so it is not a `PYTHONHASHSEED`
+  ordering effect. (An earlier check that built twice *in one process* was inadequate for exactly that reason and is
+  recorded as inadequate.)
+
+What remains is the date, and it explains the whole pattern including the control: **Qwen's `m6_bfcl_golden` (09-23) and
+`d66_task_bfcl_qwen` (09-26) share one fingerprint across three days**, because Qwen's template has no date, while the
+two Llama campaigns a day apart do not.
+
+### What it does and does not invalidate
+
+* **Within-campaign comparisons are sound, and that is how every claim in this project is built.** Arms run in one
+  session share a date: m9l's five arms all ran 09-27 and share `573f2afe04`; D78's three rungs all ran 09-28 and share
+  `115d723e8e`.
+* **Cross-campaign Llama comparisons are not byte-reproducible.** Comparing an arm run on day A against one run on day
+  B is exactly what D78's gate attempted, and it is why the gate tripped.
+* **The identity hash cannot see it** — the date is not a config field — so the runner would treat a re-run on another
+  day as the same experiment. `data_fingerprint` *does* see it, which is the only reason this surfaced.
+* **Measured magnitude: 2 of 120 predictions**, both on one tie-prone item, one with an exact bf16 margin of 0.0. Small,
+  and not zero.
+
+### The fix, its cost, and why it is not applied here
+
+`render_chat` already forwards `chat_template_kwargs`, so pinning is one config field:
+`chat_template_kwargs: {date_string: "26 Jul 2024"}`. **Verified: the token count is unchanged** (37 against 37), so
+pinning moves only the date value and leaves every `cache_len`, span bound and bit-accounting figure alone.
+
+**But `chat_template_kwargs` is part of the identity hash.** Pinning it re-keys **61 Llama arms across 55 config names,
+6,529 units, 9.17 recorded GPU-hours**, which the runner would then see as unrun — and re-running them would change
+published numbers, for a measured impact of two predictions in a hundred and twenty. That is a long-run change with a
+real cost and it is **not taken unilaterally**; it is recorded here as a decision with its price attached.
+
+`tests/test_prompt_date_stability.py` asserts the invariant and is marked `xfail(strict=True)` against this record, so
+the day the pin is adopted, deleting the marker is the whole change and the suite will say so. Its companion tests
+verify the fix's token-count neutrality and that Qwen needs no pin, so the claims above are checked rather than asserted.
+
+## D80 — Multi-turn state reversion replicates on the second family; D69's dramatic fact-type spread does not (2026-09-29)
+
+D69's finding rested on one model: with a perfect bf16 cache and no faults, Qwen3-1.7B answers from the **superseded**
+turn 43.06% of the time, almost perfectly binary, with a 0%–95% spread across fact types. `d72_state_golden_llama` was
+written for exactly this and never run; it is run now. 360 samples, `qa_generate`, bf16, no faults, no compression.
+
+### The `tool_arg` cell is void on Llama, and it is the known artefact rather than a finding
+
+D72's config pre-registered that Llama should do **worse on `tool_arg` specifically**, with failures being wrong values
+rather than reversions, from D70's argument-fragility result. Llama scores **0/60 correct, 0/60 reverted** there, which
+looks like a dramatic confirmation. **It is not.** Reading the predictions shows Llama retrieving the gold value
+correctly every time — `{"name": "get_account_balance", "parameters": {"account_number": "96249802"}}` against a gold of
+`96249802` — and scoring zero purely because the scorer encodes Qwen's dialect (`<tool_call>` … `"arguments"`). That is
+**D46/D47's artefact exactly**, the reason `tool_arg` is already excluded from both families in M4 reporting, and the
+prediction is therefore **untestable on this cell** rather than confirmed. Everything below excludes `tool_arg` from
+**both** families, which is D46's rule.
+
+### The headline replicates; the rate differs; the vehicle's design holds on both
+
+| | n | correct | **reversion** | 95% CI | binary (correct + reversion) |
+|---|---|---|---|---|---|
+| Qwen3-1.7B | 300 | 0.4800 | **0.5167** | [0.4603, 0.5726] | 0.9967 |
+| Llama-3.2-3B | 300 | 0.6233 | **0.3767** | [0.3237, 0.4327] | **1.0000** |
+
+**Both families answer from the superseded turn on a large minority of clean, undamaged, uncompressed samples**, so
+D69's central claim is a property of the task rather than of Qwen. **The rate is a real family difference:** +0.1400,
+Fisher **p = 7.46e-04**, with non-overlapping intervals — it meets the rule.
+
+**And the vehicle's attribution mechanism is sound on both.** Llama is **perfectly binary** on the scorable types: all
+60 of its "neither new nor old" answers are `tool_arg`, i.e. the dialect artefact, and Qwen has exactly 1 of 300. So
+`mentions_distractor` names a reversion rather than flagging a generic error, on both families — which is the property
+the whole vehicle was built for.
+
+### The prediction worth being wrong about, and it is wrong
+
+D72's second pre-registered prediction: *if the fact-type ordering reproduces on a second family it is a property of the
+task; if it does not, D69's breakdown was a property of Qwen and the vehicle measures something narrower than it looks.*
+
+| fact type | Qwen | Llama |
+|---|---|---|
+| entity | 0.950 | 0.583 |
+| id | 0.917 | 0.383 |
+| date | 0.467 | 0.250 |
+| number | 0.150 | 0.317 |
+| constraint | 0.100 | 0.350 |
+
+**Spearman over the five types is +0.600, p = 0.285 — it FAILS D31**, and Llama's spread is **2.55× flatter** (0.333
+against 0.850). `entity` is the most reversion-prone on both, and there the agreement ends: Qwen orders
+date > number > constraint and Llama orders constraint > number > date, a complete inversion of the middle.
+
+**So D69's 0%–95% spread is substantially a Qwen property.** What survives as a task property is the *existence* of
+large clean-cache reversion and `entity` being its worst cell; what does not survive is the ordering that made D69's
+breakdown look like a statement about fact types in general.
+
+### One thing running the other way, worth flagging
+
+**Llama carries multi-turn state better** — 0.6233 correct against Qwen's 0.4800 on the same 300 samples — while being
+the less confident model everywhere else in this project. That is the same dissociation D63 found on LongBench, where
+Qwen was *less* accurate and *more* confident, and it is a second vehicle on which competence and confidence come apart
+in the direction that rules out reading confidence as competence.
+
+### Scope
+
+One probe construction, 360 samples per family, bf16, **no faults and no compression** — this is the baseline that makes
+a damage measurement interpretable, not a damage measurement. The Llama **fault** arm (D69's other half) is not run and
+is the next step; D69's own fault result was 2 events on 416 trials, so a Llama counterpart needs its own power
+discussion before it is worth the GPU. `tool_arg` is void on Llama for scorer reasons, so five of six cells carry the
+comparison and the sixth is reported as void rather than as zero.
