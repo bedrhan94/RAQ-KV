@@ -5371,3 +5371,103 @@ D75's cross-family measurement (2.30–3.35×) on an arm set it was not derived 
 **Scope.** One vehicle, 4 bits, keys only, values `per_token` throughout. The α interval is wider than D82's because the
 short trailing-group bins are noisy here as they were in D76, and because Llama's thin margins make the assumed path the
 less reliable of the two.
+
+## D89 — The range check's residual at 1e-5 comes from the flips it detects, not from the bits it cannot see (2026-10-12)
+
+**Status: COMPLETED.** The masking study is closed. Twelve arms ran, the paper text was corrected, and no further
+arm, analysis or research branch is planned under this entry. What would reopen it is stated in **Falsification**
+at the end, and nothing short of that.
+
+§6.2 explained the 0.0593 residual as "the roughly 13 of 16 metadata bits the check cannot see accumulate". That was
+an **unmeasured mechanism**, and a masking experiment contradicts it.
+
+**Design.** One campaign, `m3_arm_h_range_guard_ber1e5` reproduced exactly (qwen3-1.7B, BER 1e-5, 60 samples, 8
+trials, seed 0, guard on, no codec). Each trial's plan is drawn by the arm's own `generate_storage_plan` with the
+arm's own seed and **then filtered**: the masked class is discarded, nothing is redrawn, so the arms share a draw and
+differ only by which flips survive. Twelve arms. Classes on the fp16 metadata words: `H` bits 13-15, `E` bits 10-12,
+`M` bits 0-9, `L` the guard's own stored limits, `S`/`Z` the whole scale / zero-point word, `C` the codes.
+
+**Power, recorded before the arms ran.** A0's 28 failures sit in only 22 of 59 golden-correct samples. Because the
+masking arms are nested inside A0, the paired difference is a count of recovered trials and the sign test turns on how
+many *samples* show a recovery. A class must recover in ≥8 samples to survive Holm over six comparisons: the smallest
+resolvable paired difference is ≈0.017. Pre-registered consequence: a dominant class resolves, a minor one does not.
+
+**Results** (paired per sample, 10 000 bootstrap, Holm over the six primary arms):
+
+| arm | dropped | task failure | paired diff | Holm p | recovered | samples | established |
+|---|---|---|---|---|---|---|---|
+| A0 | none | 0.0593 | | | | | reference |
+| A1 | E bits 10-12 | 0.0508 | +0.0085 [+0.0021, +0.0169] | 0.370 | 4 | 4 | no |
+| A2 | M bits 0-9 | 0.0593 | +0.0000 | 1.000 | 0 | 0 | no |
+| A3 | H bits 13-15 | 0.0085 | +0.0508 [+0.0317, +0.0742] | **0.0003** | 24 | 19 | **yes** |
+| A4 | L the limits | 0.0593 | +0.0000 | 1.000 | 0 | 0 | no |
+| A5 | Z zero point | 0.0233 | +0.0360 [+0.0191, +0.0551] | **0.0007** | 17 | 15 | **yes** |
+| A6 | S scale | 0.0318 | +0.0275 [+0.0127, +0.0466] | **0.0070** | 13 | 10 | **yes** |
+| A7 | all metadata + L | **0.0000** | | | 28 | | bound ≤ 0.0064 |
+
+Post hoc, Holm among themselves and labelled as such: `A8` bit 15 alone recovers **1**, `A9` bits 13-14 alone recovers
+**24** (Holm p = 0.0002). So H's entire effect is bits 13 and 14, which the guard always sees, and not the sign bit.
+
+**Finding.** Bits 13 and 14 carry **24 of the 28 failures**. The 13 bits the check cannot see carry at most 4 of 28
+and the ten mantissa bits carry **none**.
+The residual is carried by flips the check **detects** and answers with a clamp to a stored limit. What expires at
+1e-5 is **detection followed by coarse clamping rather than value reconstruction**, which is also why metadata
+SECDED — which reconstructs the word — stays at 0.0000. The wording matters: the guard is not inert on these flips,
+it repairs them coarsely, and the phrase "detection without correction" invited the wrong reading.
+
+**Limit corruption, scoped to what this campaign measured.** A4 recovers 0 of the 28 failures, which is exact for
+this campaign. The exposure behind that null is small and must travel with it: **24 limit flips** were drawn over
+the 480 plans, reaching **9 trials**, and **none of those 9 failed**. Where a limit was corrupted the effect on
+clamping was large — one trial clamped **30 112** values against a typical 30, and those 9 trials carry **57%** of
+all clamping events in the campaign — so the mechanism §6.1 names is real and simply did not cost an answer here.
+**The arithmetic on that null should not be dressed up.** An earlier draft of this entry wrote "the rule of three
+bounds the per-flip failure probability at 3/24 = 0.125", which is not a bound this design earns. The rule of three
+needs independent Bernoulli exposures, and these are not: the 24 flips reached only **9** trials, so several landed
+together, while the outcome is scored per trial and not per flip; and a corrupted limit acts on an entire region
+rather than as one small independent perturbation. Taking the 9 affected trials as the exposures instead — itself an
+approximation, since trials within a sample share a cache and a prompt — the same rule gives roughly 3/9, i.e. no
+better than about a third. That is an assumption-laden order of magnitude, not a confidence interval, and it is
+recorded here only to show how little the null constrains. So A4's zero **bounds** the contribution of limit
+corruption loosely; it does not exclude it, and it says nothing about higher rates where limit flips are more
+frequent. §6.1 states it that way, with the exposure in the sentence and no interval, rather than as "it is not the
+failure mode".
+
+**A7 is the control and it passed.** 0 failures in 472 trials with 2 361 843 code-bit flips drawn, bound ≤ 0.0064 by
+the rule of three. Every failure in A0 is metadata driven, so the decomposition is complete.
+
+**Three limits on how far this may be stated.**
+1. **The clamp's causal effect is not isolated.** Discarding an H flip removes the flip *and* the clamp it triggered.
+   All 24 recovered trials were clamped in A0 (mean 96.7 clamp events), but so were the 4 that were not recovered
+   (84.8) and the 444 that never failed (**152.1**, i.e. more). Clamping volume does not discriminate failure, so
+   "the clamp's own repair error is the damage" is **not** established. The separating experiment is per-group limits
+   instead of per-tensor; not run.
+2. **The decompositions are not disjoint.** Recovered sets overlap by 1 (H/E/M), 2 (HZ/HS), 3 (Z/S) and 1 (G/F)
+   trials. The counts are shares of one effect, not independent contributions.
+3. **Masking is not monotone.** `A10` produced **2 new failures** (both on `date-L4096-g04-d090`, trials 2 and 5)
+   while recovering 13, so the paired difference is a net quantity. Every other arm recovered only.
+
+**One number in the paper was re-derived rather than changed.** The first attempt to reproduce 0.0593 gave 0.0583,
+because the denominator included a sample whose golden answer is already wrong. `task_failure` is
+`golden_correct AND NOT faulty_correct`, so such a sample cannot register a failure and does not belong in the mean:
+28/(59×8) = 0.0593, matching §6.2's "22 of 59 discordant" and §6.1's "472 trials" exactly. **The paper was right.**
+
+**Two corrections to §6.1 that the checks forced.**
+- The exponent factors were stated one direction each and the bits 12-10 were missing. Verified numerically:
+  flipping exponent bit `b` of a **normal** fp16 multiplies by `2^(2^(b-10))` if the bit was 0 and by the reciprocal
+  if it was 1, so 65536, 256, 16, 4, 2 for bits 14 down to 10. Subnormals and non-finite encodings do not follow it
+  (flipping bit 10 of the smallest subnormal multiplies by 1025, not 2), so the statement is scoped to normal values.
+- "at most 36 percent" is **empirical**, from D27's measured ×1.00–×1.36 over the observed scales. The
+  representation's worst single mantissa-bit flip is exactly ×1.5, at bit 9 with mantissa 0. Now labelled as an
+  observed maximum.
+
+**H1c's scope, which Table 10 had dropped.** `claims.md` states H1c as "bit position is a weak protection signal **for
+KV codes**", measured as LSB→MSB moving damage 1.023–1.057× against a 128× change in the stored value. Within the
+metadata words bit position decides everything, which read as a contradiction only because the table omitted the
+scope. The row now says "within a code word".
+
+**Scope of D89.** One family, one rate. At 1e-6 the decomposition is vacuous because A0 is already 0.0000. The second
+family was not run: its contrast does not resolve there (0.0077, p = 0.083), so the evidence matrix keeps "reason".
+
+**Falsification.** Storing the guard's limits per group rather than per tensor should remove most of the bits 13-14
+effect if the clamp's own error is the mechanism, and should leave it in place if the residual damage after clamping
+is. Either outcome re-opens this entry.
